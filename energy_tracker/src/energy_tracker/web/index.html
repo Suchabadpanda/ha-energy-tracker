@@ -60,8 +60,16 @@
   summary { cursor: pointer; font-weight: 600; font-size: 14px; }
   form { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
          gap: 12px 16px; margin-top: 14px; }
-  form label { display: flex; flex-direction: column; gap: 4px; font-size: 13px;
-               color: var(--muted); }
+  /* Labels can wrap to different heights; pushing the field to the bottom keeps every
+     field in a row on the same line. */
+  form label { display: flex; flex-direction: column; justify-content: flex-end; gap: 4px;
+               font-size: 13px; color: var(--muted); min-width: 0; }
+  form label > input:not([type=checkbox]), form label > select { width: 100%; height: 38px; box-sizing: border-box; }
+  form button { height: 38px; box-sizing: border-box; }
+  .field-row { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 12px 16px; align-items: flex-end; }
+  .field-row label { flex: 1 1 180px; }
+  .group-title { grid-column: 1 / -1; font-size: 13px; font-weight: 600; color: var(--text); margin-top: 6px; }
+  .group-title small { font-weight: 400; color: var(--muted); }
   form label.wide { grid-column: 1 / -1; flex-direction: row; align-items: center; gap: 8px; }
   input, select, button { font: inherit; color: var(--text); background: var(--bg);
                           border: 1px solid var(--line); border-radius: 6px; padding: 7px 9px; }
@@ -73,8 +81,9 @@
   #tariff-message { grid-column: 1 / -1; font-size: 13px; min-height: 18px; color: var(--muted); }
   #tariff-message.error, #import-message.error { color: var(--grid); }
   .windows { grid-column: 1 / -1; display: grid; gap: 8px; }
-  .window { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; }
+  .window { display: flex; flex-wrap: wrap; gap: 12px 16px; align-items: flex-end; }
   .window label { flex: 1 1 130px; }
+  .window label.grow { flex: 2 1 220px; }
   .lookup { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px; align-items: end;
             padding-bottom: 12px; border-bottom: 1px solid var(--line, rgba(128,128,128,.25)); }
   .lookup label { flex: 1 1 170px; }
@@ -282,19 +291,24 @@
         percentages are optional: fill any in to see a second break-even date that allows for
         them. Leave them empty to keep to today's prices and performance.</div>
       <form id="roi-form">
-        <label>System installed on <input type="date" name="install_date" required></label>
-        <label>Without the system I would be on <select name="baseline"></select></label>
-        <label>Panels lose each year (%)
-          <input type="number" name="panel_ageing" min="0" max="5" step="0.1" placeholder="Typical: 0.5"></label>
-        <label>Battery loses each year (%)
-          <input type="number" name="battery_ageing" min="0" max="10" step="0.1" placeholder="Typical: 2"></label>
-        <label>Electricity prices change each year (%)
-          <input type="number" name="price_change" min="-10" max="20" step="0.1" placeholder="Your own view"></label>
-        <div class="windows" id="roi-costs"></div>
-        <div class="actions">
-          <button type="button" id="roi-add-cost">Add a cost</button>
-          <button class="primary" type="submit">Save</button>
+        <div class="field-row">
+          <label>Installed on <input type="date" name="install_date" required></label>
+          <label class="grow" style="flex: 2 1 280px;">Tariff without the system
+            <select name="baseline"></select></label>
         </div>
+        <div class="group-title">What it cost</div>
+        <div class="windows" id="roi-costs"></div>
+        <div class="actions"><button type="button" id="roi-add-cost">Add a cost</button></div>
+        <div class="group-title">Yearly assumptions <small>(optional)</small></div>
+        <div class="field-row">
+          <label>Panel loss (%)
+            <input type="number" name="panel_ageing" min="0" max="5" step="0.1" placeholder="Typical: 0.5"></label>
+          <label>Battery loss (%)
+            <input type="number" name="battery_ageing" min="0" max="10" step="0.1" placeholder="Typical: 2"></label>
+          <label>Price change (%)
+            <input type="number" name="price_change" min="-10" max="20" step="0.1" placeholder="Your own view"></label>
+        </div>
+        <div class="actions"><button class="primary" type="submit">Save</button></div>
         <div id="roi-message"></div>
       </form>
     </details>
@@ -1272,8 +1286,9 @@ function addCost(date = "", description = "", amount = "") {
   };
   const remove = Object.assign(document.createElement("button"), { type: "button", textContent: "Remove" });
   remove.addEventListener("click", () => row.remove());
-  row.append(field("Paid on ", { type: "date", required: true, value: date }),
-             field("For ", { type: "text", maxLength: 80, placeholder: "Solar and battery", value: description }),
+  const what = field("For ", { type: "text", maxLength: 80, placeholder: "Solar and battery", value: description });
+  what.className = "grow";
+  row.append(field("Paid on ", { type: "date", required: true, value: date }), what,
              field("Amount (£) ", { type: "number", min: "0.01", step: "0.01", required: true, value: amount }),
              remove);
   roiCosts.append(row);

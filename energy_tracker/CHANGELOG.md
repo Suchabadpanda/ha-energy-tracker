@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.2
+
+- Tidier settings forms: fields line up in every row, and the payback settings are grouped
+  into cost and yearly assumptions.
+
 ## 0.9.1
 
 - Extra income: works with the HACS "Axle VPP" integration's separate sensors, and says
