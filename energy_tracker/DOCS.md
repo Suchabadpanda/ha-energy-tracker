@@ -59,8 +59,36 @@ Grid power must be positive when importing, and battery power positive when char
 
 **Import older history** fetches hourly history for the energy counters from Home
 Assistant's long-term statistics. For the time before Home Assistant has any, add an
-export from the mySigen app (.xlsx, hourly or daily). With a daily export the time of day
-is unknown, so 99% of each day's import is assumed to fall in the cheap window.
+export from the mySigen app (.xlsx, hourly or daily). Hourly is much better: with a daily
+export the time of day is unknown, so 99% of each day's import is assumed to fall in the
+cheap window.
+
+### Getting an hourly export from Sigen AI
+
+The mySigen app's assistant, Sigen AI, can email you the file.
+
+1. Open the mySigen app (or the mySigen web dashboard) and tap the floating Sigen AI icon,
+   a small round robot face, to open the chat.
+2. Ask for the data, giving the day your system was installed and today's date:
+
+   > Can you export hourly energy data in kWh for grid import, grid export, load, solar
+   > generation, battery charge and battery discharge between 29 October 2025 and
+   > 9 April 2026?
+
+3. Sigen AI replies with a summary of what it will export. Check that **Granularity** says
+   **Hourly**. It may offer daily first; if so, reply "can I have the data in hourly
+   granularity".
+4. Confirm when it asks whether to proceed. The export only reads data; it changes nothing
+   on your system.
+5. The file is emailed to your mySigen account's address. A long period takes a few minutes
+   to arrive; check the spam folder if it does not. If it arrives as a .zip, unzip it to get
+   the .xlsx file.
+6. In Energy Tracker, open **Older history > Import older history**, choose the .xlsx file,
+   click **Check only** to preview, then **Import**.
+
+It is fine for the export to run past the date Home Assistant's own history starts: the
+import uses the file only for the time before that. Importing again with a better file
+replaces what the earlier one brought in.
 
 ## Security and data
 

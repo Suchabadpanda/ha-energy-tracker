@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.2
+
+- Documentation: how to get an hourly export from Sigen AI for the history import.
+
 ## 0.3.1
 
 - A credit now shows as -£12.97 instead of £-12.97.

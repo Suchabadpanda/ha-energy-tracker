@@ -43,7 +43,8 @@ The figures shown are made-up example data.
 - **Tariff rates**: editable on the page. Each set of rates has a start date, so a price
   change only affects days from that date onward.
 - **Older history**: imports hourly history from Home Assistant, plus an export from the
-  mySigen app for the time before Home Assistant has any.
+  mySigen app for the time before Home Assistant has any. See
+  [how to get an hourly export from Sigen AI](energy_tracker/DOCS.md#getting-an-hourly-export-from-sigen-ai).
 
 ## How it works
 
