@@ -36,6 +36,10 @@ The figures shown are made-up example data.
 
 ![Payback tiles and a chart of savings rising towards the system cost](docs/images/payback.png)
 
+**Extra income, such as Axle Energy export events**
+
+![List of extra income entries with dates, energy exported and amounts, some marked as estimates](docs/images/income.png)
+
 **Comparing tariffs on your real usage**
 
 ![Table comparing what the same usage would cost on other tariffs](docs/images/compare.png)
