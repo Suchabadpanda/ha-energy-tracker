@@ -199,6 +199,7 @@
     <div class="legend" id="roi-legend" hidden>
       <span style="--c: var(--battery)">Saved so far</span>
       <span class="dashed" style="--c: var(--battery)">Projected</span>
+      <span class="dashed" style="--c: var(--solar)" id="roi-legend-adjusted" hidden>With your yearly assumptions</span>
       <span style="--c: var(--grid)">System cost</span>
     </div>
     <div class="hint" id="roi-hint"></div>
@@ -207,10 +208,18 @@
       <div class="hint">Savings are what your household's electricity would have cost with no
         solar or battery, less what you actually paid. By default the comparison uses your own
         tariff, so cheap-rate charging of a car still counts as cheap. To measure against a
-        different tariff, add it under Compare tariffs and choose it here.</div>
+        different tariff, add it under Compare tariffs and choose it here. The three yearly
+        percentages are optional: fill any in to see a second break-even date that allows for
+        them. Leave them empty to keep to today's prices and performance.</div>
       <form id="roi-form">
         <label>System installed on <input type="date" name="install_date" required></label>
         <label>Without the system I would be on <select name="baseline"></select></label>
+        <label>Panels lose each year (%)
+          <input type="number" name="panel_ageing" min="0" max="5" step="0.1" placeholder="Typical: 0.5"></label>
+        <label>Battery loses each year (%)
+          <input type="number" name="battery_ageing" min="0" max="10" step="0.1" placeholder="Typical: 2"></label>
+        <label>Electricity prices change each year (%)
+          <input type="number" name="price_change" min="-10" max="20" step="0.1" placeholder="Your own view"></label>
         <div class="windows" id="roi-costs"></div>
         <div class="actions">
           <button type="button" id="roi-add-cost">Add a cost</button>
@@ -887,6 +896,9 @@ function fillRoiForm(data) {
   roiFormFilled = true;
   if (data.settings) {
     f.install_date.value = data.settings.install_date;
+    f.panel_ageing.value = data.settings.panel_ageing_percent || "";
+    f.battery_ageing.value = data.settings.battery_ageing_percent || "";
+    f.price_change.value = data.settings.price_change_percent || "";
     roiCosts.replaceChildren();
     for (const c of data.settings.costs) addCost(c.date, c.description, c.amount);
   }
@@ -901,11 +913,13 @@ function drawPayback(p, totalCost) {
   const time = d => new Date(d + "T00:00").getTime();
   const actual = p.series.map(([d, v]) => [time(d), v]);
   const projected = p.projection.map(([d, v]) => [time(d), v]);
+  const adjusted = (p.adjusted?.projection ?? []).map(([d, v]) => [time(d), v]);
   const all = [...actual, ...projected];
+  const latest = Math.max(...[...all, ...adjusted].map(a => a[0]));
   const start = all[0][0];
   // Leave room to the right of today even when no break-even date can be worked out.
-  const end = Math.max(all[all.length - 1][0], start + 30 * 86400000);
-  const top = Math.max(totalCost, ...all.map(a => a[1]), 1) * 1.08;
+  const end = Math.max(latest, start + 30 * 86400000);
+  const top = Math.max(totalCost, ...all.map(a => a[1]), ...adjusted.map(a => a[1]), 1) * 1.08;
   const bottom = Math.min(0, ...all.map(a => a[1]));
   const x = t => L + (t - start) / (end - start) * (W - L - R);
   const y = v => T + (top - v) / (top - bottom) * (H - T - B);
@@ -941,6 +955,11 @@ function drawPayback(p, totalCost) {
   if (projected.length > 1) {
     add("path", { d: path(projected), fill: "none", stroke: "var(--battery)", "stroke-width": 2,
                   "stroke-dasharray": "6 5" });
+  }
+  if (adjusted.length > 1) {
+    add("path", { d: path(adjusted), fill: "none", stroke: "var(--solar)", "stroke-width": 2,
+                  "stroke-dasharray": "6 5" });
+    add("circle", { cx: x(time(p.adjusted.break_even)), cy: y(totalCost), r: 5, fill: "var(--solar)" });
   }
   if (p.break_even) {
     const t = time(p.break_even);
@@ -981,10 +1000,19 @@ function renderPayback(data) {
     tile("Paid back", p.percent === null ? "–" : p.percent + "%"),
     tile(p.already_reached ? "Broke even" : "Break-even estimate", breakEven,
          p.break_even ? p.years_from_install + " years after install" + (p.rough && !p.already_reached ? " (rough)" : "")
-           : "Savings are not positive on these settings"));
+           : "Savings are not positive on these settings"),
+    ...(p.adjusted ? [tile("With your yearly assumptions",
+          p.adjusted.break_even ? longDate(p.adjusted.break_even) : "Not in sight",
+          p.adjusted.break_even ? p.adjusted.years_from_install + " years after install" + (p.rough ? " (rough)" : "")
+            : "Savings shrink before the cost is reached")] : []));
+  document.getElementById("roi-legend-adjusted").hidden = !p.adjusted;
   drawPayback(p, cost);
   const notes = ["Measured against " + data.baseline_name + ", from " +
     new Date(p.first_day + "T00:00").toLocaleDateString([], { dateStyle: "medium" }) + " (" + p.days + " days of readings)."];
+  if (p.yearly_solar_gbp !== null) {
+    notes.push("Of the " + pounds(p.yearly_gbp) + " a year, about " + pounds(p.yearly_solar_gbp) +
+      " is what the panels alone would save and " + pounds(p.yearly_battery_gbp) + " is added by the battery.");
+  }
   if (p.estimated_before_days > 0) {
     notes.push("The " + p.estimated_before_days + " days between the install date and the first reading are " +
       "estimated at the average (" + money(p.estimated_before_gbp) + ").");
@@ -1018,7 +1046,10 @@ roiForm.addEventListener("submit", async event => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ install_date: roiForm.elements.install_date.value,
-                             baseline: roiForm.elements.baseline.value, costs }),
+                             baseline: roiForm.elements.baseline.value, costs,
+                             panel_ageing_percent: Number(roiForm.elements.panel_ageing.value) || 0,
+                             battery_ageing_percent: Number(roiForm.elements.battery_ageing.value) || 0,
+                             price_change_percent: Number(roiForm.elements.price_change.value) || 0 }),
     });
     roiMessage("Saved.");
     renderPayback(data);

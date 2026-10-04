@@ -3,7 +3,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from energy_tracker.roi import daily_costs, payback
+from energy_tracker.roi import daily_costs, daily_solar_value, payback
 from energy_tracker.tariff import Schedule, build_tariff
 from energy_tracker.usage import Counter
 
@@ -77,3 +77,47 @@ def test_payback_already_reached_and_never_reached():
     never = payback(losing, 100.0, first, first + timedelta(days=30))
     assert never["break_even"] is None and never["years_from_install"] is None
     assert payback({}, 100.0, first, first) == {"has_data": False}
+
+
+def test_solar_value_is_direct_use_at_the_import_price_plus_export():
+    start, end = datetime(2026, 6, 1, tzinfo=LONDON), datetime(2026, 6, 2, tzinfo=LONDON)
+    gap = timedelta(minutes=75)
+    solar = Counter(steady(start, end, 3.0), gap)  # 3 kW generated all day
+    load = Counter(steady(start, end, 1.0), gap)  # the house uses 1 kW
+    value = daily_solar_value(solar, load, start, end, LONDON, SCHEDULE, SCHEDULE)
+    # 24 kWh used directly (6 at 10p, 18 at 30p) and 48 kWh exported at 15p
+    assert value[date(2026, 6, 1)] == pytest.approx(0.60 + 5.40 + 7.20)
+
+
+def test_ageing_delays_break_even_and_rising_prices_bring_it_forward():
+    first = date(2026, 1, 1)
+    savings = {first + timedelta(days=n): 4.0 for n in range(100)}
+    solar = {day: 3.0 for day in savings}  # panels 3 a day, battery the other 1
+    args = (savings, 10000.0, first, first + timedelta(days=100), solar)
+
+    plain = payback(*args)
+    assert plain["adjusted"] is None
+    assert plain["yearly_solar_gbp"] == 1095.0 and plain["yearly_battery_gbp"] == 365.0
+
+    aged = payback(*args, panel_ageing=0.005, battery_ageing=0.02)
+    assert aged["break_even"] == plain["break_even"]  # the plain estimate is unchanged
+    assert aged["adjusted"]["break_even"] > plain["break_even"]
+    assert aged["adjusted"]["projection"][-1][1] >= 10000.0
+
+    dearer = payback(*args, price_change=0.03)
+    assert dearer["adjusted"]["break_even"] < plain["break_even"]
+
+    # Only the battery part ages when only battery ageing is set.
+    battery_only = payback(*args, battery_ageing=0.02)
+    assert (
+        plain["break_even"]
+        < battery_only["adjusted"]["break_even"]
+        < aged["adjusted"]["break_even"]
+    )
+
+
+def test_savings_that_shrink_away_never_reach_the_cost():
+    first = date(2026, 1, 1)
+    savings = {first + timedelta(days=n): 1.0 for n in range(50)}
+    result = payback(savings, 50000.0, first, first + timedelta(days=50), price_change=-0.10)
+    assert result["adjusted"]["break_even"] is None and result["adjusted"]["projection"] == []

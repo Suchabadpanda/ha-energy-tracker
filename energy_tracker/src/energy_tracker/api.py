@@ -78,7 +78,7 @@ async def lifespan(_: FastAPI):
         await asyncio.to_thread(thread.join, 10)
 
 
-app = FastAPI(title="Energy Tracker", version="0.6.0", lifespan=lifespan)
+app = FastAPI(title="Energy Tracker", version="0.7.0", lifespan=lifespan)
 
 
 @app.middleware("http")
@@ -481,6 +481,7 @@ def delete_comparison(row_id: int) -> dict:
 # --- Payback -----------------------------------------------------------------------------------
 
 LOAD_COUNTER = "load_energy_total"
+SOLAR_COUNTER = "pv_energy_total"
 ROI_CACHE_SECONDS = 1800
 
 
@@ -495,6 +496,10 @@ class PaybackIn(BaseModel):
     # "own": the tariff you were on each day. Otherwise the id of a tariff saved for comparison.
     baseline: str = Field(default="own", pattern=r"^(own|\d{1,9})$")
     costs: list[CostIn] = Field(max_length=20)
+    # Optional yearly assumptions for the adjusted estimate, in percent. 0 leaves one out.
+    panel_ageing_percent: float = Field(default=0, ge=0, le=5)
+    battery_ageing_percent: float = Field(default=0, ge=0, le=10)
+    price_change_percent: float = Field(default=0, ge=-10, le=20)
 
 
 def payback_settings() -> dict | None:
@@ -555,7 +560,7 @@ def payback_figures() -> dict:
         result["payback"] = {"has_data": False}
         return result
     samples = counter_samples(
-        [*COST_COUNTERS, LOAD_COUNTER], start - timedelta(days=1), HALF_HOURLY, end
+        [*COST_COUNTERS, LOAD_COUNTER, SOLAR_COUNTER], start - timedelta(days=1), HALF_HOURLY, end
     )
     for name, series in samples.items():
         counters[name] = Counter(series, HALF_HOURLY_GAP)
@@ -565,7 +570,28 @@ def payback_figures() -> dict:
     )
     otherwise = roi.daily_costs(counters[LOAD_COUNTER], None, start, end, zone, without_system)
     savings = {day: otherwise[day] - paid[day] for day in paid}
-    result["payback"] = roi.payback(savings, total_cost, installed, today_local)
+    # The panels' share of the saving, where solar generation has been recorded.
+    solar = None
+    if counters[SOLAR_COUNTER]:
+        solar = roi.daily_solar_value(
+            counters[SOLAR_COUNTER],
+            counters[LOAD_COUNTER],
+            start,
+            end,
+            zone,
+            without_system,
+            schedule(),
+        )
+    result["payback"] = roi.payback(
+        savings,
+        total_cost,
+        installed,
+        today_local,
+        solar,
+        settings_.get("panel_ageing_percent", 0) / 100,
+        settings_.get("battery_ageing_percent", 0) / 100,
+        settings_.get("price_change_percent", 0) / 100,
+    )
 
     _roi_cache.update(at=time.monotonic(), value=result)
     return result

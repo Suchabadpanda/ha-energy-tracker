@@ -78,8 +78,24 @@ How it is worked out:
 - Time between the install date and the first reading is filled in at the average, and the
   amount is stated under the chart.
 
-The estimate assumes today's prices and usage continue. It does not allow for price
-changes, panels ageing, maintenance, or what the money might have earned elsewhere.
+### Optional yearly assumptions
+
+The main estimate assumes today's prices and performance continue. Fill in any of these to
+see a second break-even date, and a second line on the chart, that allows for them:
+
+| Setting | Typical | What it does |
+|---|---|---|
+| Panels lose each year | 0.5% | Shrinks the solar part of the savings. Panel warranties usually promise 85 to 90% of output after 25 years. |
+| Battery loses each year | 2% | Shrinks the battery part of the savings. Battery warranties are often 70% of capacity after 10 years; check yours. |
+| Electricity prices change each year | none | Scales all savings up or down. There is no reliable forecast, so enter your own view. A rise brings break-even forward, so it is the assumption most likely to flatter the result. |
+
+To apply the ageing rates to the right part, savings are split in two. The solar part is
+what the panels alone would have saved with no battery: generation used directly in each
+half hour, at the import price for that time, plus the rest exported. The battery part is
+everything the system saved beyond that. Both yearly figures are shown under the chart.
+
+Neither estimate allows for maintenance, replacement parts, import and export prices
+moving differently from each other, or what the money might have earned elsewhere.
 
 ## Comparing tariffs
 

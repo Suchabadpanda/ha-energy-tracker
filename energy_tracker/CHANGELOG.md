@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.0
+
+- Payback: optional yearly panel ageing, battery ageing and price change, shown as a second
+  break-even date and chart line beside the plain estimate.
+- Payback: savings are split into what the panels alone would save and what the battery adds.
+
 ## 0.6.0
 
 - Payback: enter what the system cost to see how much has been saved, the share paid
