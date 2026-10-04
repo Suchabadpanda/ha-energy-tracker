@@ -21,10 +21,10 @@ from typing import Annotated
 
 import httpx
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 
-from . import collector, import_history, lookup, roi, tariff_store
+from . import collector, history, import_history, lookup, roi, tariff_store
 from .config import Metric, Settings, load_metrics, load_settings
 from .costs import combine
 from .db import Database
@@ -78,7 +78,7 @@ async def lifespan(_: FastAPI):
         await asyncio.to_thread(thread.join, 10)
 
 
-app = FastAPI(title="Energy Tracker", version="0.7.0", lifespan=lifespan)
+app = FastAPI(title="Energy Tracker", version="0.8.0", lifespan=lifespan)
 
 
 @app.middleware("http")
@@ -476,6 +476,67 @@ def delete_comparison(row_id: int) -> dict:
         raise HTTPException(status_code=404, detail="That tariff is not in the list")
     _roi_cache["value"] = None
     return {"removed": row_id}
+
+
+# --- History for any period, and exporting it ----------------------------------------------------
+
+PERIOD = Annotated[str, Query(pattern="^(day|week|month|year)$")]
+
+
+def history_rows(period: str, day: date | None, interval: str) -> tuple[datetime, datetime, list]:
+    zone = local_timezone()
+    now = datetime.now(UTC)
+    start, end = history.period_bounds(period, day or now.astimezone(zone).date(), zone)
+    # Half-hourly export needs every reading; coarser views are fine with one per half hour.
+    bucket = 5 if interval == "halfhour" else HALF_HOURLY
+    samples = counter_samples(
+        history.COUNTERS, start - timedelta(days=1), bucket, end + timedelta(hours=1)
+    )
+    gap = timedelta(minutes=15) if interval == "halfhour" else HALF_HOURLY_GAP
+    counters = {name: Counter(series, gap) for name, series in samples.items()}
+    return start, end, history.rows(counters, start, end, interval, zone, schedule(), now)
+
+
+@app.get("/api/history")
+def past_period(period: PERIOD = "day", day: date | None = None) -> dict:
+    """Energy and cost for the day, week, month or year containing `day` (default today)."""
+    zone = local_timezone()
+    now = datetime.now(UTC)
+    start, end, data = history_rows(period, day, history.VIEW_INTERVAL[period])
+    first = first_cost_reading()
+    earliest = first.astimezone(zone) if first else now.astimezone(zone)
+    cost = None
+    if start < now and (first is None or first < end):
+        samples = counter_samples(COST_COUNTERS, start - timedelta(days=1), HALF_HOURLY, end)
+        cost = cost_since(samples, start, min(end, now), zone, schedule(), gap=HALF_HOURLY_GAP)
+    previous_day = (start - timedelta(days=1)).date()
+    return {
+        "period": period,
+        "interval": history.VIEW_INTERVAL[period],
+        "start": start.date(),
+        "end": (end - timedelta(days=1)).date(),
+        "previous": previous_day if start > earliest else None,
+        "next": end.date() if end <= now.astimezone(zone) else None,
+        "rows": data,
+        "totals": history.totals(data),
+        "cost": cost,
+    }
+
+
+@app.get("/api/export.csv")
+def export_csv(
+    period: PERIOD = "day",
+    day: date | None = None,
+    interval: Annotated[str, Query(pattern="^(halfhour|hour|day|month)$")] = "hour",
+) -> Response:
+    """The same figures as a spreadsheet file, at the level of detail asked for."""
+    start, end, data = history_rows(period, day, interval)
+    name = f"energy-{period}-{start:%Y-%m-%d}-{interval}.csv"
+    return Response(
+        history.to_csv(data, local_timezone()),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{name}"'},
+    )
 
 
 # --- Payback -----------------------------------------------------------------------------------

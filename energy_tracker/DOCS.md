@@ -56,6 +56,26 @@ Grid power must be positive when importing, and battery power positive when char
 - "Saved by off-peak" is what the same import would have cost at the dearest rate, minus
   what it did cost.
 
+## History and downloads
+
+**History** shows any past day, week, month or year: solar generated, energy used, imported
+and exported, as totals and as a bar chart split into hours, days or months. Use the arrows
+to step back and forward, and **Latest** to return to the current period. Point at a column
+(or tab to it) to see its figures, or open **Show as a table**.
+
+It is worked out from the energy counters, so it covers the whole of the stored history,
+including anything brought in by **Import older history**.
+
+**Download CSV** saves the period being viewed as a spreadsheet file, with one row per half
+hour, hour, day or month. Columns are energy in kWh for every counter collected, plus import
+cost and export credit in pounds at the rates in force at the time. The standing charge is
+not included in the rows. Times are local, and an empty cell means there was no reading.
+Half-hourly rows are only as detailed as the stored readings: imported history is hourly, so
+its half hours are an even split.
+
+If the download does not start inside the Home Assistant phone app, open Home Assistant in
+a web browser instead.
+
 ## Payback
 
 **Payback** shows how much the system has saved, how much of its cost that covers, and an

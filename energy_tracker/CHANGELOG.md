@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.0
+
+- History: energy and cost for any past day, week, month or year, as a chart and a table.
+- Download any period as a CSV file, by half hour, hour, day or month.
+
 ## 0.7.0
 
 - Payback: optional yearly panel ageing, battery ageing and price change, shown as a second

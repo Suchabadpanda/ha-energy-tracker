@@ -78,6 +78,25 @@
   .lookup { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px; align-items: end;
             padding-bottom: 12px; border-bottom: 1px solid var(--line, rgba(128,128,128,.25)); }
   .lookup label { flex: 1 1 170px; }
+  .filters { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 28px 0 10px; }
+  .filters h2 { margin: 0; }
+  .filters .period-label { font-size: 14px; color: var(--text); font-weight: 600; }
+  .legend span.box::before { height: 10px; width: 10px; border-radius: 2px; }
+  .plot { position: relative; }
+  #history-tip { position: absolute; pointer-events: none; background: var(--card); color: var(--text);
+                 border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font-size: 13px;
+                 box-shadow: 0 4px 14px rgba(0,0,0,.14); min-width: 150px; z-index: 2; }
+  #history-tip .when { color: var(--muted); margin-bottom: 4px; }
+  #history-tip .row { display: flex; justify-content: space-between; gap: 14px; }
+  #history-tip .row span:first-child::before { content: ""; display: inline-block; width: 10px; height: 3px;
+                 border-radius: 2px; background: var(--c); margin-right: 6px; vertical-align: middle; }
+  #history-tip .row strong { font-weight: 600; }
+  .hit { fill: transparent; cursor: default; outline: none; }
+  .hit:hover, .hit:focus { fill: var(--muted); fill-opacity: .1; }
+  a.button { display: inline-block; text-decoration: none; padding: 6px 12px; border: 1px solid var(--line);
+             border-radius: 8px; color: var(--text); background: var(--card); font-size: 14px; }
+  .export-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 12px; font-size: 13px;
+                color: var(--muted); }
   #roi-message { grid-column: 1 / -1; font-size: 13px; min-height: 18px; color: var(--muted); }
   #roi-message.error { color: var(--grid); }
   .legend span.dashed::before { background: repeating-linear-gradient(90deg, var(--c) 0 5px, transparent 5px 8px); }
@@ -166,6 +185,57 @@
     <div class="legend" id="usage-legend"></div>
   </div>
   </div>
+  <div class="filters">
+    <h2 id="history-heading">History</h2>
+    <select id="history-period" aria-label="Length of period">
+      <option value="day">Day</option>
+      <option value="week">Week</option>
+      <option value="month">Month</option>
+      <option value="year">Year</option>
+    </select>
+    <div class="nav">
+      <button type="button" id="history-prev" aria-label="Earlier">&lsaquo;</button>
+      <button type="button" id="history-next" aria-label="Later">&rsaquo;</button>
+      <button type="button" id="history-now">Latest</button>
+    </div>
+    <span class="period-label" id="history-label"></span>
+  </div>
+  <div class="tiles" id="history-tiles"></div>
+  <div class="chart" style="margin-top: 12px;">
+    <div class="empty" id="history-empty" hidden>No readings for this period.</div>
+    <div class="plot">
+      <svg id="history-chart" viewBox="0 0 900 300" role="img" aria-label="Energy in each part of the chosen period"></svg>
+      <div id="history-tip" hidden></div>
+    </div>
+    <div class="legend">
+      <span class="box" style="--c: var(--solar)">Solar generated</span>
+      <span class="box" style="--c: var(--load)">Used</span>
+      <span class="box" style="--c: var(--grid)">Imported</span>
+      <span class="box" style="--c: var(--battery)">Exported</span>
+    </div>
+    <div class="hint" id="history-hint"></div>
+    <details id="history-table-box">
+      <summary>Show as a table</summary>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th id="history-interval-head">When</th><th>Solar</th><th>Used</th><th>Imported</th>
+            <th>Exported</th><th>Import cost</th><th>Export credit</th></tr></thead>
+          <tbody id="history-rows"></tbody>
+        </table>
+      </div>
+    </details>
+    <div class="export-row">
+      <label>Download this period, one row per
+        <select id="history-interval" aria-label="Detail of the download">
+          <option value="halfhour">half hour</option>
+          <option value="hour" selected>hour</option>
+          <option value="day">day</option>
+          <option value="month">month</option>
+        </select></label>
+      <a class="button" id="history-download" href="#" download>Download CSV</a>
+    </div>
+  </div>
+
   <h2 id="years-heading">Costs by year</h2>
   <div class="chart">
     <div class="table-scroll">
@@ -851,6 +921,183 @@ form.addEventListener("submit", async event => {
   }
 });
 
+// --- History -------------------------------------------------------------------------------
+
+const HISTORY_SERIES = [
+  { key: "solar_kwh", label: "Solar generated", color: "var(--solar)" },
+  { key: "consumption_kwh", label: "Used", color: "var(--load)" },
+  { key: "import_kwh", label: "Imported", color: "var(--grid)" },
+  { key: "export_kwh", label: "Exported", color: "var(--battery)" },
+];
+let historyDay = null;      // any date inside the period being viewed; null means the latest
+let historyLinks = {};
+
+const localDate = iso => new Date(iso + "T00:00");
+const fmt = (date, options) => date.toLocaleDateString([], options);
+// Short label under each group of bars, and the fuller one used in the tooltip and table.
+function intervalLabels(row, interval) {
+  const start = new Date(row.start);
+  if (interval === "hour") {
+    const hour = start.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    return [hour.slice(0, 2), hour + " to " + new Date(row.end).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })];
+  }
+  if (interval === "day") {
+    return [String(start.getDate()), fmt(start, { weekday: "short", day: "numeric", month: "short" })];
+  }
+  return [fmt(start, { month: "short" }), fmt(start, { month: "long", year: "numeric" })];
+}
+function periodLabel(data) {
+  const start = localDate(data.start), end = localDate(data.end);
+  if (data.period === "day") return fmt(start, { weekday: "short", day: "numeric", month: "short", year: "numeric" });
+  if (data.period === "week") {
+    return fmt(start, { day: "numeric", month: "short" }) + " to " + fmt(end, { day: "numeric", month: "short", year: "numeric" });
+  }
+  if (data.period === "month") return fmt(start, { month: "long", year: "numeric" });
+  return String(start.getFullYear());
+}
+const kwh = value => value === null || value === undefined ? "–" : value.toFixed(value < 100 ? 1 : 0) + " kWh";
+
+function drawHistory(data) {
+  const svg = document.getElementById("history-chart");
+  const tip = document.getElementById("history-tip");
+  const NS = "http://www.w3.org/2000/svg";
+  const W = 900, H = 300, L = 44, R = 10, T = 12, B = 26;
+  svg.replaceChildren();
+  tip.hidden = true;
+  const rows = data.rows;
+  const values = rows.flatMap(r => HISTORY_SERIES.map(s => r[s.key] ?? 0));
+  const hasData = rows.some(r => HISTORY_SERIES.some(s => r[s.key] !== null && r[s.key] !== undefined));
+  document.getElementById("history-empty").hidden = hasData;
+  svg.style.display = hasData ? "" : "none";
+  if (!hasData) return;
+
+  const add = (tag, attrs, text) => {
+    const node = document.createElementNS(NS, tag);
+    for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v);
+    if (text !== undefined) node.textContent = text;
+    svg.append(node);
+    return node;
+  };
+  const top = Math.max(...values, 0.5) * 1.08;
+  const raw = top / 5, power = 10 ** Math.floor(Math.log10(raw));
+  const step = [1, 2, 5, 10].map(m => m * power).find(s => s >= raw);
+  const y = v => T + (top - v) / top * (H - T - B);
+  for (let v = 0; v <= top; v += step) {
+    add("line", { x1: L, x2: W - R, y1: y(v), y2: y(v), class: "gridline" });
+    add("text", { x: L - 8, y: y(v) + 4, "text-anchor": "end", class: "axis" }, +v.toFixed(2));
+  }
+  add("text", { x: L - 8, y: T - 2, "text-anchor": "end", class: "axis" }, "kWh");
+
+  const band = (W - L - R) / rows.length;
+  const gap = 2, pad = Math.min(8, band * 0.12);
+  const bar = Math.max(1.5, (band - pad * 2 - gap * (HISTORY_SERIES.length - 1)) / HISTORY_SERIES.length);
+  const labelEvery = Math.ceil(rows.length / 16);
+  rows.forEach((row, i) => {
+    const left = L + i * band;
+    const [short, full] = intervalLabels(row, data.interval);
+    HISTORY_SERIES.forEach((series, n) => {
+      const value = row[series.key];
+      if (!value) return;
+      const x = left + pad + n * (bar + gap), h = Math.max(1, y(0) - y(value)), r = Math.min(4, bar / 2, h);
+      // A bar with a rounded top, square at the baseline.
+      add("path", { fill: series.color, d: `M${x},${y(0)}V${y(0) - h + r}a${r},${r} 0 0 1 ${r},${-r}` +
+                    `h${bar - 2 * r}a${r},${r} 0 0 1 ${r},${r}V${y(0)}Z` });
+    });
+    if (i % labelEvery === 0) {
+      add("text", { x: left + band / 2, y: H - 8, "text-anchor": "middle", class: "axis" }, short);
+    }
+    // The whole column is the hover and keyboard target, and lists every series.
+    const hit = add("rect", { x: left, y: T, width: band, height: H - T - B, class: "hit", tabindex: 0,
+                              "aria-label": full + ": " + HISTORY_SERIES.map(s => s.label + " " + kwh(row[s.key])).join(", ") });
+    const show = () => {
+      const heading = Object.assign(document.createElement("div"), { className: "when", textContent: full });
+      const lines = HISTORY_SERIES.map(series => {
+        const line = Object.assign(document.createElement("div"), { className: "row" });
+        line.style.setProperty("--c", series.color);
+        line.append(Object.assign(document.createElement("span"), { textContent: series.label }),
+                    Object.assign(document.createElement("strong"), { textContent: kwh(row[series.key]) }));
+        return line;
+      });
+      tip.replaceChildren(heading, ...lines);
+      tip.hidden = false;
+      const scale = svg.clientWidth / W, centre = (left + band / 2) * scale;
+      const flip = centre > svg.clientWidth / 2;
+      tip.style.left = flip ? "" : (centre + 12) + "px";
+      tip.style.right = flip ? (svg.clientWidth - centre + 12) + "px" : "";
+      tip.style.top = (T * scale) + "px";
+    };
+    for (const name of ["pointerenter", "pointermove", "focus"]) hit.addEventListener(name, show);
+    for (const name of ["pointerleave", "blur"]) hit.addEventListener(name, () => { tip.hidden = true; });
+  });
+  add("line", { x1: L, x2: W - R, y1: y(0), y2: y(0), class: "gridline" });
+}
+
+function renderHistory(data) {
+  historyLinks = { previous: data.previous, next: data.next };
+  document.getElementById("history-prev").disabled = !data.previous;
+  document.getElementById("history-next").disabled = !data.next;
+  document.getElementById("history-label").textContent = periodLabel(data);
+  const t = data.totals, cost = data.cost;
+  const reading = (value, note) => value === undefined ? undefined : { value, note };
+  renderTiles(document.getElementById("history-tiles"), [
+    { metric: "solar", label: "Solar generated", unit: "kWh", digits: 1 },
+    { metric: "used", label: "Used", unit: "kWh", digits: 1 },
+    { metric: "imported", label: "Imported", unit: "kWh", digits: 1 },
+    { metric: "exported", label: "Exported", unit: "kWh", digits: 1 },
+    { metric: "net", label: "Net cost", prefix: "£" },
+  ], {
+    solar: reading(t.solar_kwh), used: reading(t.consumption_kwh), imported: reading(t.import_kwh),
+    exported: reading(t.export_kwh),
+    net: cost ? reading(cost.net_gbp, "with standing charge") : undefined,
+  });
+  drawHistory(data);
+  document.getElementById("history-hint").textContent = cost ? coverageHint({ ...cost, full_period: true }) : "";
+
+  document.getElementById("history-interval-head").textContent =
+    { hour: "Hour", day: "Day", month: "Month" }[data.interval];
+  const cell = text => Object.assign(document.createElement("td"), { textContent: text });
+  const gbp = value => value === null || value === undefined ? "–" : money(value);
+  document.getElementById("history-rows").replaceChildren(...data.rows.map(row => {
+    const tr = document.createElement("tr");
+    tr.append(cell(intervalLabels(row, data.interval)[1]), cell(kwh(row.solar_kwh)), cell(kwh(row.consumption_kwh)),
+              cell(kwh(row.import_kwh)), cell(kwh(row.export_kwh)), cell(gbp(row.import_cost_gbp)),
+              cell(gbp(row.export_credit_gbp)));
+    return tr;
+  }));
+  updateDownload(data);
+}
+
+// Offers only levels of detail finer than the period itself.
+function updateDownload(data) {
+  const select = document.getElementById("history-interval");
+  const allowed = { day: ["halfhour", "hour"], week: ["halfhour", "hour", "day"],
+                    month: ["halfhour", "hour", "day"], year: ["halfhour", "hour", "day", "month"] }[data.period];
+  for (const option of select.options) option.hidden = option.disabled = !allowed.includes(option.value);
+  if (!allowed.includes(select.value)) select.value = allowed[allowed.length - 1];
+  document.getElementById("history-download").href =
+    "api/export.csv?period=" + data.period + "&day=" + data.start + "&interval=" + select.value;
+}
+
+let historyData = null;
+async function refreshHistory() {
+  const period = document.getElementById("history-period").value;
+  const chart = document.getElementById("history-chart");
+  chart.style.opacity = 0.5;  // keep the old picture, dimmed, while the new one loads
+  try {
+    historyData = await getJson("api/history?period=" + period + (historyDay ? "&day=" + historyDay : ""));
+    renderHistory(historyData);
+  } catch (err) {
+    document.getElementById("history-hint").textContent = "Could not load this period (" + err.message + ").";
+  } finally {
+    chart.style.opacity = "";
+  }
+}
+document.getElementById("history-period").addEventListener("change", refreshHistory);
+document.getElementById("history-prev").addEventListener("click", () => { historyDay = historyLinks.previous; refreshHistory(); });
+document.getElementById("history-next").addEventListener("click", () => { historyDay = historyLinks.next; refreshHistory(); });
+document.getElementById("history-now").addEventListener("click", () => { historyDay = null; refreshHistory(); });
+document.getElementById("history-interval").addEventListener("change", () => historyData && updateDownload(historyData));
+
 // --- Payback -------------------------------------------------------------------------------
 
 const roiForm = document.getElementById("roi-form");
@@ -1406,6 +1653,9 @@ refreshCompare();
 setInterval(refreshCompare, 30 * 60 * 1000);
 refreshPayback();
 setInterval(refreshPayback, 30 * 60 * 1000);
+refreshHistory();
+// Keep the latest period current; a past period being browsed is left alone.
+setInterval(() => { if (!historyDay) refreshHistory(); }, 5 * 60 * 1000);
 </script>
 </body>
 </html>
