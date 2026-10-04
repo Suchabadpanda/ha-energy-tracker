@@ -1,0 +1,34 @@
+[project]
+name = "energy-tracker"
+version = "0.3.0"
+description = "Collects home energy readings from Home Assistant and serves a LAN dashboard"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "httpx>=0.27",
+    "tzdata>=2024.1",  # time zone data, so Europe/London works inside the container
+    "websockets>=13",
+    "openpyxl>=3.1",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "ruff>=0.6",
+]
+
+[tool.uv]
+# Run straight from src/ (PYTHONPATH) rather than building a wheel.
+package = false
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+src = ["src"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]

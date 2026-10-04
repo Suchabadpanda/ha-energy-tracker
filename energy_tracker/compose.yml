@@ -1,0 +1,29 @@
+# For development on the VM. The 24/7 copy runs on Home Assistant as an add-on instead.
+#
+# Start:      docker compose up -d --build
+# View logs:  docker compose logs -f
+# Stop:       docker compose down          (readings are kept in the "data" volume)
+
+services:
+  app:
+    build: .
+    image: energy-tracker:local
+    restart: unless-stopped
+    environment:
+      HA_URL: ${HA_URL:?Run scripts/init-env.sh first}
+      HA_TOKEN: ${HA_TOKEN:?Run scripts/init-env.sh first}
+      POLL_SECONDS: ${POLL_SECONDS:-60}
+      BACKFILL_DAYS: ${BACKFILL_DAYS:-10}
+      DATABASE_PATH: /data/energy.db
+    volumes:
+      - data:/data
+    # Dashboard on http://<vm-ip>/ . Docker-published ports bypass UFW, so this is open to
+    # anything that can reach the VM: fine on a home LAN, but never forward it to the internet.
+    ports:
+      - "80:8000"
+    deploy:
+      resources:
+        limits: { cpus: "1.0", memory: 256M }
+
+volumes:
+  data:

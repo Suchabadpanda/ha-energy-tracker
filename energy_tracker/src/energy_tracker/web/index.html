@@ -1,0 +1,855 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Energy Tracker</title>
+<style>
+  :root {
+    --bg: #f5f6f4; --card: #ffffff; --text: #1c2321; --muted: #66706c; --line: #dfe3e0;
+    --solar: #c98a00; --load: #3b6fb6; --grid: #b0483c; --battery: #2f8f6b;
+    --heatpump: #b8592a; --ev: #7a52b3; --house: #3b6fb6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #151917; --card: #1e2421; --text: #e8ece9; --muted: #98a39e; --line: #2e3632;
+      --solar: #f0b429; --load: #7aa7e6; --grid: #e5796c; --battery: #5cc79e;
+      --heatpump: #e8956a; --ev: #b79be8; --house: #7aa7e6;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 24px 16px 40px; background: var(--bg); color: var(--text);
+         font: 16px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 980px; margin: 0 auto; }
+  header { display: flex; justify-content: space-between; align-items: baseline;
+           flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
+  h1 { font-size: 22px; margin: 0; }
+  h2 { font-size: 14px; font-weight: 600; color: var(--muted); margin: 28px 0 10px;
+       text-transform: uppercase; letter-spacing: .05em; }
+  #status { color: var(--muted); font-size: 14px; }
+  #status.stale { color: var(--grid); }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
+  .tile { background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+          padding: 14px 16px; }
+  .tile .label { color: var(--muted); font-size: 13px; }
+  .tile .value { font-size: 26px; font-weight: 600; font-variant-numeric: tabular-nums;
+                 margin-top: 2px; }
+  .tile .value small { font-size: 14px; font-weight: 400; color: var(--muted); margin-left: 3px; }
+  .tile .note { color: var(--muted); font-size: 13px; min-height: 18px; }
+  .section-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+                  margin: 28px 0 10px; }
+  .section-head h2 { margin: 0; }
+  .nav { display: flex; gap: 6px; }
+  .nav button { padding: 3px 10px; font-size: 14px; line-height: 1.3; }
+  .nav button:disabled { opacity: .35; cursor: default; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  td button.link { color: var(--text); font-size: 14px; text-decoration: underline;
+                   text-decoration-color: var(--line); text-underline-offset: 3px; }
+  .hint { color: var(--muted); font-size: 13px; margin: 8px 2px 0; min-height: 18px; }
+  .chart { background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+           padding: 14px 16px; }
+  svg { width: 100%; height: auto; display: block; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 8px 10px 8px 0; border-bottom: 1px solid var(--line);
+           vertical-align: top; }
+  th { color: var(--muted); font-weight: 500; font-size: 13px; }
+  .table-scroll { overflow-x: auto; }
+  .tag { font-size: 12px; color: var(--battery); border: 1px solid currentColor;
+         border-radius: 4px; padding: 1px 6px; margin-left: 6px; white-space: nowrap; }
+  details { margin-top: 14px; }
+  summary { cursor: pointer; font-weight: 600; font-size: 14px; }
+  form { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+         gap: 12px 16px; margin-top: 14px; }
+  form label { display: flex; flex-direction: column; gap: 4px; font-size: 13px;
+               color: var(--muted); }
+  form label.wide { grid-column: 1 / -1; flex-direction: row; align-items: center; gap: 8px; }
+  input, select, button { font: inherit; color: var(--text); background: var(--bg);
+                          border: 1px solid var(--line); border-radius: 6px; padding: 7px 9px; }
+  input[type=checkbox] { width: 16px; height: 16px; padding: 0; }
+  button { cursor: pointer; background: var(--card); }
+  button.primary { background: var(--load); border-color: var(--load); color: #fff;
+                   font-weight: 600; justify-self: start; }
+  button.link { border: none; background: none; padding: 0; color: var(--grid); font-size: 13px; }
+  #tariff-message { grid-column: 1 / -1; font-size: 13px; min-height: 18px; color: var(--muted); }
+  #tariff-message.error, #import-message.error { color: var(--grid); }
+  #import-message { grid-column: 1 / -1; font-size: 13px; line-height: 1.6; color: var(--muted); }
+  .actions { grid-column: 1 / -1; display: flex; gap: 10px; }
+  .axis { fill: var(--muted); font-size: 11px; }
+  .gridline { stroke: var(--line); stroke-width: 1; }
+  .zero { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 3 3; }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 18px; margin-top: 10px; font-size: 13px;
+            color: var(--muted); }
+  .legend span::before { content: ""; display: inline-block; width: 14px; height: 3px;
+                         border-radius: 2px; margin-right: 6px; vertical-align: middle;
+                         background: var(--c); }
+  .empty { color: var(--muted); padding: 30px 0; text-align: center; }
+  #notice { border: 1px solid var(--grid); border-radius: 10px; padding: 12px 14px;
+            margin: 14px 0 0; font-size: 14px; line-height: 1.5; }
+  footer { color: var(--muted); font-size: 12px; margin: 26px 2px 8px; text-align: center; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Energy Tracker</h1>
+    <div id="status">Loading…</div>
+  </header>
+
+  <div id="notice" role="alert" hidden>
+    <strong>No Sigenergy sensors were found in Home Assistant.</strong>
+    This app is built for Sigenergy solar and battery systems and reads the sensors created
+    by the Sigenergy integration, so it has nothing to show yet. If you have a Sigenergy
+    system, check that its integration is set up. For other systems, or sensors with different
+    names, see "Using different sensors" in the documentation.
+  </div>
+
+  <h2>Right now</h2>
+  <div class="tiles" id="now"></div>
+
+  <h2>Where it's going</h2>
+  <div class="tiles" id="usage"></div>
+
+  <h2>Today</h2>
+  <div class="tiles" id="today"></div>
+
+  <div id="devices-section">
+    <h2>Today by device</h2>
+    <div class="tiles" id="devices"></div>
+    <div class="hint" id="devices-hint"></div>
+  </div>
+
+  <h2>Cost today</h2>
+  <div class="tiles" id="cost"></div>
+  <div class="hint" id="cost-hint"></div>
+
+  <div class="section-head">
+    <h2 id="month-title">Cost this month</h2>
+    <div class="nav">
+      <button type="button" id="month-prev" aria-label="Previous month">&lsaquo;</button>
+      <button type="button" id="month-next" aria-label="Next month">&rsaquo;</button>
+      <button type="button" id="month-current">This month</button>
+    </div>
+  </div>
+  <div class="tiles" id="month"></div>
+  <div class="hint" id="month-hint"></div>
+
+  <h2>Power flows, last 24 hours (kW)</h2>
+  <div class="chart">
+    <div class="empty" id="flows-empty" hidden>No history yet. The chart fills in as readings are collected.</div>
+    <svg id="flows" viewBox="0 0 900 300" role="img" aria-label="Power flows over the last 24 hours"></svg>
+    <div class="legend">
+      <span style="--c: var(--solar)">Solar</span>
+      <span style="--c: var(--load)">Total consumption</span>
+      <span style="--c: var(--grid)">Grid (above zero = import, below = export)</span>
+      <span style="--c: var(--battery)">Battery (above zero = charging, below = discharging)</span>
+    </div>
+  </div>
+
+  <div id="usage-section">
+  <h2>Consumption breakdown, last 24 hours (kW)</h2>
+  <div class="chart">
+    <div class="empty" id="usage-empty" hidden>No history yet. The chart fills in as readings are collected.</div>
+    <svg id="usage-chart" viewBox="0 0 900 300" role="img" aria-label="Consumption split by heat pump, EV charger and the rest of the house"></svg>
+    <div class="legend" id="usage-legend"></div>
+  </div>
+  </div>
+  <h2>Costs by year</h2>
+  <div class="chart">
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>Year</th><th class="num">Imported</th><th class="num">Import cost</th>
+          <th class="num">Export credit</th><th class="num">Standing charge</th>
+          <th class="num">Net cost</th><th class="num">Saved by off-peak</th></tr></thead>
+        <tbody id="year-rows"></tbody>
+      </table>
+    </div>
+    <div class="hint" id="year-hint"></div>
+    <details id="months-by-year">
+      <summary>Net cost month by month</summary>
+      <div class="table-scroll">
+        <table>
+          <thead id="month-grid-head"></thead>
+          <tbody id="month-grid"></tbody>
+        </table>
+      </div>
+      <div class="hint">Choose a month to open it above. * means only part of the month was counted.</div>
+    </details>
+  </div>
+
+  <h2>Tariff rates</h2>
+  <div class="chart">
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>From</th><th>Tariff</th><th>Import</th><th>Export</th>
+          <th>Standing charge</th><th></th></tr></thead>
+        <tbody id="tariff-rows"></tbody>
+      </table>
+    </div>
+    <details id="tariff-editor">
+      <summary>Add or change rates</summary>
+      <div class="hint">For a price change, enter the date the new rates start: earlier days keep
+        their old rates. To correct rates already listed, choose Edit on that row. Enter prices
+        as they appear on your bill before VAT and set VAT to 5, or enter prices that already
+        include VAT and set VAT to 0. VAT is added to import and the standing charge, not to
+        export.</div>
+      <form id="tariff-form">
+        <label>Rates start on <input type="date" name="effective_from" required></label>
+        <label>Tariff name <input type="text" name="name" maxlength="80" required></label>
+        <label>Export (p per kWh)
+          <input type="number" name="export" min="0" step="0.001" required></label>
+        <label>Standing charge (p per day)
+          <input type="number" name="standing" min="0" step="0.001" required></label>
+        <label>VAT to add (%)
+          <input type="number" name="vat" min="0" max="100" step="0.1" required></label>
+        <label class="wide"><input type="checkbox" name="flat"> One import price all day</label>
+        <label class="cheap">Cheap rate from <select name="cheap_start"></select></label>
+        <label class="cheap">Cheap rate until <select name="cheap_end"></select></label>
+        <label class="cheap">Cheap rate (p per kWh)
+          <input type="number" name="cheap_rate" min="0" step="0.001"></label>
+        <label><span id="other-label">All other times (p per kWh)</span>
+          <input type="number" name="other_rate" min="0" step="0.001" required></label>
+        <button class="primary" type="submit">Save rates</button>
+        <div id="tariff-message"></div>
+      </form>
+    </details>
+  </div>
+
+  <h2>Older history</h2>
+  <div class="chart">
+    <div class="hint">Brings in energy use from before this app started collecting, so earlier
+      months and years have costs too. Hourly history comes from Home Assistant. For the time
+      before Home Assistant has any, add an export from the mySigen app (hourly is best).
+      Safe to run more than once.</div>
+    <details id="import-editor">
+      <summary>Import older history</summary>
+      <form id="import-form">
+        <label class="wide">Sigenergy export (.xlsx), optional
+          <input type="file" name="file" accept=".xlsx"></label>
+        <div class="actions">
+          <button type="button" id="import-check">Check only</button>
+          <button class="primary" type="submit">Import</button>
+        </div>
+        <div id="import-message"></div>
+      </form>
+    </details>
+  </div>
+
+  <footer>Built for Sigenergy solar and battery systems. Costs are estimates from the
+    inverter's own counters and will differ slightly from your bill.</footer>
+</main>
+
+<script>
+// The Sigenergy "smart load" meter measures the heat pump and EV charger circuit together,
+// and the Tesla Wall Connector measures the EV charger on its own. So:
+//   heat pump     = that circuit - EV charger
+//   rest of house = total consumption - that circuit
+// The sensors update at slightly different moments, so a result can dip below zero for a
+// reading or two when something switches on or off; it is clamped at zero.
+// Which optional equipment exists (from api/setup). Tiles for anything missing are left out.
+let setup = { smart_load: true, ev_charger: true, ev_on_smart_load: true,
+              smart_load_label: "Heat pump", sigenergy_found: true };
+// True when the EV charger's use is part of the smart load figure and must be taken off it.
+const evInsideSmartLoad = () => setup.smart_load && setup.ev_charger && setup.ev_on_smart_load;
+
+// The smart load on its own (e.g. the heat pump): its circuit, less the EV charger if that
+// is wired through it.
+const heatPumpPower = (circuit, ev) =>
+  Math.max(0, circuit - (evInsideSmartLoad() ? (ev ?? 0) : 0));
+// Everything not separately measured.
+const restOfHouse = (load, circuit, ev) => {
+  const smart = setup.smart_load ? circuit : undefined;
+  const charger = setup.ev_charger ? ev : undefined;
+  const measured = evInsideSmartLoad() ? (smart ?? charger ?? 0) : (smart ?? 0) + (charger ?? 0);
+  return Math.max(0, load - measured);
+};
+// Drops tiles (or chart layers) for equipment that is not installed.
+const installed = items => items.filter(item =>
+  item.needs === "smart_load" ? setup.smart_load
+  : item.needs === "ev_charger" ? setup.ev_charger
+  : item.needs === "any" ? setup.smart_load || setup.ev_charger
+  : true).map(item => item.needs === "smart_load" ? { ...item, label: setup.smart_load_label } : item);
+
+const NOW_TILES = [
+  { metric: "pv_power", label: "Solar", unit: "kW" },
+  { metric: "grid_power", label: "Grid", unit: "kW", abs: true,
+    note: v => Math.abs(v) < 0.02 ? "Idle" : v > 0 ? "Importing" : "Exporting" },
+  { metric: "battery_power", label: "Battery", unit: "kW", abs: true,
+    note: v => Math.abs(v) < 0.02 ? "Idle" : v > 0 ? "Charging" : "Discharging" },
+  { metric: "battery_soc", label: "Battery charge", unit: "%", digits: 0 },
+];
+const USAGE_TILES = [
+  { metric: "load_power", label: "Total consumption", unit: "kW" },
+  { metric: "rest_power", label: "Rest of house", unit: "kW", needs: "any" },
+  { metric: "heat_pump_power", label: "Heat pump", unit: "kW", needs: "smart_load" },
+  { metric: "ev_charger_power", label: "EV charger", unit: "kW", needs: "ev_charger" },
+];
+const TODAY_TILES = [
+  { metric: "pv_energy_today", label: "Solar generated", unit: "kWh", digits: 1 },
+  { metric: "load_energy_today", label: "Used (total)", unit: "kWh", digits: 1 },
+  { metric: "import_energy_today", label: "Imported", unit: "kWh", digits: 1 },
+  { metric: "export_energy_today", label: "Exported", unit: "kWh", digits: 1 },
+];
+const DEVICE_TILES = [
+  { metric: "heat_pump_kwh", label: "Heat pump", unit: "kWh", digits: 1, needs: "smart_load" },
+  { metric: "ev_charger_kwh", label: "EV charger", unit: "kWh", digits: 1, needs: "ev_charger" },
+  { metric: "rest_kwh", label: "Rest of house", unit: "kWh", digits: 1 },
+];
+const COST_TILES = [
+  { metric: "net_gbp", label: "Net cost so far", prefix: "£" },
+  { metric: "import_gbp", label: "Import", prefix: "£" },
+  { metric: "export_credit_gbp", label: "Export credit", prefix: "£" },
+  { metric: "standing_charge_gbp", label: "Standing charge", prefix: "£" },
+  { metric: "saved_gbp", label: "Saved by off-peak", prefix: "£" },
+];
+const FLOW_LINES = [
+  { metric: "pv_power", color: "var(--solar)" },
+  { metric: "load_power", color: "var(--load)" },
+  { metric: "grid_power", color: "var(--grid)" },
+  { metric: "battery_power", color: "var(--battery)" },
+];
+// Bottom layer first.
+const USAGE_LAYERS = [
+  { metric: "rest_power", color: "var(--house)", label: "Rest of house" },
+  { metric: "heat_pump_power", color: "var(--heatpump)", label: "Heat pump", needs: "smart_load" },
+  { metric: "ev_charger_power", color: "var(--ev)", label: "EV charger", needs: "ev_charger" },
+];
+// If two neighbouring points are further apart than this, nothing was collected in between
+// (the app was stopped), so the chart leaves a gap instead of joining them.
+const GAP_MS = 15 * 60 * 1000;
+
+const SERIES_METRICS = ["pv_power", "load_power", "grid_power", "battery_power",
+                        "smart_load_power", "ev_charger_power"];
+
+function renderTiles(el, tiles, latest) {
+  el.replaceChildren(...tiles.map(t => {
+    const reading = latest[t.metric];
+    const tile = document.createElement("div");
+    tile.className = "tile";
+    const label = document.createElement("div");
+    label.className = "label";
+    label.textContent = t.label;
+    const value = document.createElement("div");
+    value.className = "value";
+    const note = document.createElement("div");
+    note.className = "note";
+    if (reading) {
+      const v = reading.value;
+      value.textContent = (t.prefix ?? "") + (t.abs ? Math.abs(v) : v).toFixed(t.digits ?? 2);
+      if (t.unit) {
+        const unit = document.createElement("small");
+        unit.textContent = t.unit;
+        value.append(unit);
+      }
+      if (t.note) note.textContent = t.note(v);
+      else if (reading.note) note.textContent = reading.note;
+    } else {
+      value.textContent = "–";
+      note.textContent = "No data";
+    }
+    tile.append(label, value, note);
+    return tile;
+  }));
+}
+
+// Adds the two calculated series (heat pump, rest of house), bucket by bucket.
+function withDerived(series) {
+  const lookup = name => new Map((series[name] ?? []).map(([t, v]) => [t, v]));
+  const circuit = lookup("smart_load_power"), ev = lookup("ev_charger_power");
+  return {
+    ...series,
+    heat_pump_power: (series.smart_load_power ?? []).map(([t, v]) => [t, heatPumpPower(v, ev.get(t))]),
+    rest_power: (series.load_power ?? []).map(([t, v]) =>
+      [t, restOfHouse(v, circuit.get(t), ev.get(t))]),
+  };
+}
+
+// Draws axes for a 24-hour chart and returns helpers for plotting on it.
+function chartFrame(svgId, emptyId, values) {
+  const svg = document.getElementById(svgId);
+  const NS = "http://www.w3.org/2000/svg";
+  const W = 900, H = 300, L = 44, R = 10, T = 10, B = 26;
+  svg.replaceChildren();
+  document.getElementById(emptyId).hidden = values.length > 1;
+  if (values.length < 2) return null;
+
+  const end = Date.now(), start = end - 24 * 3600 * 1000;
+  const lo = Math.min(0, ...values), hi = Math.max(1, ...values);
+  const pad = (hi - lo) * 0.08;
+  const yMin = lo < 0 ? lo - pad : 0, yMax = hi + pad;
+  const x = t => L + (t - start) / (end - start) * (W - L - R);
+  const y = v => T + (yMax - v) / (yMax - yMin) * (H - T - B);
+  const add = (tag, attrs, text) => {
+    const node = document.createElementNS(NS, tag);
+    for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v);
+    if (text !== undefined) node.textContent = text;
+    svg.append(node);
+  };
+
+  const step = Math.max(1, Math.ceil((yMax - yMin) / 5));
+  for (let v = Math.ceil(yMin / step) * step; v <= yMax; v += step) {
+    add("line", { x1: L, x2: W - R, y1: y(v), y2: y(v), class: v === 0 ? "zero" : "gridline" });
+    add("text", { x: L - 8, y: y(v) + 4, "text-anchor": "end", class: "axis" }, v);
+  }
+  for (let h = 0; h <= 24; h += 4) {
+    const t = start + h * 3600 * 1000;
+    const label = new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    add("text", { x: x(t), y: H - 8, "text-anchor": h === 0 ? "start" : h === 24 ? "end" : "middle",
+                  class: "axis" }, label);
+  }
+  const inRange = data => data.map(([t, v]) => [new Date(t).getTime(), v]).filter(p => p[0] >= start);
+  const path = pts => pts.map(([t, v], i) => `${i ? "L" : "M"}${x(t).toFixed(1)},${y(v).toFixed(1)}`).join("");
+  // Splits a list of [time, value] points wherever there is a gap in collection.
+  const segments = pts => {
+    const out = [];
+    for (const p of pts) {
+      const current = out[out.length - 1];
+      if (current && p[0] - current[current.length - 1][0] <= GAP_MS) current.push(p);
+      else out.push([p]);
+    }
+    return out.filter(seg => seg.length > 1);
+  };
+  return { add, inRange, path, segments };
+}
+
+function renderFlows(series) {
+  const values = FLOW_LINES.flatMap(l => (series[l.metric] ?? []).map(p => p[1]));
+  const frame = chartFrame("flows", "flows-empty", values);
+  if (!frame) return;
+  for (const line of FLOW_LINES) {
+    const d = frame.segments(frame.inRange(series[line.metric] ?? [])).map(frame.path).join("");
+    if (!d) continue;
+    frame.add("path", { d, fill: "none", stroke: line.color,
+                        "stroke-width": 2, "stroke-linejoin": "round" });
+  }
+}
+
+// Stacked areas: the top edge of the stack is total consumption.
+function renderUsage(series) {
+  const times = (series.rest_power ?? []).map(p => p[0]);
+  const layers = installed(USAGE_LAYERS);
+  document.getElementById("usage-legend").replaceChildren(...layers.map(layer => {
+    const item = document.createElement("span");
+    item.style.setProperty("--c", layer.color);
+    item.textContent = layer.label;
+    return item;
+  }));
+  const lookups = layers.map(l => new Map(series[l.metric] ?? []));
+  let base = times.map(() => 0);
+  const stacks = lookups.map(lookup => {
+    const top = times.map((t, i) => base[i] + Math.max(0, lookup.get(t) ?? 0));
+    const layer = { bottom: base, top };
+    base = top;
+    return layer;
+  });
+  const frame = chartFrame("usage-chart", "usage-empty", base);
+  if (!frame) return;
+  // Points carry their index so each layer's top and bottom edges can be looked up per segment.
+  const runs = frame.segments(frame.inRange(times.map((t, i) => [t, i])));
+  layers.forEach((layer, n) => {
+    const d = runs.map(run => {
+      const top = run.map(([t, i]) => [t, stacks[n].top[i]]);
+      const bottom = run.map(([t, i]) => [t, stacks[n].bottom[i]]).reverse();
+      return frame.path(top) + frame.path(bottom).replace("M", "L") + "Z";
+    }).join("");
+    if (!d) return;
+    frame.add("path", { d, fill: layer.color, "fill-opacity": 0.75, stroke: layer.color,
+                        "stroke-width": 1, "stroke-linejoin": "round" });
+  });
+}
+
+const sameDay = (a, b) => a.toDateString() === b.toDateString();
+// "10:50" for today, "3 Oct, 23:10" for another day.
+const when = iso => {
+  const d = new Date(iso);
+  const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return sameDay(d, new Date()) ? time
+    : d.toLocaleDateString([], { day: "numeric", month: "short" }) + ", " + time;
+};
+
+// Explains when a figure doesn't cover the whole period, or covers time with no readings.
+function coverageHint(part) {
+  const notes = [];
+  if (!part.full_period) notes.push("Counted since " + when(part.since) + ", when these readings started.");
+  if (part.estimated_hours > 0) {
+    const hours = part.estimated_hours;
+    notes.push("Includes " + (hours >= 48 ? Math.round(hours / 24) + " days" : hours + " h") +
+      " without detailed readings; the time of day for that part is estimated.");
+  }
+  return notes.join(" ");
+}
+
+const asReadings = (part, notes = {}) => Object.fromEntries(Object.entries(part ?? {})
+  .filter(([, v]) => typeof v === "number").map(([k, v]) => [k, { value: v, note: notes[k] }]));
+
+function renderCost(tilesId, hintId, cost, finished = false) {
+  // Under the import tile, show how many kWh fell in each price band.
+  const bands = (cost?.import_bands ?? [])
+    .map(b => b.kwh.toFixed(1) + " kWh at " + b.p_per_kwh + "p").join(", ");
+  const days = cost?.standing_charge_days;
+  // A month that is over shows its final cost, not a running total.
+  const tiles = COST_TILES.map(t => finished && t.metric === "net_gbp" ? { ...t, label: "Net cost" } : t);
+  renderTiles(document.getElementById(tilesId), tiles, asReadings(cost, {
+    import_gbp: bands,
+    export_credit_gbp: cost ? cost.export_kwh.toFixed(1) + " kWh" : "",
+    standing_charge_gbp: days > 1 ? days + " days" : "",
+    saved_gbp: cost ? "£" + cost.all_day_rate_gbp.toFixed(2) + " if all at the day rate" : "",
+  }));
+  document.getElementById(hintId).textContent = cost
+    ? [cost.tariff + ".",
+       cost.vat_percent ? "Costs include " + cost.vat_percent + "% VAT; prices shown are before VAT." : "",
+       cost.standing_charge_gbp ? "" : "Standing charge not set: add it under Tariff rates.",
+       coverageHint(cost)].filter(Boolean).join(" ")
+    : "";
+}
+
+function renderToday(today, month) {
+  const energy = today?.energy;
+  renderTiles(document.getElementById("devices"), installed(DEVICE_TILES), asReadings(energy));
+  document.getElementById("devices-hint").textContent = energy ? coverageHint(energy) : "";
+  renderCost("cost", "cost-hint", today?.cost);
+  renderCost("month", "month-hint", month?.cost, month ? !month.is_current : false);
+  if (month) {
+    document.getElementById("month-title").textContent = "Cost in " + month.month;
+    if (!month.cost) document.getElementById("month-hint").textContent = "No readings for this month.";
+    monthLinks = { previous: month.previous, next: month.next };
+    document.getElementById("month-prev").disabled = !month.previous;
+    document.getElementById("month-next").disabled = !month.next;
+    document.getElementById("month-current").disabled = month.is_current;
+  }
+}
+
+// --- Month navigation and costs by year --------------------------------------------------
+
+let selectedMonth = null;  // null = the current month; otherwise "YYYY-MM"
+let monthLinks = { previous: null, next: null };
+
+function showMonth(key) {
+  selectedMonth = key;
+  refresh();
+}
+document.getElementById("month-prev").addEventListener("click", () => showMonth(monthLinks.previous));
+document.getElementById("month-next").addEventListener("click", () => showMonth(monthLinks.next));
+document.getElementById("month-current").addEventListener("click", () => showMonth(null));
+
+const money = value => "£" + value.toFixed(2);
+
+function renderYears(data) {
+  const cell = (text, numeric = true) => {
+    const td = document.createElement("td");
+    td.textContent = text;
+    if (numeric) td.className = "num";
+    return td;
+  };
+  const years = data.years.filter(y => y.cost);
+
+  document.getElementById("year-rows").replaceChildren(...years.map(y => {
+    const tr = document.createElement("tr");
+    const name = cell(String(y.year), false);
+    if (!y.cost.full_period) {
+      const tag = document.createElement("span");
+      tag.className = "tag";
+      tag.textContent = "Part year";
+      name.append(tag);
+    }
+    tr.append(name, cell(y.cost.import_kwh.toFixed(0) + " kWh"), cell(money(y.cost.import_gbp)),
+      cell(money(y.cost.export_credit_gbp)), cell(money(y.cost.standing_charge_gbp)),
+      cell(money(y.cost.net_gbp)), cell(money(y.cost.saved_gbp)));
+    return tr;
+  }));
+  document.getElementById("year-hint").textContent = years.length
+    ? years.filter(y => !y.cost.full_period)
+        .map(y => {
+          const since = new Date(y.cost.since);
+          const fromJanuary = since.getMonth() === 0 && since.getDate() === 1;
+          return fromJanuary ? y.year + " is the year so far."
+            : y.year + " is counted from " + since.toLocaleDateString([], { day: "numeric", month: "long" }) + ".";
+        }).join(" ")
+    : "No readings yet.";
+
+  const head = document.createElement("tr");
+  const corner = document.createElement("th");
+  corner.textContent = "Month";
+  head.append(corner, ...years.map(y => {
+    const th = document.createElement("th");
+    th.className = "num";
+    th.textContent = y.year;
+    return th;
+  }));
+  document.getElementById("month-grid-head").replaceChildren(head);
+
+  document.getElementById("month-grid").replaceChildren(...Array.from({ length: 12 }, (_, i) => {
+    const tr = document.createElement("tr");
+    tr.append(cell(years[0]?.months[i].label ?? "", false), ...years.map(y => {
+      const m = y.months[i];
+      const td = cell("–");
+      if (m.cost) {
+        const button = document.createElement("button");
+        button.className = "link";
+        button.type = "button";
+        button.textContent = money(m.cost.net_gbp) + (m.cost.full_period ? "" : " *");
+        button.addEventListener("click", () => {
+          showMonth(m.key);
+          document.getElementById("month-title").scrollIntoView({ block: "center" });
+        });
+        td.replaceChildren(button);
+      }
+      return td;
+    }));
+    return tr;
+  }));
+}
+
+// --- Tariff rates --------------------------------------------------------------------------
+
+const form = document.getElementById("tariff-form");
+const clockOf = m => String(Math.floor(m / 60)).padStart(2, "0") + ":" + String(m % 60).padStart(2, "0");
+const minutesOf = text => { const [h, m] = text.split(":").map(Number); return h * 60 + m; };
+
+for (const name of ["cheap_start", "cheap_end"]) {
+  for (let m = 0; m < 1440; m += 30) form.elements[name].add(new Option(clockOf(m), m));
+}
+
+// Turns "cheap from A until B" into bands covering the whole day. B before A means the
+// cheap window runs past midnight (e.g. 23:30 until 05:30).
+function bandsFrom(start, end, cheap, other) {
+  const band = (a, b, p) => ({ start: clockOf(a), end: clockOf(b), p_per_kwh: p });
+  if (start === end) throw new Error("The cheap rate must start and end at different times.");
+  if (end === 0) end = 1440;
+  if (start < end) {
+    return [start > 0 && band(0, start, other), band(start, end, cheap),
+            end < 1440 && band(end, 1440, other)].filter(Boolean);
+  }
+  return [band(0, end, cheap), band(end, start, other), band(start, 1440, cheap)];
+}
+
+function syncFlat() {
+  const flat = form.elements.flat.checked;
+  for (const el of form.querySelectorAll(".cheap")) el.hidden = flat;
+  form.elements.cheap_rate.required = !flat;
+  document.getElementById("other-label").textContent =
+    flat ? "Import (p per kWh)" : "All other times (p per kWh)";
+}
+form.elements.flat.addEventListener("change", syncFlat);
+
+// Start the form from the rates in force now, so only what changed needs retyping.
+function fillForm(period, startDate) {
+  const bands = period.import_bands;
+  const rates = bands.map(b => b.p_per_kwh);
+  const cheap = Math.min(...rates), other = Math.max(...rates);
+  const flat = cheap === other;
+  form.elements.effective_from.value = startDate ?? new Date().toLocaleDateString("en-CA");
+  form.elements.name.value = period.name;
+  form.elements.export.value = period.export_p_per_kwh;
+  form.elements.standing.value = period.standing_charge_p_per_day;
+  form.elements.vat.value = period.vat_percent ?? 0;
+  form.elements.flat.checked = flat;
+  form.elements.other_rate.value = other;
+  if (!flat) {
+    const cheapBands = bands.filter(b => b.p_per_kwh === cheap);
+    const wraps = cheapBands.length > 1;
+    form.elements.cheap_rate.value = cheap;
+    form.elements.cheap_start.value = minutesOf(cheapBands[wraps ? 1 : 0].start);
+    form.elements.cheap_end.value = minutesOf(cheapBands[0].end) % 1440;
+  }
+  syncFlat();
+}
+
+let formFilled = false;
+function renderTariffs(data) {
+  const cell = text => { const td = document.createElement("td"); td.textContent = text; return td; };
+  const rows = data.periods.map((period, index) => {
+    const tr = document.createElement("tr");
+    const from = cell(index === 0 ? "The start"
+      : new Date(period.effective_from + "T00:00").toLocaleDateString([], { dateStyle: "medium" }));
+    if (period.effective_from === data.current_from) {
+      const tag = document.createElement("span");
+      tag.className = "tag";
+      tag.textContent = "In use now";
+      from.append(tag);
+    }
+    const actions = document.createElement("td");
+    const action = (label, onClick) => {
+      const button = document.createElement("button");
+      button.className = "link";
+      button.type = "button";
+      button.textContent = label;
+      button.style.marginRight = "12px";
+      button.addEventListener("click", onClick);
+      actions.append(button);
+    };
+    action("Edit", () => {
+      fillForm(period, period.effective_from);
+      document.getElementById("tariff-editor").open = true;
+      tariffMessage("Editing the rates that start " + (index === 0 ? "at the beginning" : "on " + period.effective_from) + ".");
+      form.scrollIntoView({ block: "nearest" });
+    });
+    if (data.periods.length > 1) action("Remove", () => removeTariff(period.effective_from));
+    tr.append(from, cell(period.name),
+      cell(period.import_bands.map(b => b.start + "–" + b.end + ": " + b.p_per_kwh + "p").join(", ")
+           + (period.vat_percent ? " (+" + period.vat_percent + "% VAT)" : "")),
+      cell(period.export_p_per_kwh + "p"), cell(period.standing_charge_p_per_day + "p a day"), actions);
+    return tr;
+  });
+  document.getElementById("tariff-rows").replaceChildren(...rows);
+  if (!formFilled) {
+    fillForm(data.periods.find(p => p.effective_from === data.current_from));
+    formFilled = true;
+  }
+}
+
+function tariffMessage(text, isError = false) {
+  const el = document.getElementById("tariff-message");
+  el.textContent = text;
+  el.className = isError ? "error" : "";
+}
+
+async function sendTariff(url, options) {
+  const response = await fetch(url, options);
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const detail = Array.isArray(body.detail) ? body.detail.map(d => d.msg).join("; ") : body.detail;
+    throw new Error(detail || "The server refused the change (" + response.status + ").");
+  }
+  return body;
+}
+
+form.addEventListener("submit", async event => {
+  event.preventDefault();
+  try {
+    const f = form.elements;
+    const other = Number(f.other_rate.value);
+    const import_bands = f.flat.checked
+      ? [{ start: "00:00", end: "24:00", p_per_kwh: other }]
+      : bandsFrom(Number(f.cheap_start.value), Number(f.cheap_end.value),
+                  Number(f.cheap_rate.value), other);
+    const data = await sendTariff("api/tariffs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: f.name.value, effective_from: f.effective_from.value,
+        export_p_per_kwh: Number(f.export.value),
+        standing_charge_p_per_day: Number(f.standing.value),
+        vat_percent: Number(f.vat.value), import_bands,
+      }),
+    });
+    renderTariffs(data);
+    tariffMessage("Saved. Costs on this page now use the updated rates.");
+    refresh();
+  } catch (err) {
+    tariffMessage(err.message, true);
+  }
+});
+
+const importForm = document.getElementById("import-form");
+
+async function importHistory(dryRun) {
+  const message = document.getElementById("import-message");
+  const buttons = importForm.querySelectorAll("button");
+  const file = importForm.elements.file.files[0];
+  message.className = "";
+  message.textContent = "Working. This can take a minute...";
+  buttons.forEach(b => { b.disabled = true; });
+  try {
+    const data = await sendTariff("api/import-history?dry_run=" + (dryRun ? "true" : "false"), {
+      method: "POST",
+      headers: { "Content-Type": "application/octet-stream" },
+      body: file || "",
+    });
+    message.replaceChildren(...data.report.map(line => {
+      const row = document.createElement("div");
+      row.textContent = line;
+      return row;
+    }));
+    if (!dryRun) refresh();
+  } catch (err) {
+    message.textContent = err.message;
+    message.className = "error";
+  } finally {
+    buttons.forEach(b => { b.disabled = false; });
+  }
+}
+
+importForm.addEventListener("submit", event => { event.preventDefault(); importHistory(false); });
+document.getElementById("import-check").addEventListener("click", () => importHistory(true));
+
+async function removeTariff(effectiveFrom) {
+  if (!confirm("Remove the rates that start on " + effectiveFrom + "?")) return;
+  try {
+    renderTariffs(await sendTariff("api/tariffs/" + effectiveFrom, { method: "DELETE" }));
+    tariffMessage("Removed.");
+    refresh();
+  } catch (err) {
+    tariffMessage(err.message, true);
+  }
+}
+
+const getJson = url => fetch(url).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); });
+
+let knownMetrics = null;
+
+async function refresh() {
+  const status = document.getElementById("status");
+  try {
+    // Ask only for metrics this installation collects (the list can be customised).
+    knownMetrics ??= new Set((await getJson("api/metrics")).map(m => m.name));
+    const params = SERIES_METRICS.filter(m => knownMetrics.has(m)).map(m => "metric=" + m).join("&");
+    const [latest, rawSeries, today, month, tariffs, years, found] = await Promise.all([
+      getJson("api/latest"),
+      getJson("api/series?hours=24&" + params),
+      getJson("api/today").catch(() => null),
+      getJson("api/month" + (selectedMonth ? "?month=" + selectedMonth : "")).catch(() => null),
+      getJson("api/tariffs").catch(() => null),
+      getJson("api/years").catch(() => null),
+      getJson("api/setup").catch(() => null),
+    ]);
+    if (found) setup = found;
+    const anyDevice = setup.smart_load || setup.ev_charger;
+    document.getElementById("notice").hidden = setup.sigenergy_found;
+    document.getElementById("devices-section").hidden = !anyDevice;
+    document.getElementById("usage-section").hidden = !anyDevice;
+
+    // Replace any stored heat pump reading with the calculated one.
+    delete latest.heat_pump_power;
+    const circuit = latest.smart_load_power;
+    if (circuit) {
+      latest.heat_pump_power = { time: circuit.time,
+        value: heatPumpPower(circuit.value, latest.ev_charger_power?.value) };
+    }
+    if (latest.load_power) {
+      latest.rest_power = { time: latest.load_power.time,
+        value: restOfHouse(latest.load_power.value, circuit?.value,
+                           latest.ev_charger_power?.value) };
+    }
+    const series = withDerived(rawSeries);
+
+    renderTiles(document.getElementById("now"), NOW_TILES, latest);
+    renderTiles(document.getElementById("usage"), installed(USAGE_TILES), latest);
+    renderTiles(document.getElementById("today"), TODAY_TILES, latest);
+    renderToday(today, month);
+    if (tariffs) renderTariffs(tariffs);
+    if (years) renderYears(years);
+    renderFlows(series);
+    renderUsage(series);
+
+    const times = Object.values(latest).map(r => new Date(r.time).getTime());
+    if (!times.length) {
+      status.textContent = "Waiting for the first reading…";
+      status.className = "";
+    } else {
+      const newest = Math.max(...times);
+      const stale = Date.now() - newest > 5 * 60 * 1000;
+      status.textContent = (stale ? "Stale: last reading " : "Updated ") +
+        new Date(newest).toLocaleTimeString();
+      status.className = stale ? "stale" : "";
+    }
+  } catch (err) {
+    status.textContent = "Can't reach the server (" + err.message + ")";
+    status.className = "stale";
+  }
+}
+
+refresh();
+setInterval(refresh, 10000);
+</script>
+</body>
+</html>

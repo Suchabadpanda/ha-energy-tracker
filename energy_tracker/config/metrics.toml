@@ -1,0 +1,139 @@
+# Which Home Assistant entities to collect, and what to call them.
+#
+#   name   - short name used in the database and API (don't rename once data exists)
+#   entity - the Home Assistant entity_id
+#   kind   - "power" (stored in kW), "energy" (stored in kWh) or "percent"
+#   label  - human-readable name shown on the dashboard
+#
+# The entity names below are the ones the Sigenergy integration creates for a single plant.
+# If yours differ, copy this file into the app's own config folder, change the `entity`
+# values there, and restart the app. Keep the `name` values: the dashboard relies on them.
+#
+# Sensors that Home Assistant does not have are skipped, and their tiles are left out.
+
+# --- Live power flows (kW) ---------------------------------------------------
+
+[[metric]]
+name = "pv_power"
+entity = "sensor.sigen_plant_pv_power"
+kind = "power"
+label = "Solar"
+
+[[metric]]
+name = "load_power"
+entity = "sensor.sigen_plant_consumed_power"
+kind = "power"
+label = "House load"
+
+# Positive = importing from the grid, negative = exporting.
+[[metric]]
+name = "grid_power"
+entity = "sensor.sigen_plant_grid_active_power"
+kind = "power"
+label = "Grid"
+
+# Positive = charging, negative = discharging.
+[[metric]]
+name = "battery_power"
+entity = "sensor.sigen_plant_battery_power"
+kind = "power"
+label = "Battery"
+
+[[metric]]
+name = "battery_soc"
+entity = "sensor.sigen_plant_battery_state_of_charge"
+kind = "percent"
+label = "Battery charge"
+
+# Optional: the Sigenergy gateway's smart load port 1 (for example a heat pump). If the EV
+# charger is wired through the same port, the dashboard takes the charger's use off this
+# figure (see the ev_on_smart_load option).
+[[metric]]
+name = "smart_load_power"
+entity = "sensor.sigen_plant_smart_load_1_power"
+kind = "power"
+label = "Smart load 1"
+
+# Optional: an EV charger. These are the Tesla Wall Connector integration's entity names.
+[[metric]]
+name = "ev_charger_power"
+entity = "sensor.tesla_wall_connector_total_power"
+kind = "power"
+label = "EV charger"
+
+# --- Today's totals, as reported by the inverter (kWh, reset at midnight) ----
+
+[[metric]]
+name = "pv_energy_today"
+entity = "sensor.sigen_plant_daily_pv_energy"
+kind = "energy"
+label = "Solar today"
+
+[[metric]]
+name = "load_energy_today"
+entity = "sensor.sigen_plant_daily_load_consumption"
+kind = "energy"
+label = "Used today"
+
+[[metric]]
+name = "import_energy_today"
+entity = "sensor.sigen_plant_daily_grid_import_energy"
+kind = "energy"
+label = "Imported today"
+
+[[metric]]
+name = "export_energy_today"
+entity = "sensor.sigen_plant_daily_grid_export_energy"
+kind = "energy"
+label = "Exported today"
+
+# --- Lifetime counters (kWh) -------------------------------------------------
+# These never reset. Costs are worked out from the difference between readings.
+
+[[metric]]
+name = "import_energy_total"
+entity = "sensor.sigen_plant_total_imported_energy"
+kind = "energy"
+label = "Grid import (lifetime)"
+
+[[metric]]
+name = "export_energy_total"
+entity = "sensor.sigen_plant_total_exported_energy"
+kind = "energy"
+label = "Grid export (lifetime)"
+
+[[metric]]
+name = "pv_energy_total"
+entity = "sensor.sigen_plant_total_pv_generation"
+kind = "energy"
+label = "Solar (lifetime)"
+
+[[metric]]
+name = "load_energy_total"
+entity = "sensor.sigen_plant_total_load_consumption"
+kind = "energy"
+label = "Consumption (lifetime)"
+
+[[metric]]
+name = "battery_charge_energy_total"
+entity = "sensor.sigen_plant_total_charged_energy_of_the_ess"
+kind = "energy"
+label = "Battery charged (lifetime)"
+
+[[metric]]
+name = "battery_discharge_energy_total"
+entity = "sensor.sigen_plant_total_discharged_energy_of_the_ess"
+kind = "energy"
+label = "Battery discharged (lifetime)"
+
+[[metric]]
+name = "ev_charger_energy_total"
+entity = "sensor.tesla_wall_connector_energy"
+kind = "energy"
+label = "EV charger (lifetime)"
+
+[[metric]]
+name = "smart_load_energy_total"
+entity = "sensor.sigen_plant_smart_load_1_total_consumption"
+kind = "energy"
+label = "Smart load 1 (lifetime)"

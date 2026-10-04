@@ -1,0 +1,28 @@
+# Starting tariff. This file is only read the FIRST time the app runs, to fill in the
+# tariff table. After that, change your rates on the dashboard under "Tariff rates":
+# editing this file later has no effect.
+#
+# Prices are in pence BEFORE VAT, as they appear on the bill. VAT is added to the import
+# price and the standing charge (not to export) using vat_percent below.
+
+name = "Example tariff"
+
+vat_percent = 5.0
+
+# What you are paid for each kWh exported.
+export_p_per_kwh = 16.5
+
+# Daily standing charge. Set this on the dashboard from your bill.
+standing_charge_p_per_day = 0.0
+
+# Example import prices by time of day (local time). Replace them with your own. The bands must cover 00:00 to 24:00
+# with no gaps, and start/end on the hour or half hour.
+[[import_band]]
+start = "00:00"
+end = "06:00"
+p_per_kwh = 7.62
+
+[[import_band]]
+start = "06:00"
+end = "24:00"
+p_per_kwh = 25.39
