@@ -133,7 +133,7 @@
   <div class="tiles" id="month"></div>
   <div class="hint" id="month-hint"></div>
 
-  <h2>Power flows, last 24 hours (kW)</h2>
+  <h2 id="flows-heading">Power flows, last 24 hours (kW)</h2>
   <div class="chart">
     <div class="empty" id="flows-empty" hidden>No history yet. The chart fills in as readings are collected.</div>
     <svg id="flows" viewBox="0 0 900 300" role="img" aria-label="Power flows over the last 24 hours"></svg>
@@ -153,7 +153,7 @@
     <div class="legend" id="usage-legend"></div>
   </div>
   </div>
-  <h2>Costs by year</h2>
+  <h2 id="years-heading">Costs by year</h2>
   <div class="chart">
     <div class="table-scroll">
       <table>
@@ -334,7 +334,9 @@ function renderTiles(el, tiles, latest) {
     note.className = "note";
     if (reading) {
       const v = reading.value;
-      value.textContent = (t.prefix ?? "") + (t.abs ? Math.abs(v) : v).toFixed(t.digits ?? 2);
+      // A negative amount of money reads "-£1.20", not "£-1.20".
+      const shown = t.abs || (t.prefix && v < 0) ? Math.abs(v) : v;
+      value.textContent = (t.prefix && v < 0 ? "-" : "") + (t.prefix ?? "") + shown.toFixed(t.digits ?? 2);
       if (t.unit) {
         const unit = document.createElement("small");
         unit.textContent = t.unit;
@@ -531,7 +533,7 @@ document.getElementById("month-prev").addEventListener("click", () => showMonth(
 document.getElementById("month-next").addEventListener("click", () => showMonth(monthLinks.next));
 document.getElementById("month-current").addEventListener("click", () => showMonth(null));
 
-const money = value => "£" + value.toFixed(2);
+const money = value => (value < 0 ? "-£" : "£") + Math.abs(value).toFixed(2);  // a credit shows as -£12.97
 
 function renderYears(data) {
   const cell = (text, numeric = true) => {

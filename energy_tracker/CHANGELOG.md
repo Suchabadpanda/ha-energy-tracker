@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.1
+
+- A credit now shows as -£12.97 instead of £-12.97.
+
 ## 0.3.0
 
 - First public release.

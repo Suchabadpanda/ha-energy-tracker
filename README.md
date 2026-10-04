@@ -12,6 +12,22 @@ what your electricity has cost on your own tariff.
 A heat pump (or other device) on the Sigenergy gateway's smart load port and a Tesla Wall
 Connector are picked up automatically if present. Their tiles are left out if not.
 
+## Screenshots
+
+The figures shown are made-up example data.
+
+**Live readings, today's use and running costs**
+
+![Live tiles, today's energy by device, and cost today and this month](docs/images/overview.png)
+
+**Power flows and consumption breakdown over the last 24 hours**
+
+![Charts of solar, consumption, grid and battery, and consumption split by device](docs/images/charts.png)
+
+**Costs by year and month, and editable tariff rates**
+
+![Yearly and monthly cost tables and the tariff rates list](docs/images/costs.png)
+
 ## What it shows
 
 - **Right now**: solar, house load, grid, battery power and battery charge level.
