@@ -243,6 +243,21 @@ class Database:
             )
             return conn.total_changes > before
 
+    # --- small settings ---------------------------------------------------------------------
+
+    def get_setting(self, key: str) -> str | None:
+        with closing(self._connect()) as conn:
+            row = conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
+        return row[0] if row else None
+
+    def set_setting(self, key: str, value: str) -> None:
+        with closing(self._connect()) as conn, conn:
+            conn.execute(
+                "INSERT INTO meta VALUES (?, ?) "
+                "ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+                (key, value),
+            )
+
     # --- tariffs to compare against ----------------------------------------------------------
 
     def comparison_rows(self) -> list[dict]:

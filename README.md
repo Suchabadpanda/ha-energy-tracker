@@ -28,6 +28,10 @@ The figures shown are made-up example data.
 
 ![Yearly and monthly cost tables and the tariff rates list](docs/images/costs.png)
 
+**Payback: savings building towards the system's cost**
+
+![Payback tiles and a chart of savings rising towards the system cost](docs/images/payback.png)
+
 **Comparing tariffs on your real usage**
 
 ![Table comparing what the same usage would cost on other tariffs](docs/images/compare.png)
@@ -44,6 +48,8 @@ The figures shown are made-up example data.
   it did cost.
 - **Charts**: power flows and consumption breakdown for the last 24 hours. Breaks in the
   data are shown as breaks, not joined up.
+- **Payback**: what the system has saved against its cost, with an estimated break-even date
+  and a chart of progress.
 - **Compare tariffs**: replay your real usage on other tariffs, typed in or looked up from
   Octopus Energy's published prices, or test a price change on your own tariff.
 - **Tariff rates**: editable on the page. Each set of rates has a start date, so a price

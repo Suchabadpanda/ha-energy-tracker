@@ -130,3 +130,33 @@ def test_setup_reports_which_equipment_was_found(monkeypatch):
 
     monkeypatch.setattr(collector, "missing", set(api.metrics_by_name()))
     assert client.get("/api/setup").json()["sigenergy_found"] is False
+
+
+def test_payback_needs_setting_up_then_reports_savings():
+    assert client.get("/api/roi").json()["configured"] is False
+    now = datetime.now(UTC).replace(minute=0, second=0, microsecond=0)
+    rows = []
+    for hours in range(24 * 20):
+        when = now - timedelta(hours=hours)
+        rows.append((when, "load_energy_total", 90000 - hours * 2.0))  # the house uses 2 kW
+        rows.append((when, "import_energy_total", 70000 - hours * 0.5))  # but imports only 0.5 kW
+        rows.append((when, "export_energy_total", 60000.0))
+    api.database().insert_readings(rows)
+
+    body = {
+        "install_date": (now - timedelta(days=10)).date().isoformat(),
+        "baseline": "own",
+        "costs": [{"date": "2026-01-01", "description": "System", "amount": 9000}],
+    }
+    data = client.post("/api/roi/settings", json=body).json()
+    figures = data["payback"]
+    assert data["configured"] and data["total_cost_gbp"] == 9000
+    assert figures["has_data"] and figures["rough"] and figures["days"] >= 9
+    assert figures["saved_gbp"] > 0 and figures["break_even"] is not None
+    assert client.get("/api/roi").json()["payback"]["saved_gbp"] == figures["saved_gbp"]
+    assert (
+        client.post(
+            "/api/roi/settings", json={**body, "costs": [{"date": "x", "amount": 1}]}
+        ).status_code
+        == 422
+    )

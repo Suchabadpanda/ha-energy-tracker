@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.0
+
+- Payback: enter what the system cost to see how much has been saved, the share paid
+  back, an estimated break-even date and a chart of progress.
+
 ## 0.5.0
 
 - Compare tariffs: see what your real usage would have cost on other tariffs, or on your

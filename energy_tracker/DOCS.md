@@ -56,6 +56,31 @@ Grid power must be positive when importing, and battery power positive when char
 - "Saved by off-peak" is what the same import would have cost at the dearest rate, minus
   what it did cost.
 
+## Payback
+
+**Payback** shows how much the system has saved, how much of its cost that covers, and an
+estimated break-even date, with a chart of savings building up towards the cost.
+
+Open **System cost and settings** and enter the install date and what you paid. Later
+additions (more panels, a second battery) can be added as further lines with their dates.
+
+How it is worked out:
+
+- **Saving each day** = what your household's whole consumption would have cost bought from
+  the grid, with no export income, less what you actually paid.
+- **"Without the system I would be on"** sets the prices used for that. The default is your
+  own tariff, so anything you would run at the cheap rate anyway, such as charging a car
+  overnight, still counts as cheap. To measure against another tariff, add it under
+  **Compare tariffs** and choose it here.
+- **Break-even estimate**: with a full year of readings, the last 12 months are repeated
+  into the future, so the seasons are respected. With less than a year the average is
+  carried forward and the estimate is marked **rough**; it firms up as readings build.
+- Time between the install date and the first reading is filled in at the average, and the
+  amount is stated under the chart.
+
+The estimate assumes today's prices and usage continue. It does not allow for price
+changes, panels ageing, maintenance, or what the money might have earned elsewhere.
+
 ## Comparing tariffs
 
 **Compare tariffs** shows what your real imports and exports would have cost on other

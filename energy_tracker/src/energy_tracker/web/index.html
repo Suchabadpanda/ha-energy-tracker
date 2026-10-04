@@ -78,6 +78,9 @@
   .lookup { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px; align-items: end;
             padding-bottom: 12px; border-bottom: 1px solid var(--line, rgba(128,128,128,.25)); }
   .lookup label { flex: 1 1 170px; }
+  #roi-message { grid-column: 1 / -1; font-size: 13px; min-height: 18px; color: var(--muted); }
+  #roi-message.error { color: var(--grid); }
+  .legend span.dashed::before { background: repeating-linear-gradient(90deg, var(--c) 0 5px, transparent 5px 8px); }
   #compare-message { grid-column: 1 / -1; font-size: 13px; min-height: 18px; color: var(--muted); }
   #compare-message.error { color: var(--grid); }
   td.better { color: var(--battery); font-weight: 600; }
@@ -183,6 +186,38 @@
         </table>
       </div>
       <div class="hint">Choose a month to open it above. * means only part of the month was counted.</div>
+    </details>
+  </div>
+
+  <h2 id="roi-heading">Payback</h2>
+  <div class="tiles" id="roi-tiles"></div>
+  <div class="chart" style="margin-top: 12px;">
+    <div class="empty" id="roi-empty">Enter what the system cost below to see how much of it
+      has been paid back and when it should break even.</div>
+    <svg id="roi-chart" viewBox="0 0 900 300" role="img"
+         aria-label="Savings building up towards the cost of the system" hidden></svg>
+    <div class="legend" id="roi-legend" hidden>
+      <span style="--c: var(--battery)">Saved so far</span>
+      <span class="dashed" style="--c: var(--battery)">Projected</span>
+      <span style="--c: var(--grid)">System cost</span>
+    </div>
+    <div class="hint" id="roi-hint"></div>
+    <details id="roi-editor">
+      <summary>System cost and settings</summary>
+      <div class="hint">Savings are what your household's electricity would have cost with no
+        solar or battery, less what you actually paid. By default the comparison uses your own
+        tariff, so cheap-rate charging of a car still counts as cheap. To measure against a
+        different tariff, add it under Compare tariffs and choose it here.</div>
+      <form id="roi-form">
+        <label>System installed on <input type="date" name="install_date" required></label>
+        <label>Without the system I would be on <select name="baseline"></select></label>
+        <div class="windows" id="roi-costs"></div>
+        <div class="actions">
+          <button type="button" id="roi-add-cost">Add a cost</button>
+          <button class="primary" type="submit">Save</button>
+        </div>
+        <div id="roi-message"></div>
+      </form>
     </details>
   </div>
 
@@ -807,6 +842,191 @@ form.addEventListener("submit", async event => {
   }
 });
 
+// --- Payback -------------------------------------------------------------------------------
+
+const roiForm = document.getElementById("roi-form");
+const roiCosts = document.getElementById("roi-costs");
+const longDate = iso => new Date(iso + "T00:00").toLocaleDateString([], { month: "short", year: "numeric" });
+// Large sums read better in whole pounds: £12,400.
+const pounds = value => (value < 0 ? "-£" : "£") + Math.round(Math.abs(value)).toLocaleString();
+
+function roiMessage(text, isError = false) {
+  const el = document.getElementById("roi-message");
+  el.textContent = text;
+  el.className = isError ? "error" : "";
+}
+
+// One line of the system's cost: when, what, how much. Later additions get their own line.
+function addCost(date = "", description = "", amount = "") {
+  if (roiCosts.children.length >= 20) return;
+  const row = document.createElement("div");
+  row.className = "window";
+  const field = (text, attrs) => {
+    const label = document.createElement("label");
+    const input = Object.assign(document.createElement("input"), attrs);
+    label.append(text, input);
+    return label;
+  };
+  const remove = Object.assign(document.createElement("button"), { type: "button", textContent: "Remove" });
+  remove.addEventListener("click", () => row.remove());
+  row.append(field("Paid on ", { type: "date", required: true, value: date }),
+             field("For ", { type: "text", maxLength: 80, placeholder: "Solar and battery", value: description }),
+             field("Amount (£) ", { type: "number", min: "0.01", step: "0.01", required: true, value: amount }),
+             remove);
+  roiCosts.append(row);
+}
+document.getElementById("roi-add-cost").addEventListener("click", () => addCost());
+
+let roiFormFilled = false;
+function fillRoiForm(data) {
+  const f = roiForm.elements;
+  const chosen = data.settings?.baseline ?? f.baseline.value ?? "own";
+  f.baseline.replaceChildren(...data.baselines.map(b => new Option(b.name, b.id)));
+  f.baseline.value = data.baselines.some(b => b.id === chosen) ? chosen : "own";
+  if (roiFormFilled) return;  // don't overwrite what is being typed
+  roiFormFilled = true;
+  if (data.settings) {
+    f.install_date.value = data.settings.install_date;
+    roiCosts.replaceChildren();
+    for (const c of data.settings.costs) addCost(c.date, c.description, c.amount);
+  }
+  if (!roiCosts.children.length) addCost();
+}
+
+function drawPayback(p, totalCost) {
+  const svg = document.getElementById("roi-chart");
+  const NS = "http://www.w3.org/2000/svg";
+  const W = 900, H = 300, L = 58, R = 14, T = 12, B = 26;
+  svg.replaceChildren();
+  const time = d => new Date(d + "T00:00").getTime();
+  const actual = p.series.map(([d, v]) => [time(d), v]);
+  const projected = p.projection.map(([d, v]) => [time(d), v]);
+  const all = [...actual, ...projected];
+  const start = all[0][0];
+  // Leave room to the right of today even when no break-even date can be worked out.
+  const end = Math.max(all[all.length - 1][0], start + 30 * 86400000);
+  const top = Math.max(totalCost, ...all.map(a => a[1]), 1) * 1.08;
+  const bottom = Math.min(0, ...all.map(a => a[1]));
+  const x = t => L + (t - start) / (end - start) * (W - L - R);
+  const y = v => T + (top - v) / (top - bottom) * (H - T - B);
+  const add = (tag, attrs, text) => {
+    const node = document.createElementNS(NS, tag);
+    for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v);
+    if (text !== undefined) node.textContent = text;
+    svg.append(node);
+    return node;
+  };
+  // Round the gridline spacing to 1, 2 or 5 times a power of ten.
+  const raw = (top - bottom) / 5, power = 10 ** Math.floor(Math.log10(raw));
+  const step = [1, 2, 5, 10].map(m => m * power).find(s => s >= raw);
+  for (let v = Math.ceil(bottom / step) * step; v <= top; v += step) {
+    add("line", { x1: L, x2: W - R, y1: y(v), y2: y(v), class: v === 0 ? "zero" : "gridline" });
+    add("text", { x: L - 8, y: y(v) + 4, "text-anchor": "end", class: "axis" }, "£" + v.toLocaleString());
+  }
+  // A label at each 1 January, thinned so they never crowd.
+  const firstYear = new Date(start).getFullYear() + 1, lastYear = new Date(end).getFullYear();
+  const every = Math.max(1, Math.ceil((lastYear - firstYear + 1) / 10));
+  for (let year = firstYear; year <= lastYear; year += every) {
+    const t = new Date(year, 0, 1).getTime();
+    add("line", { x1: x(t), x2: x(t), y1: T, y2: H - B, class: "gridline" });
+    add("text", { x: x(t), y: H - 8, "text-anchor": "middle", class: "axis" }, year);
+  }
+  const path = pts => pts.map(([t, v], i) => (i ? "L" : "M") + x(t).toFixed(1) + "," + y(v).toFixed(1)).join("");
+  if (totalCost > 0) {
+    add("line", { x1: L, x2: W - R, y1: y(totalCost), y2: y(totalCost), stroke: "var(--grid)",
+                  "stroke-width": 1.5 });
+  }
+  add("path", { d: path(actual), fill: "none", stroke: "var(--battery)", "stroke-width": 2.5,
+                "stroke-linejoin": "round" });
+  if (projected.length > 1) {
+    add("path", { d: path(projected), fill: "none", stroke: "var(--battery)", "stroke-width": 2,
+                  "stroke-dasharray": "6 5" });
+  }
+  if (p.break_even) {
+    const t = time(p.break_even);
+    add("circle", { cx: x(t), cy: y(totalCost), r: 5, fill: "var(--battery)" });
+  }
+}
+
+function renderPayback(data) {
+  fillRoiForm(data);
+  const p = data.payback;
+  const ready = data.configured && p?.has_data;
+  document.getElementById("roi-chart").hidden = !ready;
+  document.getElementById("roi-legend").hidden = !ready;
+  document.getElementById("roi-empty").hidden = ready;
+  const hint = document.getElementById("roi-hint");
+  if (!ready) {
+    document.getElementById("roi-tiles").replaceChildren();
+    hint.textContent = data.configured ? "No full day of readings since the install date yet." : "";
+    return;
+  }
+  const cost = data.total_cost_gbp;
+  const breakEven = p.already_reached ? "Reached " + longDate(p.break_even)
+    : p.break_even ? longDate(p.break_even) : "Not in sight";
+  const tile = (label, value, note) => {
+    const el = document.createElement("div");
+    el.className = "tile";
+    for (const [cls, text] of [["label", label], ["value", value], ["note", note ?? ""]]) {
+      const part = document.createElement("div");
+      part.className = cls;
+      part.textContent = text;
+      el.append(part);
+    }
+    return el;
+  };
+  document.getElementById("roi-tiles").replaceChildren(
+    tile("System cost", pounds(cost)),
+    tile("Saved so far", pounds(p.saved_gbp), "About " + pounds(p.yearly_gbp) + " a year"),
+    tile("Paid back", p.percent === null ? "–" : p.percent + "%"),
+    tile(p.already_reached ? "Broke even" : "Break-even estimate", breakEven,
+         p.break_even ? p.years_from_install + " years after install" + (p.rough && !p.already_reached ? " (rough)" : "")
+           : "Savings are not positive on these settings"));
+  drawPayback(p, cost);
+  const notes = ["Measured against " + data.baseline_name + ", from " +
+    new Date(p.first_day + "T00:00").toLocaleDateString([], { dateStyle: "medium" }) + " (" + p.days + " days of readings)."];
+  if (p.estimated_before_days > 0) {
+    notes.push("The " + p.estimated_before_days + " days between the install date and the first reading are " +
+      "estimated at the average (" + money(p.estimated_before_gbp) + ").");
+  }
+  if (!p.already_reached) {
+    notes.push(p.rough
+      ? "Rough estimate: with under a year of readings the average is carried forward, which ignores the " +
+        "seasons. It firms up once a full year is recorded."
+      : "Projected by repeating the last 12 months, at today's prices and usage.");
+  }
+  hint.textContent = notes.join(" ");
+}
+
+async function refreshPayback() {
+  try {
+    renderPayback(await getJson("api/roi"));
+  } catch (err) {
+    document.getElementById("roi-hint").textContent = "Could not work out payback (" + err.message + ").";
+  }
+}
+
+roiForm.addEventListener("submit", async event => {
+  event.preventDefault();
+  try {
+    const costs = [...roiCosts.children].map(row => {
+      const [date, description, amount] = [...row.querySelectorAll("input")].map(i => i.value);
+      return { date, description, amount: Number(amount) };
+    });
+    if (!costs.length) throw new Error("Add at least one cost.");
+    const data = await sendTariff("api/roi/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ install_date: roiForm.elements.install_date.value,
+                             baseline: roiForm.elements.baseline.value, costs }),
+    });
+    roiMessage("Saved.");
+    renderPayback(data);
+  } catch (err) {
+    roiMessage(err.message, true);
+  }
+});
+
 // --- Compare tariffs -----------------------------------------------------------------------
 
 const compareForm = document.getElementById("compare-form");
@@ -941,6 +1161,7 @@ function renderCompare(data) {
       try {
         await sendTariff("api/compare/tariffs/" + candidate.id, { method: "DELETE" });
         refreshCompare();
+        refreshPayback();
       } catch (err) { compareMessage(err.message, true); }
     });
     tr.append(name, ...costCells(candidate.cost), against, actions);
@@ -993,6 +1214,7 @@ compareForm.addEventListener("submit", async event => {
     editingComparison = null;
     compareMessage("Saved.");
     refreshCompare();
+    refreshPayback();
   } catch (err) {
     compareMessage(err.message, true);
   }
@@ -1151,6 +1373,8 @@ setInterval(refresh, 10000);
 // The comparison prices a long period several times over, so it is refreshed far less often.
 refreshCompare();
 setInterval(refreshCompare, 30 * 60 * 1000);
+refreshPayback();
+setInterval(refreshPayback, 30 * 60 * 1000);
 </script>
 </body>
 </html>

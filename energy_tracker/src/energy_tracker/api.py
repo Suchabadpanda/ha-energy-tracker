@@ -6,6 +6,7 @@ Run with:  python -m energy_tracker
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import sqlite3
 import tempfile
@@ -23,12 +24,13 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
-from . import collector, import_history, lookup, tariff_store
+from . import collector, import_history, lookup, roi, tariff_store
 from .config import Metric, Settings, load_metrics, load_settings
 from .costs import combine
 from .db import Database
 from .tariff import Schedule, Tariff, build_tariff
 from .today import COST_COUNTERS, DEVICE_COUNTERS, cost_since, energy_by_device, local_midnight
+from .usage import Counter
 
 log = logging.getLogger("app")
 
@@ -76,7 +78,7 @@ async def lifespan(_: FastAPI):
         await asyncio.to_thread(thread.join, 10)
 
 
-app = FastAPI(title="Energy Tracker", version="0.5.0", lifespan=lifespan)
+app = FastAPI(title="Energy Tracker", version="0.6.0", lifespan=lifespan)
 
 
 @app.middleware("http")
@@ -272,6 +274,15 @@ def month(
 
 
 _years_cache: dict = {"at": 0.0, "value": None}
+_roi_cache: dict = {"at": 0.0, "value": None}
+
+
+def clear_caches() -> None:
+    """Forget worked-out costs, after anything they depend on has changed."""
+    _years_cache["value"] = None
+    _roi_cache["value"] = None
+
+
 YEARS_CACHE_SECONDS = 300
 
 
@@ -369,7 +380,7 @@ def save_tariff(body: TariffIn) -> dict:
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     tariff_store.save_period(database(), tariff)
-    _years_cache["value"] = None  # costs must be worked out again with the new rates
+    clear_caches()  # costs must be worked out again with the new rates
     return list_tariffs()
 
 
@@ -381,7 +392,7 @@ def delete_tariff(effective_from: date) -> dict:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     if not found:
         raise HTTPException(status_code=404, detail="No tariff period starts on that date")
-    _years_cache["value"] = None
+    clear_caches()
     return list_tariffs()
 
 
@@ -454,14 +465,110 @@ def save_comparison(body: ComparisonIn, id: int | None = None) -> dict:  # noqa:
         comparison_tariff(row)  # checks the bands cover the whole day
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    return {"id": database().save_comparison_row(row, id)}
+    saved = database().save_comparison_row(row, id)
+    _roi_cache["value"] = None  # it may be the tariff payback is measured against
+    return {"id": saved}
 
 
 @app.delete("/api/compare/tariffs/{row_id}")
 def delete_comparison(row_id: int) -> dict:
     if not database().delete_comparison_row(row_id):
         raise HTTPException(status_code=404, detail="That tariff is not in the list")
+    _roi_cache["value"] = None
     return {"removed": row_id}
+
+
+# --- Payback -----------------------------------------------------------------------------------
+
+LOAD_COUNTER = "load_energy_total"
+ROI_CACHE_SECONDS = 1800
+
+
+class CostIn(BaseModel):
+    date: date
+    description: str = Field(default="", max_length=80)
+    amount: float = Field(gt=0, le=10_000_000)
+
+
+class PaybackIn(BaseModel):
+    install_date: date
+    # "own": the tariff you were on each day. Otherwise the id of a tariff saved for comparison.
+    baseline: str = Field(default="own", pattern=r"^(own|\d{1,9})$")
+    costs: list[CostIn] = Field(max_length=20)
+
+
+def payback_settings() -> dict | None:
+    stored = database().get_setting("payback")
+    return json.loads(stored) if stored else None
+
+
+@app.post("/api/roi/settings")
+def save_payback_settings(body: PaybackIn) -> dict:
+    database().set_setting("payback", body.model_dump_json())
+    _roi_cache["value"] = None
+    return payback_figures()
+
+
+@app.get("/api/roi")
+def payback_figures() -> dict:
+    """Savings from the system so far and the estimated date it will have paid for itself."""
+    if _roi_cache["value"] is not None and time.monotonic() - _roi_cache["at"] < ROI_CACHE_SECONDS:
+        return _roi_cache["value"]
+
+    settings_ = payback_settings()
+    baselines = [{"id": "own", "name": "My own tariff, without solar or battery"}] + [
+        {"id": str(row["id"]), "name": row["name"]} for row in database().comparison_rows()
+    ]
+    result: dict = {
+        "configured": settings_ is not None,
+        "settings": settings_,
+        "baselines": baselines,
+    }
+    if settings_ is None:
+        return result
+
+    zone = local_timezone()
+    now = datetime.now(UTC)
+    today_local = now.astimezone(zone).date()
+    installed = date.fromisoformat(settings_["install_date"])
+    total_cost = sum(item["amount"] for item in settings_["costs"])
+
+    rows = {str(row["id"]): row for row in database().comparison_rows()}
+    chosen = rows.get(settings_["baseline"])
+    without_system = Schedule([comparison_tariff(chosen)]) if chosen else schedule()
+    result["baseline_name"] = chosen["name"] if chosen else "your own tariff"
+    result["total_cost_gbp"] = round(total_cost, 2)
+
+    counters = {}
+    firsts = []
+    for name in (*COST_COUNTERS, LOAD_COUNTER):
+        first = database().first_time(name)
+        if first is None:
+            result["payback"] = {"has_data": False}
+            return result
+        firsts.append(first)
+    # Whole local days only: from the later of the install date and the first reading, up to
+    # the end of yesterday.
+    start = max(datetime.combine(installed, clock(0), zone), max(firsts).astimezone(zone))
+    end = local_midnight(now, zone)
+    if start >= end:
+        result["payback"] = {"has_data": False}
+        return result
+    samples = counter_samples(
+        [*COST_COUNTERS, LOAD_COUNTER], start - timedelta(days=1), HALF_HOURLY, end
+    )
+    for name, series in samples.items():
+        counters[name] = Counter(series, HALF_HOURLY_GAP)
+
+    paid = roi.daily_costs(
+        counters[COST_COUNTERS[0]], counters[COST_COUNTERS[1]], start, end, zone, schedule()
+    )
+    otherwise = roi.daily_costs(counters[LOAD_COUNTER], None, start, end, zone, without_system)
+    savings = {day: otherwise[day] - paid[day] for day in paid}
+    result["payback"] = roi.payback(savings, total_cost, installed, today_local)
+
+    _roi_cache.update(at=time.monotonic(), value=result)
+    return result
 
 
 # --- Looking up published prices ---------------------------------------------------------------
@@ -541,5 +648,5 @@ async def import_older_history(
     except Exception as exc:  # a bad file, or Home Assistant not answering: tell the user why
         log.warning("History import failed: %s", exc)
         raise HTTPException(status_code=422, detail=f"Import failed: {exc}") from exc
-    _years_cache["value"] = None
+    clear_caches()
     return {"report": report, "dry_run": dry_run}
