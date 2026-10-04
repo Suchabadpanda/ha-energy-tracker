@@ -78,7 +78,7 @@ async def lifespan(_: FastAPI):
         await asyncio.to_thread(thread.join, 10)
 
 
-app = FastAPI(title="Energy Tracker", version="0.9.0", lifespan=lifespan)
+app = FastAPI(title="Energy Tracker", version="0.9.1", lifespan=lifespan)
 
 
 @app.middleware("http")
@@ -506,7 +506,7 @@ def extra_income() -> dict:
         "by_year": dict(sorted(by_year.items())),
         "axle": {
             "entity": settings().axle_event_entity,
-            "found": collector.axle_found,
+            "status": collector.axle_status,
             "rate_p": income.rate_p(database()),
         },
     }

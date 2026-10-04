@@ -1199,10 +1199,13 @@ function renderIncome(data) {
     return tr;
   }));
   if (document.activeElement !== axleForm.elements.rate) axleForm.elements.rate.value = data.axle.rate_p;
-  document.getElementById("axle-status").textContent = data.axle.found
-    ? "Recording export events from " + data.axle.entity + "."
-    : "No Axle event sensor found in Home Assistant (" + data.axle.entity + "), so events are not " +
-      "recorded automatically. Entries can still be added by hand.";
+  document.getElementById("axle-status").textContent = {
+    ok: "Axle sensors found in Home Assistant. Export events are recorded as they appear.",
+    unavailable: "Axle sensors exist in Home Assistant but are showing as unavailable, so no events can " +
+      "be recorded until the Axle integration is working again. Entries can still be added by hand.",
+    missing: "No Axle sensors found in Home Assistant, so events are not recorded automatically. " +
+      "Entries can still be added by hand.",
+  }[data.axle.status];
 }
 
 async function refreshIncome() {

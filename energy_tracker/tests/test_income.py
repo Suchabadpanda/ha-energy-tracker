@@ -96,19 +96,64 @@ def test_events_shown_while_the_app_was_off_are_picked_up_from_history(tmp_path)
     db = Database(tmp_path / "e.db")
     earlier = START - timedelta(days=3)
 
+    def shown(state, minute):
+        when = f"2026-09-28T09:{minute}:00+00:00"
+        return {**state, "entity_id": "sensor.axle_event", "last_changed": when}
+
     def handler(request):
-        assert "filter_entity_id=sensor.axle_event" in str(request.url)
-        return httpx.Response(
-            200,
-            json=[
-                [
-                    sensor(start=earlier, end=earlier + timedelta(hours=1)),
-                    {"state": "unknown", "attributes": {}},
-                    sensor(),
-                ]
-            ],
+        assert "sensor.axle_event" in str(request.url) and "sensor.axle_start_time" in str(
+            request.url
         )
+        first = shown(sensor(start=earlier, end=earlier + timedelta(hours=1)), "00")
+        nothing = shown({"state": "unknown", "attributes": {}}, "10")
+        return httpx.Response(200, json=[[first, nothing, shown(sensor(), "20")]])
 
     with httpx.Client(transport=httpx.MockTransport(handler), base_url="http://ha") as client:
         assert income.backfill_events(client, db, "sensor.axle_event", END, 10, LONDON) == 2
     assert [r["day"] for r in db.income_rows()] == ["2026-10-01", "2026-09-28"]
+
+
+def split(start="2026-10-01T16:30:00+00:00", end="2026-10-01T17:30:00+00:00", kind="export"):
+    return {
+        "sensor.axle_start_time": {"entity_id": "sensor.axle_start_time", "state": start},
+        "sensor.axle_end_time": {"entity_id": "sensor.axle_end_time", "state": end},
+        "sensor.axle_import_export": {"entity_id": "sensor.axle_import_export", "state": kind},
+    }
+
+
+def test_hacs_integration_with_separate_sensors_is_understood(tmp_path):
+    event, status = income.event_state(split(), "sensor.axle_event")
+    assert status == "ok" and income.parse_event(event) == (START, END)
+    db = Database(tmp_path / "e.db")
+    assert income.record(db, event, LONDON) is True
+
+    importing = income.event_state(split(kind="import"), "sensor.axle_event")
+    assert importing[1] == "ok" and income.parse_event(importing[0]) is None
+    # No event scheduled, sensors not reporting, and no sensors at all.
+    assert income.event_state(split(start="unknown"), "sensor.axle_event") == (None, "ok")
+    unavailable = split("unavailable", "unavailable", "unavailable")
+    assert income.event_state(unavailable, "sensor.axle_event") == (None, "unavailable")
+    assert income.event_state({}, "sensor.axle_event") == (None, "missing")
+    single_down = {"sensor.axle_event": {"state": "unavailable", "attributes": {}}}
+    assert income.event_state(single_down, "sensor.axle_event") == (None, "unavailable")
+    assert income.event_state({"sensor.axle_event": sensor()}, "sensor.axle_event")[1] == "ok"
+
+
+def test_history_of_separate_sensors_is_replayed_in_order(tmp_path):
+    db = Database(tmp_path / "e.db")
+
+    def at(entity, state, when):
+        return {"entity_id": entity, "state": state, "last_changed": when}
+
+    history = [
+        [at("sensor.axle_start_time", "unknown", "2026-09-27T08:00:00+00:00"),
+         at("sensor.axle_start_time", "2026-09-28T16:30:00+00:00", "2026-09-28T09:00:00+00:00"),
+         at("sensor.axle_start_time", "unknown", "2026-09-28T18:00:00+00:00")],
+        [at("sensor.axle_end_time", "2026-09-28T17:30:00+00:00", "2026-09-28T09:00:01+00:00"),
+         at("sensor.axle_end_time", "unknown", "2026-09-28T18:00:00+00:00")],
+        [at("sensor.axle_import_export", "export", "2026-09-28T09:00:02+00:00")],
+    ]  # fmt: skip
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, json=history))
+    with httpx.Client(transport=transport, base_url="http://ha") as client:
+        assert income.backfill_events(client, db, "sensor.axle_event", END, 10, LONDON) == 1
+    assert db.income_rows()[0]["day"] == "2026-09-28"

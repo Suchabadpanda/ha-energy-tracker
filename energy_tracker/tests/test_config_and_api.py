@@ -132,23 +132,27 @@ def test_setup_reports_which_equipment_was_found(monkeypatch):
     assert client.get("/api/setup").json()["sigenergy_found"] is False
 
 
-def test_payback_needs_setting_up_then_reports_savings():
-    assert client.get("/api/roi").json()["configured"] is False
+def house_with_payback_set_up():
+    """Twenty days of a house using 2 kW and importing 0.5 kW, with payback configured."""
     now = datetime.now(UTC).replace(minute=0, second=0, microsecond=0)
     rows = []
     for hours in range(24 * 20):
         when = now - timedelta(hours=hours)
-        rows.append((when, "load_energy_total", 90000 - hours * 2.0))  # the house uses 2 kW
-        rows.append((when, "import_energy_total", 70000 - hours * 0.5))  # but imports only 0.5 kW
+        rows.append((when, "load_energy_total", 90000 - hours * 2.0))
+        rows.append((when, "import_energy_total", 70000 - hours * 0.5))
         rows.append((when, "export_energy_total", 60000.0))
     api.database().insert_readings(rows)
-
     body = {
         "install_date": (now - timedelta(days=10)).date().isoformat(),
         "baseline": "own",
         "costs": [{"date": "2026-01-01", "description": "System", "amount": 9000}],
     }
-    data = client.post("/api/roi/settings", json=body).json()
+    return body, client.post("/api/roi/settings", json=body).json()
+
+
+def test_payback_needs_setting_up_then_reports_savings():
+    assert client.get("/api/roi").json()["configured"] is False
+    body, data = house_with_payback_set_up()
     figures = data["payback"]
     assert data["configured"] and data["total_cost_gbp"] == 9000
     assert figures["has_data"] and figures["rough"] and figures["days"] >= 9
@@ -163,12 +167,13 @@ def test_payback_needs_setting_up_then_reports_savings():
 
 
 def test_extra_income_is_listed_totalled_and_counts_towards_payback():
-    yesterday = (datetime.now(UTC) - timedelta(days=1)).date().isoformat()
+    house_with_payback_set_up()
+    yesterday = (datetime.now(api.local_timezone()) - timedelta(days=1)).date().isoformat()
     before = client.get("/api/roi").json()["payback"]["saved_gbp"]
     body = {"day": yesterday, "description": "Axle export event", "amount_gbp": 12.5}
     data = client.post("/api/income", json=body).json()
     assert data["total_gbp"] == 12.5 and data["by_year"] == {yesterday[:4]: 12.5}
-    assert data["axle"] == {"entity": "sensor.axle_event", "found": False, "rate_p": 100.0}
+    assert data["axle"] == {"entity": "sensor.axle_event", "status": "missing", "rate_p": 100.0}
     roi_now = client.get("/api/roi").json()
     assert roi_now["payback"]["saved_gbp"] == pytest.approx(before + 12.5)
     assert roi_now["extra_income_gbp"] == 12.5

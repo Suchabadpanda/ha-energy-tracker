@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.1
+
+- Extra income: works with the HACS "Axle VPP" integration's separate sensors, and says
+  when the Axle sensors are present but unavailable.
+
 ## 0.9.0
 
 - Extra income: record payments on top of your tariff, by hand or automatically from an

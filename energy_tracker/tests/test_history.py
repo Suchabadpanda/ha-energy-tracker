@@ -83,7 +83,11 @@ def test_history_and_export_endpoints():
     for period, interval in history.VIEW_INTERVAL.items():
         data = client.get("/api/history", params={"period": period}).json()
         assert data["interval"] == interval and data["rows"] and data["next"] is None
-        assert data["totals"]["solar_kwh"] > 0
+        # Just after midnight (or on a Monday, or the 1st) the newest period can be empty.
+        assert data["totals"].get("solar_kwh", 0) >= 0
+    assert client.get("/api/history", params={"period": "year"}).json()["totals"][
+        "solar_kwh"
+    ] > 0 or (datetime.now(LONDON).timetuple().tm_yday == 1)
 
     yesterday = (datetime.now(LONDON) - timedelta(days=1)).date().isoformat()
     past = client.get("/api/history", params={"period": "day", "day": yesterday}).json()

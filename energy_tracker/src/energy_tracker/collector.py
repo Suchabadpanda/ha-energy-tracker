@@ -27,8 +27,8 @@ THIN_EVERY = timedelta(hours=24)
 # to leave out tiles for equipment that is not installed.
 missing: set[str] = set()
 polled = False
-# Whether Home Assistant has the Axle Energy event sensor, as of the last poll.
-axle_found = False
+# How the Axle Energy event sensors stood at the last poll: "ok", "unavailable" or "missing".
+axle_status = "missing"
 
 
 def fetch_states(client: httpx.Client) -> dict[str, dict]:
@@ -115,10 +115,9 @@ def run(settings: Settings, db: Database, metrics: list[Metric], stop: threading
                 log.debug("Stored %d of %d readings", len(rows), len(metrics))
 
                 # Note any grid event the Axle sensor is showing, and measure finished ones.
-                global axle_found
-                event_state = states.get(settings.axle_event_entity)
-                axle_found = event_state is not None
-                if income.record(db, event_state, settings.timezone):
+                global axle_status
+                event, axle_status = income.event_state(states, settings.axle_event_entity)
+                if income.record(db, event, settings.timezone):
                     log.info("Recorded an Axle export event")
                 if income.settle(db, now):
                     log.info("Worked out the estimated payment for a finished Axle event")

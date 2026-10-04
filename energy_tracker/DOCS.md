@@ -19,7 +19,7 @@
 | `backfill_days` | 10 | How far back to fill gaps from Home Assistant's history. 0 turns it off. |
 | `detail_days` | 30 | How long full-detail readings are kept before being thinned to one per 5 minutes. |
 | `keep_years` | 10 | Readings older than this are deleted, a day's worth each day, so storage stops growing. Costs for months older than this are no longer shown. |
-| `axle_event_entity` | sensor.axle_event | The Home Assistant sensor showing Axle Energy grid events, if you have one. |
+| `axle_event_entity` | sensor.axle_event | Only for the manual Axle set-up with a differently named sensor. The HACS "Axle VPP" integration is found without it. |
 | `smart_load_label` | Heat pump | What is connected to the gateway's smart load port 1, as named on the dashboard. |
 | `ev_on_smart_load` | true | On if the EV charger is wired through smart load port 1. Its use is then taken off the smart load figure. Turn off if the charger is on its own circuit. |
 
@@ -125,9 +125,11 @@ for exporting during grid events. The total counts towards **Payback**. It is ke
 from the cost figures, which stay as what your supplier charges.
 
 - **By hand**: open **Add income or change settings**, and enter the date and amount.
-- **Automatically, for Axle Energy**: if Home Assistant has Axle's event sensor
-  (`sensor.axle_event`, set up as Axle's own Home Assistant guide describes), each export
-  event is recorded when it appears. A few minutes after it ends, the energy exported
+- **Automatically, for Axle Energy**: if Home Assistant has Axle's sensors, each export
+  event is recorded when it appears. Both set-ups in Axle's Home Assistant guide work: the
+  "Axle VPP" integration from HACS (`sensor.axle_start_time`, `sensor.axle_end_time` and
+  `sensor.axle_import_export`) and the single `sensor.axle_event` made by the manual set-up.
+  The section says whether the sensors were found and whether they are reporting. A few minutes after it ends, the energy exported
   between its start and end is multiplied by the rate you set (100p per kWh to begin with)
   and saved as an **Estimate**.
 
