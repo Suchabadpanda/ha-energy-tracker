@@ -18,6 +18,7 @@
 | `poll_seconds` | 30 | How often sensors are read (10 to 3600). Lower uses more storage. |
 | `backfill_days` | 10 | How far back to fill gaps from Home Assistant's history. 0 turns it off. |
 | `detail_days` | 30 | How long full-detail readings are kept before being thinned to one per 5 minutes. |
+| `keep_years` | 10 | Readings older than this are deleted, a day's worth each day, so storage stops growing. Costs for months older than this are no longer shown. |
 | `smart_load_label` | Heat pump | What is connected to the gateway's smart load port 1, as named on the dashboard. |
 | `ev_on_smart_load` | true | On if the EV charger is wired through smart load port 1. Its use is then taken off the smart load figure. Turn off if the charger is on its own circuit. |
 
@@ -96,6 +97,18 @@ replaces what the earlier one brought in.
 - The app only reads from Home Assistant. It never changes a device or setting.
 - Readings and rates are stored in the app's data folder and are included in Home
   Assistant backups. The app pauses for a few seconds while a backup is taken.
+
+## Storage
+
+The database cannot grow without limit:
+
+- The last `detail_days` (30) are kept in full detail.
+- Older readings are thinned to one every 5 minutes.
+- Readings older than `keep_years` (10) are deleted.
+
+With the default sensors that levels off at roughly 0.9 GB when polling every 30 seconds,
+or 1 GB at every 10 seconds, reached after ten years. The current size is shown at the
+bottom of the dashboard. Home Assistant backups include the database.
 
 ## Support
 

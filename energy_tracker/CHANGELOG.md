@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.0
+
+- Readings older than `keep_years` (default 10) are now deleted, so storage has a ceiling.
+- The dashboard shows how much space the stored readings take.
+
 ## 0.3.2
 
 - Documentation: how to get an hourly export from Sigen AI for the history import.

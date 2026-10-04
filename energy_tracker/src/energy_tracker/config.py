@@ -75,6 +75,8 @@ class Settings:
     backfill_days: int
     # Readings older than this are thinned to one every five minutes to save space.
     detail_days: int
+    # Readings older than this many years are deleted, so the database stops growing.
+    keep_years: int
     # If set, only this address may connect (Home Assistant's ingress proxy).
     allowed_client: str | None
     port: int
@@ -128,6 +130,7 @@ def load_settings() -> Settings:
             poll_seconds=_int(options.get("poll_seconds"), 60, 10, 3600),
             backfill_days=_int(options.get("backfill_days"), 10, 0, 30),
             detail_days=_int(options.get("detail_days"), 30, 7, 3650),
+            keep_years=_int(options.get("keep_years"), 10, 1, 50),
             allowed_client="172.30.32.2",
             port=8099,
             smart_load_label=_text(options.get("smart_load_label"), "Heat pump"),
@@ -145,6 +148,7 @@ def load_settings() -> Settings:
         poll_seconds=_int(env.get("POLL_SECONDS"), 60, 10, 3600),
         backfill_days=_int(env.get("BACKFILL_DAYS"), 10, 0, 30),
         detail_days=_int(env.get("DETAIL_DAYS"), 30, 7, 3650),
+        keep_years=_int(env.get("KEEP_YEARS"), 10, 1, 50),
         allowed_client=env.get("ALLOWED_CLIENT") or None,
         port=_int(env.get("PORT"), 8000, 1, 65535),
         smart_load_label=_text(env.get("SMART_LOAD_LABEL"), "Heat pump"),

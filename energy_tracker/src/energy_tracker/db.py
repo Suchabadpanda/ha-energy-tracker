@@ -178,6 +178,23 @@ class Database:
             )
             return conn.total_changes - before - 1
 
+    def delete_older_than(self, cutoff: datetime) -> int:
+        """Remove every reading older than `cutoff`, whichever metric it belongs to."""
+        with closing(self._connect()) as conn, conn:
+            before = conn.total_changes
+            # One metric at a time, so each delete can use the (metric, time) index.
+            metrics = [row[0] for row in conn.execute("SELECT DISTINCT metric FROM readings")]
+            for metric in metrics:
+                conn.execute(
+                    "DELETE FROM readings WHERE metric = ? AND time < ?", (metric, _seconds(cutoff))
+                )
+            return conn.total_changes - before
+
+    def size_bytes(self) -> int:
+        """Space the database takes on disk, including its write-ahead log."""
+        files = (self.path, self.path.with_name(self.path.name + "-wal"))
+        return sum(f.stat().st_size for f in files if f.exists())
+
     # --- tariff periods ---------------------------------------------------------------------
 
     def tariff_rows(self) -> list[dict]:

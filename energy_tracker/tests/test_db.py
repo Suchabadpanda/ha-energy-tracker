@@ -46,3 +46,14 @@ def test_thinning_keeps_one_reading_per_five_minutes_and_only_for_old_data(tmp_p
     assert [value for _, value in kept["a"]] == [29.0, 59.0, 89.0, 119.0, 149.0, 179.0]
     assert db.thin(["a"], START + timedelta(minutes=30)) == 0  # nothing new to thin
     assert db.delete_before(["a"], START + timedelta(minutes=30)) == 6
+
+
+def test_readings_past_the_age_limit_are_deleted_for_every_metric(tmp_path):
+    db = Database(tmp_path / "e.db")
+    db.insert_readings(
+        [(START + timedelta(days=d), name, 1.0) for d in range(10) for name in ("a", "b", "gone")]
+    )
+    assert db.delete_older_than(START + timedelta(days=4)) == 12
+    assert db.first_time("a") == db.first_time("gone") == START + timedelta(days=4)
+    assert db.delete_older_than(START + timedelta(days=4)) == 0
+    assert db.size_bytes() > 0

@@ -101,7 +101,14 @@ def run(settings: Settings, db: Database, metrics: list[Metric], stop: threading
                 # Once a day, thin old readings so the database stays small.
                 if last_thinned is None or now - last_thinned > THIN_EVERY:
                     removed = db.thin(names, now - timedelta(days=settings.detail_days))
+                    # ...and drop whatever has passed the age limit. Run daily, this removes
+                    # a day's worth at a time.
+                    expired = db.delete_older_than(now - timedelta(days=365 * settings.keep_years))
                     last_thinned = now
+                    if expired:
+                        log.info(
+                            "Deleted %d readings older than %d years", expired, settings.keep_years
+                        )
                     if removed:
                         log.info(
                             "Thinned readings older than %d days: removed %d",

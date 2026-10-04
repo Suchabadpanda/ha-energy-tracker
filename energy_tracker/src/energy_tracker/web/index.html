@@ -236,7 +236,8 @@
   </div>
 
   <footer>Built for Sigenergy solar and battery systems. Costs are estimates from the
-    inverter's own counters and will differ slightly from your bill.</footer>
+    inverter's own counters and will differ slightly from your bill.
+    <div id="storage"></div></footer>
 </main>
 
 <script>
@@ -808,6 +809,9 @@ async function refresh() {
     if (found) setup = found;
     const anyDevice = setup.smart_load || setup.ev_charger;
     document.getElementById("notice").hidden = setup.sigenergy_found;
+    document.getElementById("storage").textContent = setup.database_mb === undefined ? ""
+      : "Stored readings: " + setup.database_mb + " MB. Readings older than " +
+        setup.keep_years + " years are deleted.";
     document.getElementById("devices-section").hidden = !anyDevice;
     document.getElementById("usage-section").hidden = !anyDevice;
 

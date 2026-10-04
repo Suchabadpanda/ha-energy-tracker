@@ -75,7 +75,7 @@ async def lifespan(_: FastAPI):
         await asyncio.to_thread(thread.join, 10)
 
 
-app = FastAPI(title="Energy Tracker", version="0.3.2", lifespan=lifespan)
+app = FastAPI(title="Energy Tracker", version="0.4.0", lifespan=lifespan)
 
 
 @app.middleware("http")
@@ -141,6 +141,8 @@ def setup() -> dict:
 
     return {
         "collecting": settings().collecting,
+        "database_mb": round(database().size_bytes() / 1e6, 1),
+        "keep_years": settings().keep_years,
         # Until the first poll there is nothing to judge by, so assume the best.
         "sigenergy_found": not collector.polled or any(found(name) for name in CORE_METRICS),
         "smart_load": found("smart_load_power"),
