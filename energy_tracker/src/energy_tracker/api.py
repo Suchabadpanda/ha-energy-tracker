@@ -24,7 +24,7 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 
-from . import collector, history, import_history, lookup, roi, tariff_store
+from . import collector, history, import_history, income, lookup, roi, tariff_store
 from .config import Metric, Settings, load_metrics, load_settings
 from .costs import combine
 from .db import Database
@@ -78,7 +78,7 @@ async def lifespan(_: FastAPI):
         await asyncio.to_thread(thread.join, 10)
 
 
-app = FastAPI(title="Energy Tracker", version="0.8.0", lifespan=lifespan)
+app = FastAPI(title="Energy Tracker", version="0.9.0", lifespan=lifespan)
 
 
 @app.middleware("http")
@@ -478,6 +478,63 @@ def delete_comparison(row_id: int) -> dict:
     return {"removed": row_id}
 
 
+# --- Extra income ----------------------------------------------------------------------------
+
+
+class IncomeIn(BaseModel):
+    day: date
+    description: str = Field(min_length=1, max_length=80)
+    amount_gbp: float = Field(ge=0, le=100_000)
+
+
+class AxleRateIn(BaseModel):
+    p_per_kwh: float = Field(ge=0, le=2000)
+
+
+@app.get("/api/income")
+def extra_income() -> dict:
+    """Income on top of the tariff: entries typed in, and recorded Axle Energy events."""
+    entries = database().income_rows()
+    by_year: dict[str, float] = {}
+    for entry in entries:
+        if entry["amount_gbp"]:
+            year = entry["day"][:4]
+            by_year[year] = round(by_year.get(year, 0.0) + entry["amount_gbp"], 2)
+    return {
+        "entries": entries,
+        "total_gbp": round(sum(by_year.values()), 2),
+        "by_year": dict(sorted(by_year.items())),
+        "axle": {
+            "entity": settings().axle_event_entity,
+            "found": collector.axle_found,
+            "rate_p": income.rate_p(database()),
+        },
+    }
+
+
+@app.post("/api/income")
+def save_income(body: IncomeIn, id: int | None = None) -> dict:  # noqa: A002
+    """Add an entry, or correct the one with the given id."""
+    database().save_income(body.day, body.description.strip(), body.amount_gbp, id)
+    _roi_cache["value"] = None
+    return extra_income()
+
+
+@app.delete("/api/income/{row_id}")
+def remove_income(row_id: int) -> dict:
+    if not database().remove_income(row_id):
+        raise HTTPException(status_code=404, detail="That entry is not in the list")
+    _roi_cache["value"] = None
+    return extra_income()
+
+
+@app.post("/api/income/axle-rate")
+def set_axle_rate(body: AxleRateIn) -> dict:
+    """What Axle pays per kWh exported during an event. Used for events measured from now on."""
+    database().set_setting("axle_rate_p", str(body.p_per_kwh))
+    return extra_income()
+
+
 # --- History for any period, and exporting it ----------------------------------------------------
 
 PERIOD = Annotated[str, Query(pattern="^(day|week|month|year)$")]
@@ -631,6 +688,14 @@ def payback_figures() -> dict:
     )
     otherwise = roi.daily_costs(counters[LOAD_COUNTER], None, start, end, zone, without_system)
     savings = {day: otherwise[day] - paid[day] for day in paid}
+    # Extra income (grid event payments and the like) counts towards paying the system off.
+    extra = 0.0
+    for entry in database().income_rows():
+        day = date.fromisoformat(entry["day"])
+        if entry["amount_gbp"] and day in savings:
+            savings[day] += entry["amount_gbp"]
+            extra += entry["amount_gbp"]
+    result["extra_income_gbp"] = round(extra, 2)
     # The panels' share of the saving, where solar generation has been recorded.
     solar = None
     if counters[SOLAR_COUNTER]:

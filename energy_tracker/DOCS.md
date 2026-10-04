@@ -19,6 +19,7 @@
 | `backfill_days` | 10 | How far back to fill gaps from Home Assistant's history. 0 turns it off. |
 | `detail_days` | 30 | How long full-detail readings are kept before being thinned to one per 5 minutes. |
 | `keep_years` | 10 | Readings older than this are deleted, a day's worth each day, so storage stops growing. Costs for months older than this are no longer shown. |
+| `axle_event_entity` | sensor.axle_event | The Home Assistant sensor showing Axle Energy grid events, if you have one. |
 | `smart_load_label` | Heat pump | What is connected to the gateway's smart load port 1, as named on the dashboard. |
 | `ev_on_smart_load` | true | On if the EV charger is wired through smart load port 1. Its use is then taken off the smart load figure. Turn off if the charger is on its own circuit. |
 
@@ -116,6 +117,27 @@ everything the system saved beyond that. Both yearly figures are shown under the
 
 Neither estimate allows for maintenance, replacement parts, import and export prices
 moving differently from each other, or what the money might have earned elsewhere.
+
+## Extra income
+
+**Extra income** is for money earned on top of your tariff, such as Axle Energy payments
+for exporting during grid events. The total counts towards **Payback**. It is kept separate
+from the cost figures, which stay as what your supplier charges.
+
+- **By hand**: open **Add income or change settings**, and enter the date and amount.
+- **Automatically, for Axle Energy**: if Home Assistant has Axle's event sensor
+  (`sensor.axle_event`, set up as Axle's own Home Assistant guide describes), each export
+  event is recorded when it appears. A few minutes after it ends, the energy exported
+  between its start and end is multiplied by the rate you set (100p per kWh to begin with)
+  and saved as an **Estimate**.
+
+Axle publishes when events run, but not what they paid. The estimate is every unit
+exported during the event at your rate, which may differ from Axle's own calculation. When
+you know the real payment, choose **Edit** on the entry and enter it; the estimate label
+is then dropped. Changing the rate affects events measured afterwards, not earlier ones.
+
+Only export events are recorded. An event shown while the app was stopped is picked up
+from Home Assistant's history when it restarts, for as far back as `backfill_days`.
 
 ## Comparing tariffs
 

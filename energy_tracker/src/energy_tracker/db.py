@@ -42,6 +42,19 @@ SCHEMA = """
         import_bands              TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS extra_income (
+        id          INTEGER PRIMARY KEY,
+        day         TEXT NOT NULL,            -- local date the income belongs to
+        description TEXT NOT NULL,
+        amount_gbp  REAL,                     -- empty until an event has been measured
+        source      TEXT NOT NULL DEFAULT 'manual',
+        event_start INTEGER UNIQUE,           -- for recorded events: when it ran
+        event_end   INTEGER,
+        kwh         REAL,
+        estimated   INTEGER NOT NULL DEFAULT 0,
+        hidden      INTEGER NOT NULL DEFAULT 0
+    );
+
     CREATE TABLE IF NOT EXISTS meta (
         key   TEXT PRIMARY KEY,
         value TEXT NOT NULL
@@ -295,4 +308,86 @@ class Database:
         with closing(self._connect()) as conn, conn:
             return (
                 conn.execute("DELETE FROM comparison_tariffs WHERE id = ?", (row_id,)).rowcount > 0
+            )
+
+    # --- extra income ------------------------------------------------------------------------
+
+    def income_rows(self) -> list[dict]:
+        """Every entry that has not been removed, newest first."""
+        with closing(self._connect()) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                "SELECT * FROM extra_income WHERE hidden = 0 ORDER BY day DESC, id DESC"
+            ).fetchall()
+        return [
+            {
+                **dict(row),
+                "estimated": bool(row["estimated"]),
+                "event_start": _when(row["event_start"]) if row["event_start"] else None,
+                "event_end": _when(row["event_end"]) if row["event_end"] else None,
+            }
+            for row in rows
+        ]
+
+    def save_income(self, day: date, description: str, amount: float, row_id: int | None) -> int:
+        """Add an entry typed in by hand, or correct an existing one (which stops it being
+        an estimate)."""
+        with closing(self._connect()) as conn, conn:
+            if row_id is not None:
+                cursor = conn.execute(
+                    "UPDATE extra_income SET day = ?, description = ?, amount_gbp = ?, "
+                    "estimated = 0 WHERE id = ? AND hidden = 0",
+                    (day.isoformat(), description, amount, row_id),
+                )
+                if cursor.rowcount:
+                    return row_id
+            cursor = conn.execute(
+                "INSERT INTO extra_income (day, description, amount_gbp) VALUES (?, ?, ?)",
+                (day.isoformat(), description, amount),
+            )
+            return cursor.lastrowid
+
+    def remove_income(self, row_id: int) -> bool:
+        """Remove an entry. A recorded event is hidden, not deleted, so that the sensor
+        still showing it does not bring it straight back."""
+        with closing(self._connect()) as conn, conn:
+            hidden = conn.execute(
+                "UPDATE extra_income SET hidden = 1 WHERE id = ? AND source != 'manual'", (row_id,)
+            ).rowcount
+            deleted = conn.execute(
+                "DELETE FROM extra_income WHERE id = ? AND source = 'manual'", (row_id,)
+            ).rowcount
+            return bool(hidden or deleted)
+
+    def add_event(self, start: datetime, end: datetime, day: date, source: str = "axle") -> bool:
+        """Record a grid event on the given local date. Returns False if already known."""
+        with closing(self._connect()) as conn, conn:
+            cursor = conn.execute(
+                "INSERT OR IGNORE INTO extra_income (day, description, source, event_start, "
+                "event_end, estimated) VALUES (?, ?, ?, ?, ?, 1)",
+                (
+                    day.isoformat(),
+                    "Axle export event",
+                    source,
+                    _seconds(start),
+                    _seconds(end),
+                ),
+            )
+            return cursor.rowcount > 0
+
+    def unsettled_events(self, ended_before: datetime) -> list[dict]:
+        with closing(self._connect()) as conn:
+            rows = conn.execute(
+                "SELECT id, event_start, event_end FROM extra_income "
+                "WHERE source != 'manual' AND amount_gbp IS NULL AND hidden = 0 AND event_end <= ?",
+                (_seconds(ended_before),),
+            ).fetchall()
+        return [{"id": r[0], "event_start": _when(r[1]), "event_end": _when(r[2])} for r in rows]
+
+    def settle_event(self, row_id: int, kwh: float | None, amount: float) -> None:
+        with closing(self._connect()) as conn, conn:
+            conn.execute(
+                "UPDATE extra_income SET kwh = ?, amount_gbp = ? "
+                "WHERE id = ? AND amount_gbp IS NULL",
+                (kwh, amount, row_id),
             )

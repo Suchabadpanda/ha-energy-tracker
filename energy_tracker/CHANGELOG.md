@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.0
+
+- Extra income: record payments on top of your tariff, by hand or automatically from an
+  Axle Energy event sensor. The total counts towards payback.
+
 ## 0.8.0
 
 - History: energy and cost for any past day, week, month or year, as a chart and a table.

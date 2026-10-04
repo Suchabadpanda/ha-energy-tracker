@@ -160,3 +160,27 @@ def test_payback_needs_setting_up_then_reports_savings():
         ).status_code
         == 422
     )
+
+
+def test_extra_income_is_listed_totalled_and_counts_towards_payback():
+    yesterday = (datetime.now(UTC) - timedelta(days=1)).date().isoformat()
+    before = client.get("/api/roi").json()["payback"]["saved_gbp"]
+    body = {"day": yesterday, "description": "Axle export event", "amount_gbp": 12.5}
+    data = client.post("/api/income", json=body).json()
+    assert data["total_gbp"] == 12.5 and data["by_year"] == {yesterday[:4]: 12.5}
+    assert data["axle"] == {"entity": "sensor.axle_event", "found": False, "rate_p": 100.0}
+    roi_now = client.get("/api/roi").json()
+    assert roi_now["payback"]["saved_gbp"] == pytest.approx(before + 12.5)
+    assert roi_now["extra_income_gbp"] == 12.5
+
+    entry = data["entries"][0]["id"]
+    assert (
+        client.post(f"/api/income?id={entry}", json={**body, "amount_gbp": 10}).json()["total_gbp"]
+        == 10
+    )
+    assert (
+        client.post("/api/income/axle-rate", json={"p_per_kwh": 80}).json()["axle"]["rate_p"] == 80
+    )
+    assert client.delete(f"/api/income/{entry}").json()["entries"] == []
+    assert client.delete(f"/api/income/{entry}").status_code == 404
+    assert client.post("/api/income", json={**body, "amount_gbp": -1}).status_code == 422

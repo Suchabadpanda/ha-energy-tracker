@@ -300,6 +300,38 @@
     </details>
   </div>
 
+  <h2 id="income-heading">Extra income</h2>
+  <div class="chart">
+    <div class="hint" id="income-summary" style="margin-top: 0;"></div>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>Date</th><th>For</th><th class="num">Exported</th><th class="num">Amount</th><th></th></tr></thead>
+        <tbody id="income-rows"></tbody>
+      </table>
+    </div>
+    <details id="income-editor">
+      <summary>Add income or change settings</summary>
+      <div class="hint">For money earned on top of your tariff, such as Axle Energy payments for
+        exporting during grid events. It counts towards Payback. Add entries by hand here. If
+        Home Assistant has an Axle event sensor, export events are also recorded automatically,
+        with the payment estimated as the energy exported during the event times the rate below.
+        Use Edit on an entry to replace an estimate with what you were actually paid.</div>
+      <form id="income-form">
+        <label>Date <input type="date" name="day" required></label>
+        <label>For <input type="text" name="description" maxlength="80" value="Axle export event" required></label>
+        <label>Amount (£) <input type="number" name="amount" min="0" step="0.01" required></label>
+        <div class="actions"><button class="primary" type="submit">Save entry</button></div>
+        <div id="income-message" style="grid-column: 1 / -1; font-size: 13px; min-height: 18px; color: var(--muted);"></div>
+      </form>
+      <form id="axle-form">
+        <label>Axle pays per kWh exported in an event (p)
+          <input type="number" name="rate" min="0" max="2000" step="0.1" required></label>
+        <div class="actions"><button type="submit">Save rate</button></div>
+        <div class="hint" id="axle-status" style="grid-column: 1 / -1; margin: 0;"></div>
+      </form>
+    </details>
+  </div>
+
   <div class="nav" style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
     <h2 id="compare-heading">Compare tariffs</h2>
     <select id="compare-period" aria-label="Period to compare over">
@@ -1098,6 +1130,118 @@ document.getElementById("history-next").addEventListener("click", () => { histor
 document.getElementById("history-now").addEventListener("click", () => { historyDay = null; refreshHistory(); });
 document.getElementById("history-interval").addEventListener("change", () => historyData && updateDownload(historyData));
 
+// --- Extra income --------------------------------------------------------------------------
+
+const incomeForm = document.getElementById("income-form");
+const axleForm = document.getElementById("axle-form");
+let editingIncome = null;
+
+function incomeMessage(text, isError = false) {
+  const el = document.getElementById("income-message");
+  el.textContent = text;
+  el.style.color = isError ? "var(--grid)" : "";
+}
+
+function renderIncome(data) {
+  const cell = (text, numeric = false) => {
+    const td = document.createElement("td");
+    td.textContent = text;
+    if (numeric) td.className = "num";
+    return td;
+  };
+  const years = Object.entries(data.by_year).map(([year, total]) => year + ": " + money(total)).join(", ");
+  document.getElementById("income-summary").textContent = data.entries.length
+    ? "Total " + money(data.total_gbp) + (years ? " (" + years + ")." : ".")
+    : "Nothing recorded yet.";
+  document.getElementById("income-rows").replaceChildren(...data.entries.map(entry => {
+    const tr = document.createElement("tr");
+    const what = cell(entry.description);
+    const pending = entry.amount_gbp === null;
+    if (entry.estimated || pending) {
+      const tag = Object.assign(document.createElement("span"), { className: "tag",
+        textContent: pending ? "Waiting for the event to finish" : "Estimate" });
+      what.append(tag);
+    }
+    if (entry.event_start) {
+      const time = iso => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      const detail = Object.assign(document.createElement("div"), { className: "hint",
+        textContent: time(entry.event_start) + " to " + time(entry.event_end) });
+      detail.style.margin = "2px 0 0";
+      what.append(detail);
+    }
+    const actions = document.createElement("td");
+    const action = (label, onClick) => {
+      const button = Object.assign(document.createElement("button"), { className: "link", type: "button", textContent: label });
+      button.style.marginRight = "12px";
+      button.addEventListener("click", onClick);
+      actions.append(button);
+    };
+    action("Edit", () => {
+      editingIncome = entry.id;
+      incomeForm.elements.day.value = entry.day;
+      incomeForm.elements.description.value = entry.description;
+      incomeForm.elements.amount.value = entry.amount_gbp ?? "";
+      document.getElementById("income-editor").open = true;
+      incomeMessage("Editing the entry for " + entry.day + ". Saving replaces it" +
+        (entry.estimated ? " and marks it as the actual amount." : "."));
+      incomeForm.scrollIntoView({ block: "nearest" });
+    });
+    action("Remove", async () => {
+      if (!confirm("Remove this entry?")) return;
+      try {
+        renderIncome(await sendTariff("api/income/" + entry.id, { method: "DELETE" }));
+        refreshPayback();
+      } catch (err) { incomeMessage(err.message, true); }
+    });
+    tr.append(cell(new Date(entry.day + "T00:00").toLocaleDateString([], { dateStyle: "medium" })), what,
+              cell(entry.kwh === null ? "" : entry.kwh.toFixed(2) + " kWh", true),
+              cell(pending ? "–" : money(entry.amount_gbp), true), actions);
+    return tr;
+  }));
+  if (document.activeElement !== axleForm.elements.rate) axleForm.elements.rate.value = data.axle.rate_p;
+  document.getElementById("axle-status").textContent = data.axle.found
+    ? "Recording export events from " + data.axle.entity + "."
+    : "No Axle event sensor found in Home Assistant (" + data.axle.entity + "), so events are not " +
+      "recorded automatically. Entries can still be added by hand.";
+}
+
+async function refreshIncome() {
+  try { renderIncome(await getJson("api/income")); } catch (err) { /* shown on the next refresh */ }
+}
+
+incomeForm.addEventListener("submit", async event => {
+  event.preventDefault();
+  try {
+    const f = incomeForm.elements;
+    const data = await sendTariff("api/income" + (editingIncome ? "?id=" + editingIncome : ""), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ day: f.day.value, description: f.description.value, amount_gbp: Number(f.amount.value) }),
+    });
+    editingIncome = null;
+    f.amount.value = "";
+    incomeMessage("Saved.");
+    renderIncome(data);
+    refreshPayback();
+  } catch (err) {
+    incomeMessage(err.message, true);
+  }
+});
+
+axleForm.addEventListener("submit", async event => {
+  event.preventDefault();
+  try {
+    renderIncome(await sendTariff("api/income/axle-rate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ p_per_kwh: Number(axleForm.elements.rate.value) }),
+    }));
+    incomeMessage("Rate saved. It applies to events from now on.");
+  } catch (err) {
+    incomeMessage(err.message, true);
+  }
+});
+
 // --- Payback -------------------------------------------------------------------------------
 
 const roiForm = document.getElementById("roi-form");
@@ -1260,6 +1404,7 @@ function renderPayback(data) {
     notes.push("Of the " + pounds(p.yearly_gbp) + " a year, about " + pounds(p.yearly_solar_gbp) +
       " is what the panels alone would save and " + pounds(p.yearly_battery_gbp) + " is added by the battery.");
   }
+  if (data.extra_income_gbp > 0) notes.push("Includes " + money(data.extra_income_gbp) + " of extra income.");
   if (p.estimated_before_days > 0) {
     notes.push("The " + p.estimated_before_days + " days between the install date and the first reading are " +
       "estimated at the average (" + money(p.estimated_before_gbp) + ").");
@@ -1653,6 +1798,8 @@ refreshCompare();
 setInterval(refreshCompare, 30 * 60 * 1000);
 refreshPayback();
 setInterval(refreshPayback, 30 * 60 * 1000);
+refreshIncome();
+setInterval(refreshIncome, 5 * 60 * 1000);
 refreshHistory();
 // Keep the latest period current; a past period being browsed is left alone.
 setInterval(() => { if (!historyDay) refreshHistory(); }, 5 * 60 * 1000);

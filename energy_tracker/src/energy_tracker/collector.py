@@ -12,7 +12,7 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 
-from . import backfill
+from . import backfill, income
 from .config import Metric, Settings
 from .db import Database
 from .normalise import normalise
@@ -27,6 +27,8 @@ THIN_EVERY = timedelta(hours=24)
 # to leave out tiles for equipment that is not installed.
 missing: set[str] = set()
 polled = False
+# Whether Home Assistant has the Axle Energy event sensor, as of the last poll.
+axle_found = False
 
 
 def fetch_states(client: httpx.Client) -> dict[str, dict]:
@@ -84,6 +86,19 @@ def run(settings: Settings, db: Database, metrics: list[Metric], stop: threading
                 log.error("Backfill failed (live collection continues): %s", exc)
 
         fill_gaps(datetime.now(UTC).replace(microsecond=0))
+        try:  # events shown while the app was not running
+            found = income.backfill_events(
+                client,
+                db,
+                settings.axle_event_entity,
+                datetime.now(UTC).replace(microsecond=0),
+                max(1, settings.backfill_days),
+                settings.timezone,
+            )
+            if found:
+                log.info("Recorded %d earlier Axle export events from history", found)
+        except (httpx.HTTPError, sqlite3.Error, ValueError) as exc:
+            log.debug("No Axle event history: %s", exc)
         last_stored = datetime.now(UTC)
         last_thinned: datetime | None = None
 
@@ -92,11 +107,21 @@ def run(settings: Settings, db: Database, metrics: list[Metric], stop: threading
                 now = datetime.now(UTC).replace(microsecond=0)
                 if now - last_stored > backfill.GAP_THRESHOLD:
                     fill_gaps(now)  # polling was interrupted
-                rows = build_rows(fetch_states(client), metrics, now)
+                states = fetch_states(client)
+                rows = build_rows(states, metrics, now)
                 if rows:
                     db.insert_readings(rows)
                     last_stored = now
                 log.debug("Stored %d of %d readings", len(rows), len(metrics))
+
+                # Note any grid event the Axle sensor is showing, and measure finished ones.
+                global axle_found
+                event_state = states.get(settings.axle_event_entity)
+                axle_found = event_state is not None
+                if income.record(db, event_state, settings.timezone):
+                    log.info("Recorded an Axle export event")
+                if income.settle(db, now):
+                    log.info("Worked out the estimated payment for a finished Axle event")
 
                 # Once a day, thin old readings so the database stays small.
                 if last_thinned is None or now - last_thinned > THIN_EVERY:

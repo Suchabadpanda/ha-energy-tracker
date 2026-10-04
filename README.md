@@ -53,6 +53,8 @@ The figures shown are made-up example data.
 - **Charts**: power flows and consumption breakdown for the last 24 hours. Breaks in the
   data are shown as breaks, not joined up.
 - **History**: any past day, week, month or year as a chart and table, with a CSV download.
+- **Extra income**: payments on top of your tariff, typed in or recorded automatically from
+  Axle Energy export events.
 - **Payback**: what the system has saved against its cost, with an estimated break-even date
   and a chart of progress.
 - **Compare tariffs**: replay your real usage on other tariffs, typed in or looked up from
