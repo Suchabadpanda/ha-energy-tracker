@@ -72,6 +72,16 @@
   button.link { border: none; background: none; padding: 0; color: var(--grid); font-size: 13px; }
   #tariff-message { grid-column: 1 / -1; font-size: 13px; min-height: 18px; color: var(--muted); }
   #tariff-message.error, #import-message.error { color: var(--grid); }
+  .windows { grid-column: 1 / -1; display: grid; gap: 8px; }
+  .window { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; }
+  .window label { flex: 1 1 130px; }
+  .lookup { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px; align-items: end;
+            padding-bottom: 12px; border-bottom: 1px solid var(--line, rgba(128,128,128,.25)); }
+  .lookup label { flex: 1 1 170px; }
+  #compare-message { grid-column: 1 / -1; font-size: 13px; min-height: 18px; color: var(--muted); }
+  #compare-message.error { color: var(--grid); }
+  td.better { color: var(--battery); font-weight: 600; }
+  td.worse { color: var(--grid); }
   #import-message { grid-column: 1 / -1; font-size: 13px; line-height: 1.6; color: var(--muted); }
   .actions { grid-column: 1 / -1; display: flex; gap: 10px; }
   .axis { fill: var(--muted); font-size: 11px; }
@@ -173,6 +183,57 @@
         </table>
       </div>
       <div class="hint">Choose a month to open it above. * means only part of the month was counted.</div>
+    </details>
+  </div>
+
+  <div class="nav" style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+    <h2 id="compare-heading">Compare tariffs</h2>
+    <select id="compare-period" aria-label="Period to compare over">
+      <option value="30d">Last 30 days</option>
+      <option value="90d">Last 90 days</option>
+      <option value="12m" selected>Last 12 months</option>
+      <option value="all">Everything stored</option>
+    </select>
+  </div>
+  <div class="chart">
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>Tariff</th><th>Import</th><th>Export credit</th><th>Standing charge</th>
+          <th>Net cost</th><th>Against yours</th><th></th></tr></thead>
+        <tbody id="compare-rows"></tbody>
+      </table>
+    </div>
+    <div class="hint" id="compare-hint"></div>
+    <details id="compare-editor">
+      <summary>Add a tariff to compare</summary>
+      <div class="hint">Enter another tariff's prices to see what your actual usage would have
+        cost on it. To test a price change on your own tariff, choose "Copy my current rates"
+        and alter the prices. Enter prices before VAT with the VAT percentage, or prices
+        including VAT with VAT set to 0.</div>
+      <form id="compare-form">
+        <div class="lookup">
+          <label>Look up Octopus Energy prices: your region
+            <select name="region"><option value="">Choose a region</option></select></label>
+          <label>Tariff <select name="product"><option value="">Choose a region first</option></select></label>
+          <button type="button" id="compare-lookup">Fill in prices</button>
+        </div>
+        <label>Tariff name <input type="text" name="name" maxlength="120" required></label>
+        <label>Export (p per kWh)
+          <input type="number" name="export" min="0" step="0.0001" required></label>
+        <label>Standing charge (p per day)
+          <input type="number" name="standing" min="0" step="0.0001" required></label>
+        <label>VAT to add (%)
+          <input type="number" name="vat" min="0" max="100" step="0.1" value="0" required></label>
+        <label>Standard rate (p per kWh)
+          <input type="number" name="other_rate" min="0" step="0.0001" required></label>
+        <div class="windows" id="compare-windows"></div>
+        <div class="actions">
+          <button type="button" id="compare-add-window">Add a time window</button>
+          <button type="button" id="compare-copy">Copy my current rates</button>
+          <button class="primary" type="submit">Save tariff</button>
+        </div>
+        <div id="compare-message"></div>
+      </form>
     </details>
   </div>
 
@@ -659,7 +720,9 @@ function fillForm(period, startDate) {
 }
 
 let formFilled = false;
+let currentRates = null;  // the tariff period in force today
 function renderTariffs(data) {
+  currentRates = data.periods.find(p => p.effective_from === data.current_from) ?? null;
   const cell = text => { const td = document.createElement("td"); td.textContent = text; return td; };
   const rows = data.periods.map((period, index) => {
     const tr = document.createElement("tr");
@@ -741,6 +804,234 @@ form.addEventListener("submit", async event => {
     refresh();
   } catch (err) {
     tariffMessage(err.message, true);
+  }
+});
+
+// --- Compare tariffs -----------------------------------------------------------------------
+
+const compareForm = document.getElementById("compare-form");
+const windowsBox = document.getElementById("compare-windows");
+const MAX_WINDOWS = 6;
+let editingComparison = null;  // id of the saved tariff being edited, if any
+
+function compareMessage(text, isError = false) {
+  const el = document.getElementById("compare-message");
+  el.textContent = text;
+  el.className = isError ? "error" : "";
+}
+
+// One "from / until / price" row. Anything outside every window is charged the standard rate.
+function addWindow(start = 0, end = 360, rate = "") {
+  if (windowsBox.children.length >= MAX_WINDOWS) return;
+  const row = document.createElement("div");
+  row.className = "window";
+  const field = (text, control) => {
+    const label = document.createElement("label");
+    label.append(text, control);
+    return label;
+  };
+  const times = value => {
+    const select = document.createElement("select");
+    for (let m = 0; m < 1440; m += 30) select.add(new Option(clockOf(m), m));
+    select.value = value;
+    return select;
+  };
+  const price = document.createElement("input");
+  Object.assign(price, { type: "number", min: "0", step: "0.0001", required: true, value: rate });
+  const remove = document.createElement("button");
+  remove.type = "button";
+  remove.textContent = "Remove";
+  remove.addEventListener("click", () => row.remove());
+  row.append(field("Different rate from ", times(start)), field("until ", times(end % 1440)),
+             field("Rate (p per kWh) ", price), remove);
+  windowsBox.append(row);
+}
+
+// Turns the standard rate plus any time windows into bands covering the whole day.
+function bandsFromWindows(other) {
+  const slots = new Array(48).fill(other);
+  for (const row of windowsBox.children) {
+    const [from, until] = [...row.querySelectorAll("select")].map(s => Number(s.value) / 30);
+    const rate = Number(row.querySelector("input").value);
+    if (from === until) throw new Error("A time window must start and end at different times.");
+    for (let i = from; i !== until; i = (i + 1) % 48) slots[i] = rate;
+  }
+  const bands = [];
+  slots.forEach((rate, i) => {
+    const last = bands[bands.length - 1];
+    if (last && last.p_per_kwh === rate) last.end = clockOf((i + 1) * 30);
+    else bands.push({ start: clockOf(i * 30), end: clockOf((i + 1) * 30), p_per_kwh: rate });
+  });
+  return bands;
+}
+
+// The reverse: the rate that covers most of the day becomes the standard rate, and the
+// other bands become time windows (one running past midnight is joined back up).
+function fillCompareForm(tariff) {
+  const f = compareForm.elements;
+  f.name.value = tariff.name;
+  f.export.value = tariff.export_p_per_kwh ?? f.export.value;
+  f.standing.value = tariff.standing_charge_p_per_day;
+  f.vat.value = tariff.vat_percent ?? 0;
+  const minutes = new Map();
+  for (const b of tariff.import_bands) {
+    minutes.set(b.p_per_kwh, (minutes.get(b.p_per_kwh) ?? 0) + minutesOf(b.end) - minutesOf(b.start));
+  }
+  const other = [...minutes].sort((a, b) => b[1] - a[1])[0][0];
+  f.other_rate.value = other;
+  let rest = tariff.import_bands.filter(b => b.p_per_kwh !== other)
+    .map(b => ({ start: minutesOf(b.start), end: minutesOf(b.end), rate: b.p_per_kwh }));
+  const first = rest[0], last = rest[rest.length - 1];
+  if (rest.length > 1 && first.start === 0 && last.end === 1440 && first.rate === last.rate) {
+    rest = [...rest.slice(1, -1), { start: last.start, end: first.end, rate: first.rate }];
+  }
+  windowsBox.replaceChildren();
+  for (const w of rest.slice(0, MAX_WINDOWS)) addWindow(w.start, w.end, w.rate);
+}
+
+const ratesText = bands => bands.length === 1 ? bands[0].p_per_kwh + "p all day"
+  : bands.map(b => b.start + "–" + b.end + ": " + b.p_per_kwh + "p").join(", ");
+
+function renderCompare(data) {
+  const cell = (text, className) => {
+    const td = document.createElement("td");
+    td.textContent = text;
+    if (className) td.className = className;
+    return td;
+  };
+  const costCells = cost => cost
+    ? [money(cost.import_gbp), money(cost.export_credit_gbp), money(cost.standing_charge_gbp),
+       money(cost.net_gbp)].map(text => cell(text))
+    : [cell("–"), cell("–"), cell("–"), cell("–")];
+  const rows = [];
+  const yours = document.createElement("tr");
+  yours.append(cell("Your tariff (what you paid)"), ...costCells(data.actual), cell(""), cell(""));
+  rows.push(yours);
+  for (const candidate of data.candidates) {
+    const tr = document.createElement("tr");
+    const name = cell(candidate.name);
+    const detail = document.createElement("div");
+    detail.className = "hint";
+    detail.style.margin = "2px 0 0";
+    detail.textContent = ratesText(candidate.import_bands) +
+      (candidate.vat_percent ? " (+" + candidate.vat_percent + "% VAT)" : "") +
+      "; export " + candidate.export_p_per_kwh + "p; " + candidate.standing_charge_p_per_day + "p a day";
+    name.append(detail);
+    const diff = candidate.difference_gbp;
+    const against = diff === null ? cell("–")
+      : Math.abs(diff) < 0.005 ? cell("Same")
+      : cell(money(Math.abs(diff)) + (diff < 0 ? " cheaper" : " dearer"), diff < 0 ? "better" : "worse");
+    const actions = document.createElement("td");
+    const action = (label, onClick) => {
+      const button = document.createElement("button");
+      Object.assign(button, { className: "link", type: "button", textContent: label });
+      button.style.marginRight = "12px";
+      button.addEventListener("click", onClick);
+      actions.append(button);
+    };
+    action("Edit", () => {
+      editingComparison = candidate.id;
+      fillCompareForm(candidate);
+      document.getElementById("compare-editor").open = true;
+      compareMessage("Editing \"" + candidate.name + "\". Saving replaces it.");
+      compareForm.scrollIntoView({ block: "nearest" });
+    });
+    action("Remove", async () => {
+      if (!confirm("Remove \"" + candidate.name + "\" from the comparison?")) return;
+      try {
+        await sendTariff("api/compare/tariffs/" + candidate.id, { method: "DELETE" });
+        refreshCompare();
+      } catch (err) { compareMessage(err.message, true); }
+    });
+    tr.append(name, ...costCells(candidate.cost), against, actions);
+    rows.push(tr);
+  }
+  document.getElementById("compare-rows").replaceChildren(...rows);
+  const hint = document.getElementById("compare-hint");
+  if (!data.actual) {
+    hint.textContent = "No readings to compare yet.";
+  } else {
+    const from = new Date(data.from).toLocaleDateString([], { dateStyle: "medium" });
+    hint.textContent = "Counted from " + from + " (" + data.days + " days). " +
+      (data.candidates.length ? "" : "Add a tariff below to compare it with yours. ") +
+      "Your usage is replayed exactly as it happened: a tariff with a different cheap window " +
+      "would do better than shown once the battery and car were set to charge in it. " +
+      coverageHint({ ...data.actual, full_period: true });
+  }
+}
+
+async function refreshCompare() {
+  try {
+    const period = document.getElementById("compare-period").value;
+    renderCompare(await getJson("api/compare?period=" + period));
+  } catch (err) {
+    document.getElementById("compare-hint").textContent = "Could not work out the comparison (" + err.message + ").";
+  }
+}
+document.getElementById("compare-period").addEventListener("change", refreshCompare);
+document.getElementById("compare-add-window").addEventListener("click", () => addWindow());
+document.getElementById("compare-copy").addEventListener("click", () => {
+  if (!currentRates) return compareMessage("Your current rates have not loaded yet.", true);
+  editingComparison = null;
+  fillCompareForm({ ...currentRates, name: currentRates.name + " (new prices)" });
+  compareMessage("Copied. Change the prices, then save.");
+});
+
+compareForm.addEventListener("submit", async event => {
+  event.preventDefault();
+  try {
+    const f = compareForm.elements;
+    await sendTariff("api/compare/tariffs" + (editingComparison ? "?id=" + editingComparison : ""), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: f.name.value, export_p_per_kwh: Number(f.export.value),
+        standing_charge_p_per_day: Number(f.standing.value), vat_percent: Number(f.vat.value),
+        import_bands: bandsFromWindows(Number(f.other_rate.value)),
+      }),
+    });
+    editingComparison = null;
+    compareMessage("Saved.");
+    refreshCompare();
+  } catch (err) {
+    compareMessage(err.message, true);
+  }
+});
+
+// Looking up published prices. The list is fetched the first time the form is opened.
+let lookupLoaded = false;
+document.getElementById("compare-editor").addEventListener("toggle", async event => {
+  if (!event.target.open) return;
+  const f = compareForm.elements;
+  if (!f.export.value && currentRates) f.export.value = currentRates.export_p_per_kwh;
+  if (lookupLoaded) return;
+  lookupLoaded = true;
+  try {
+    const data = await sendTariff("api/lookup/octopus");
+    for (const r of data.regions) f.region.add(new Option(r.name, r.code));
+    f.product.replaceChildren(new Option("Choose a tariff", ""),
+      ...data.products.map(p => new Option(p.name, p.code)));
+    try { f.region.value = localStorage.getItem("region") ?? ""; } catch { /* no storage */ }
+  } catch (err) {
+    lookupLoaded = false;
+    f.product.replaceChildren(new Option("Price list unavailable", ""));
+    compareMessage("The Octopus Energy price list could not be loaded: " + err.message +
+      " You can still type prices in.", true);
+  }
+});
+document.getElementById("compare-lookup").addEventListener("click", async () => {
+  const f = compareForm.elements;
+  if (!f.region.value || !f.product.value) return compareMessage("Choose a region and a tariff first.", true);
+  try { localStorage.setItem("region", f.region.value); } catch { /* no storage */ }
+  compareMessage("Fetching prices...");
+  try {
+    const tariff = await sendTariff("api/lookup/octopus/tariff?product=" +
+      encodeURIComponent(f.product.value) + "&region=" + f.region.value);
+    editingComparison = null;
+    fillCompareForm(tariff);
+    compareMessage("Filled in from " + tariff.source + ". Check the export rate, then save.");
+  } catch (err) {
+    compareMessage(err.message, true);
   }
 });
 
@@ -857,6 +1148,9 @@ async function refresh() {
 
 refresh();
 setInterval(refresh, 10000);
+// The comparison prices a long period several times over, so it is refreshed far less often.
+refreshCompare();
+setInterval(refreshCompare, 30 * 60 * 1000);
 </script>
 </body>
 </html>

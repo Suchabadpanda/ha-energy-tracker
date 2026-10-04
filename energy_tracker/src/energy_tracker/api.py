@@ -18,11 +18,12 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Annotated
 
+import httpx
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
-from . import collector, import_history, tariff_store
+from . import collector, import_history, lookup, tariff_store
 from .config import Metric, Settings, load_metrics, load_settings
 from .costs import combine
 from .db import Database
@@ -75,7 +76,7 @@ async def lifespan(_: FastAPI):
         await asyncio.to_thread(thread.join, 10)
 
 
-app = FastAPI(title="Energy Tracker", version="0.4.0", lifespan=lifespan)
+app = FastAPI(title="Energy Tracker", version="0.5.0", lifespan=lifespan)
 
 
 @app.middleware("http")
@@ -326,7 +327,7 @@ class TariffIn(BaseModel):
     export_p_per_kwh: float = Field(ge=0, le=500)
     standing_charge_p_per_day: float = Field(ge=0, le=1000)
     vat_percent: float = Field(default=0, ge=0, le=100)
-    import_bands: list[BandIn] = Field(min_length=1, max_length=12)
+    import_bands: list[BandIn] = Field(min_length=1, max_length=48)
 
 
 def tariff_json(tariff: Tariff) -> dict:
@@ -382,6 +383,120 @@ def delete_tariff(effective_from: date) -> dict:
         raise HTTPException(status_code=404, detail="No tariff period starts on that date")
     _years_cache["value"] = None
     return list_tariffs()
+
+
+# --- Comparing tariffs -------------------------------------------------------------------------
+
+# How far back each choice of period reaches. None means everything stored.
+COMPARE_PERIODS = {"30d": 30, "90d": 90, "12m": 365, "all": None}
+
+
+class ComparisonIn(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    export_p_per_kwh: float = Field(ge=0, le=500)
+    standing_charge_p_per_day: float = Field(ge=0, le=1000)
+    vat_percent: float = Field(default=0, ge=0, le=100)
+    import_bands: list[BandIn] = Field(min_length=1, max_length=48)
+
+
+def comparison_tariff(row: dict) -> Tariff:
+    return build_tariff(
+        name=row["name"],
+        import_bands=row["import_bands"],
+        export_p_per_kwh=row["export_p_per_kwh"],
+        standing_charge_p_per_day=row["standing_charge_p_per_day"],
+        vat_percent=row["vat_percent"],
+    )
+
+
+@app.get("/api/compare")
+def compare(period: Annotated[str, Query(pattern="^(30d|90d|12m|all)$")] = "12m") -> dict:
+    """What the same imports and exports would have cost on each saved tariff.
+
+    The usage is replayed exactly as it happened, half hour by half hour. It does not allow
+    for habits changing to suit a different tariff (such as charging the battery at other
+    times), so a tariff with a different cheap window may do better in practice.
+    """
+    now = datetime.now(UTC)
+    first = first_cost_reading()
+    rows = database().comparison_rows()
+    result: dict = {"period": period, "actual": None, "candidates": []}
+    if first is None:
+        result["candidates"] = [{**row, "cost": None, "difference_gbp": None} for row in rows]
+        return result
+
+    days = COMPARE_PERIODS[period]
+    # Whole local days, ending now, so the standing charge is counted fairly.
+    wanted = local_midnight(now, local_timezone()) - timedelta(days=days) if days else first
+    start = max(wanted, first)
+    samples = counter_samples(COST_COUNTERS, start - timedelta(days=1), HALF_HOURLY, now)
+
+    def cost_on(rates: Schedule) -> dict | None:
+        return cost_since(samples, start, now, local_timezone(), rates, gap=HALF_HOURLY_GAP)
+
+    actual = cost_on(schedule())
+    result["actual"] = actual
+    result["from"] = actual["since"] if actual else start
+    result["days"] = actual["standing_charge_days"] if actual else 0
+    for row in rows:
+        cost = cost_on(Schedule([comparison_tariff(row)]))
+        difference = round(cost["net_gbp"] - actual["net_gbp"], 2) if cost and actual else None
+        result["candidates"].append({**row, "cost": cost, "difference_gbp": difference})
+    return result
+
+
+@app.post("/api/compare/tariffs")
+def save_comparison(body: ComparisonIn, id: int | None = None) -> dict:  # noqa: A002
+    """Add a tariff to compare against, or replace the one with the given id."""
+    row = body.model_dump()
+    row["name"] = row["name"].strip()
+    try:
+        comparison_tariff(row)  # checks the bands cover the whole day
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {"id": database().save_comparison_row(row, id)}
+
+
+@app.delete("/api/compare/tariffs/{row_id}")
+def delete_comparison(row_id: int) -> dict:
+    if not database().delete_comparison_row(row_id):
+        raise HTTPException(status_code=404, detail="That tariff is not in the list")
+    return {"removed": row_id}
+
+
+# --- Looking up published prices ---------------------------------------------------------------
+
+
+def lookup_client() -> httpx.Client:
+    return httpx.Client(timeout=20, headers={"User-Agent": "ha-energy-tracker"})
+
+
+@app.get("/api/lookup/octopus")
+def octopus_products() -> dict:
+    """Octopus Energy import tariffs on sale now, and the regions prices are published for."""
+    try:
+        with lookup_client() as client:
+            products = lookup.list_products(client)
+    except lookup.PriceLookupError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {
+        "regions": [{"code": code, "name": name} for code, name in lookup.REGIONS.items()],
+        "products": products,
+    }
+
+
+@app.get("/api/lookup/octopus/tariff")
+def octopus_tariff(
+    product: Annotated[str, Query(pattern=r"^[A-Z0-9-]{3,60}$")],
+    region: Annotated[str, Query(pattern=r"^[A-P]$")],
+) -> dict:
+    """Today's prices for one Octopus Energy tariff, ready to drop into the comparison form."""
+    today_local = datetime.now(local_timezone()).date()
+    try:
+        with lookup_client() as client:
+            return lookup.fetch_tariff(client, product, region, local_timezone(), today_local)
+    except lookup.PriceLookupError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 # --- Importing older history -----------------------------------------------------------------

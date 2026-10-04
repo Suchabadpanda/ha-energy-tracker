@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.0
+
+- Compare tariffs: see what your real usage would have cost on other tariffs, or on your
+  own tariff after a price change.
+- Tariffs to compare can have several time windows.
+- Look up Octopus Energy's published prices to fill in a tariff.
+
 ## 0.4.0
 
 - Readings older than `keep_years` (default 10) are now deleted, so storage has a ceiling.

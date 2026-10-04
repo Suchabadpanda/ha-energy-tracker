@@ -33,6 +33,15 @@ SCHEMA = """
         import_bands              TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS comparison_tariffs (
+        id                        INTEGER PRIMARY KEY,
+        name                      TEXT NOT NULL,
+        export_p_per_kwh          REAL NOT NULL,
+        standing_charge_p_per_day REAL NOT NULL,
+        vat_percent               REAL NOT NULL DEFAULT 0,
+        import_bands              TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS meta (
         key   TEXT PRIMARY KEY,
         value TEXT NOT NULL
@@ -233,3 +242,42 @@ class Database:
                 "DELETE FROM tariff_periods WHERE effective_from = ?", (effective_from.isoformat(),)
             )
             return conn.total_changes > before
+
+    # --- tariffs to compare against ----------------------------------------------------------
+
+    def comparison_rows(self) -> list[dict]:
+        with closing(self._connect()) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute("SELECT * FROM comparison_tariffs ORDER BY id").fetchall()
+        return [{**dict(row), "import_bands": json.loads(row["import_bands"])} for row in rows]
+
+    def save_comparison_row(self, row: dict, row_id: int | None = None) -> int:
+        """Add a tariff to compare against, or replace the one with this id."""
+        values = (
+            row["name"],
+            row["export_p_per_kwh"],
+            row["standing_charge_p_per_day"],
+            row["vat_percent"],
+            json.dumps(row["import_bands"]),
+        )
+        with closing(self._connect()) as conn, conn:
+            if row_id is not None:
+                cursor = conn.execute(
+                    "UPDATE comparison_tariffs SET name = ?, export_p_per_kwh = ?, "
+                    "standing_charge_p_per_day = ?, vat_percent = ?, import_bands = ? WHERE id = ?",
+                    (*values, row_id),
+                )
+                if cursor.rowcount:
+                    return row_id
+            cursor = conn.execute(
+                "INSERT INTO comparison_tariffs (name, export_p_per_kwh, "
+                "standing_charge_p_per_day, vat_percent, import_bands) VALUES (?, ?, ?, ?, ?)",
+                values,
+            )
+            return cursor.lastrowid
+
+    def delete_comparison_row(self, row_id: int) -> bool:
+        with closing(self._connect()) as conn, conn:
+            return (
+                conn.execute("DELETE FROM comparison_tariffs WHERE id = ?", (row_id,)).rowcount > 0
+            )

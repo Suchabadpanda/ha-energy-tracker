@@ -56,6 +56,33 @@ Grid power must be positive when importing, and battery power positive when char
 - "Saved by off-peak" is what the same import would have cost at the dearest rate, minus
   what it did cost.
 
+## Comparing tariffs
+
+**Compare tariffs** shows what your real imports and exports would have cost on other
+tariffs, over the last 30 days, 90 days, 12 months or everything stored.
+
+- **By hand**: open **Add a tariff to compare** and enter the prices. Give a standard rate,
+  then use **Add a time window** for each period with a different price (a window may run
+  past midnight). Up to six windows.
+- **Price change on your own tariff**: choose **Copy my current rates**, alter the prices,
+  and save. This shows what an announced change would cost over a year of your usage.
+- **Look up Octopus Energy prices**: choose your region and a tariff, then **Fill in
+  prices**. The form is filled with today's published prices including VAT, with VAT to
+  add set to 0. Check the export rate (it is left as your own), then save.
+
+Things to know:
+
+- Your usage is replayed exactly as it happened. A tariff whose cheap window differs from
+  yours will look dearer than it would be in practice, because your battery and car were
+  charging to suit your current window.
+- Looked-up prices are today's. They are not updated afterwards, and earlier months are
+  priced at today's rates.
+- The lookup covers Octopus Energy only, and leaves out tariffs whose prices change every
+  half hour (Agile) or track the wholesale price. Other suppliers do not publish a price
+  list that an app can read.
+- The price list is only contacted when you open the form or press **Fill in prices**. A
+  region letter and tariff code are sent; nothing else.
+
 ## Older history
 
 **Import older history** fetches hourly history for the energy counters from Home
@@ -94,6 +121,8 @@ replaces what the earlier one brought in.
 ## Security and data
 
 - The dashboard opens through Home Assistant, behind its login. No network port is opened.
+- The only outside service contacted is Octopus Energy's public price list, and only when
+  you use the tariff lookup.
 - The app only reads from Home Assistant. It never changes a device or setting.
 - Readings and rates are stored in the app's data folder and are included in Home
   Assistant backups. The app pauses for a few seconds while a backup is taken.
