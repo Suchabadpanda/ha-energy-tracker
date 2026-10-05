@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.17.1
+
+- Power Metrics Chart: point at it to mark a moment and see every line's exact value then.
+
 ## 0.17.0
 
 Faster to open, and lighter while open.

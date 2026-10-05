@@ -138,14 +138,14 @@
   #bills-rates { grid-column: 1 / -1; display: grid; gap: 8px; }
   tr.year-row td span.detail { font-weight: 400; color: var(--muted); font-size: 13px; margin-left: 10px; }
   .plot { position: relative; }
-  #history-tip { position: absolute; pointer-events: none; background: var(--card); color: var(--text);
+  .chart-tip { position: absolute; pointer-events: none; background: var(--card); color: var(--text);
                  border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font-size: 13px;
                  box-shadow: 0 4px 14px rgba(0,0,0,.14); min-width: 150px; z-index: 2; }
-  #history-tip .when { color: var(--muted); margin-bottom: 4px; }
-  #history-tip .row { display: flex; justify-content: space-between; gap: 14px; }
-  #history-tip .row span:first-child::before { content: ""; display: inline-block; width: 10px; height: 3px;
+  .chart-tip .when { color: var(--muted); margin-bottom: 4px; }
+  .chart-tip .row { display: flex; justify-content: space-between; gap: 14px; }
+  .chart-tip .row span:first-child::before { content: ""; display: inline-block; width: 10px; height: 3px;
                  border-radius: 2px; background: var(--c); margin-right: 6px; vertical-align: middle; }
-  #history-tip .row strong { font-weight: 600; }
+  .chart-tip .row strong { font-weight: 600; }
   .hit { fill: transparent; cursor: default; outline: none; }
   .hit:hover, .hit:focus { fill: var(--muted); fill-opacity: .1; }
   a.button { display: inline-block; text-decoration: none; padding: 6px 12px; border: 1px solid var(--line);
@@ -242,7 +242,10 @@
   </div>
   <div class="chart">
     <div class="empty" id="flows-empty" hidden>No history yet. The chart fills in as readings are collected.</div>
-    <svg id="flows" viewBox="0 0 900 300" role="img" aria-label="Power metrics over the chosen period"></svg>
+    <div class="plot">
+      <svg id="flows" viewBox="0 0 900 300" role="img" aria-label="Power metrics over the chosen period"></svg>
+      <div id="flows-tip" class="chart-tip" hidden></div>
+    </div>
     <div class="legend" id="flows-legend"></div>
   </div>
 
@@ -274,7 +277,7 @@
     <div class="empty" id="history-empty" hidden>No readings for this period.</div>
     <div class="plot">
       <svg id="history-chart" viewBox="0 0 900 300" role="img" aria-label="Energy in each part of the chosen period"></svg>
-      <div id="history-tip" hidden></div>
+      <div id="history-tip" class="chart-tip" hidden></div>
     </div>
     <div class="legend" id="history-legend"></div>
     <div class="hint" id="history-hint"></div>
@@ -844,6 +847,7 @@ function chartFrame(svgId, emptyId, values) {
     for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v);
     if (text !== undefined) node.textContent = text;
     svg.append(node);
+    return node;
   };
 
   const step = Math.max(1, Math.ceil((yMax - yMin) / 5));
@@ -885,7 +889,7 @@ function chartFrame(svgId, emptyId, values) {
     }
     return out.filter(seg => seg.length > 1);
   };
-  return { add, inRange, path, segments };
+  return { add, inRange, path, segments, x, y, svg, W, H, L, R, T, B, start, end };
 }
 
 // What the two power charts cover: set from the period chosen above them.
@@ -916,6 +920,76 @@ function renderFlows(series) {
     frame.add("path", { d, fill: "none", stroke: line.color,
                         "stroke-width": 2, "stroke-linejoin": "round" });
   }
+  flowsHover(frame, runs);
+}
+
+// Pointing at the power metrics chart marks the nearest reading and lists every line's value
+// at that moment, with what a figure above or below zero means.
+function flowsHover(frame, runs) {
+  const tip = document.getElementById("flows-tip");
+  tip.hidden = true;
+  const series = runs.map(({ line, segments }) => ({ line, points: segments.flat() })).filter(s => s.points.length);
+  const times = [...new Set(series.flatMap(s => s.points.map(p => p[0])))].sort((a, b) => a - b);
+  if (!times.length) return;
+  const lookups = series.map(s => new Map(s.points));
+  const cursor = frame.add("line", { y1: frame.T, y2: frame.H - frame.B, class: "zero", visibility: "hidden" });
+  const dots = series.map(s => frame.add("circle", { r: 4, fill: s.line.color, stroke: "var(--card)",
+                                                     "stroke-width": 1.5, visibility: "hidden" }));
+  const hit = frame.add("rect", { x: frame.L, y: frame.T, width: frame.W - frame.L - frame.R,
+                                  height: frame.H - frame.T - frame.B, fill: "transparent" });
+  hit.style.touchAction = "pan-y";
+  const describe = (line, v) => {
+    const size = Math.abs(v).toFixed(2) + " kW";
+    if (Math.abs(v) < 0.005) return "0.00 kW";
+    if (line.metric === "grid_power") return size + (v > 0 ? " importing" : " exporting");
+    if (line.metric === "battery_power") return size + (v > 0 ? " discharging" : " charging");
+    return v.toFixed(2) + " kW";
+  };
+  const hide = () => {
+    tip.hidden = true;
+    for (const node of [cursor, ...dots]) node.setAttribute("visibility", "hidden");
+  };
+  const show = event => {
+    const box = frame.svg.getBoundingClientRect();
+    const at = frame.start + ((event.clientX - box.left) / box.width * frame.W - frame.L) /
+      (frame.W - frame.L - frame.R) * (frame.end - frame.start);
+    // The nearest reading to the pointer.
+    let lo = 0, hi = times.length - 1;
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (times[mid] < at) lo = mid + 1; else hi = mid; }
+    const t = lo > 0 && at - times[lo - 1] < times[lo] - at ? times[lo - 1] : times[lo];
+    const px = frame.x(t);
+    cursor.setAttribute("x1", px);
+    cursor.setAttribute("x2", px);
+    cursor.setAttribute("visibility", "visible");
+    const moment = new Date(t);
+    const long = frame.end - frame.start > 26 * 3600 * 1000;
+    const heading = Object.assign(document.createElement("div"), { className: "when",
+      textContent: moment.toLocaleString([], long
+        ? { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }
+        : { hour: "2-digit", minute: "2-digit" }) });
+    const rows = [];
+    series.forEach((s, i) => {
+      const v = lookups[i].get(t);
+      dots[i].setAttribute("visibility", v === undefined ? "hidden" : "visible");
+      if (v === undefined) return;
+      dots[i].setAttribute("cx", px);
+      dots[i].setAttribute("cy", frame.y(v));
+      const row = Object.assign(document.createElement("div"), { className: "row" });
+      row.style.setProperty("--c", s.line.color);
+      row.append(Object.assign(document.createElement("span"), { textContent: s.line.label.split(" (")[0] }),
+                 Object.assign(document.createElement("strong"), { textContent: describe(s.line, v) }));
+      rows.push(row);
+    });
+    tip.replaceChildren(heading, ...rows);
+    tip.hidden = false;
+    const scale = box.width / frame.W, centre = px * scale;
+    const flip = centre > box.width / 2;
+    tip.style.left = flip ? "" : (centre + 14) + "px";
+    tip.style.right = flip ? (box.width - centre + 14) + "px" : "";
+    tip.style.top = (frame.T * scale) + "px";
+  };
+  for (const name of ["pointerenter", "pointermove", "pointerdown"]) hit.addEventListener(name, show);
+  for (const name of ["pointerleave", "pointercancel"]) hit.addEventListener(name, hide);
 }
 
 // Stacked areas: the top edge of the stack is total consumption.
