@@ -1662,6 +1662,7 @@ function renderBills(data) {
       const flip = () => {
         if (billYearsFolded.has(year)) billYearsFolded.delete(year); else billYearsFolded.add(year);
         try { localStorage.setItem("energy-tracker-bill-years-folded", JSON.stringify([...billYearsFolded])); } catch { /* no storage */ }
+        saveLayout();
         renderBills(lastBills);
       };
       td.addEventListener("click", flip);
@@ -2582,7 +2583,8 @@ for (const label of document.querySelectorAll("form label")) {
 }
 
 // Every section heading can be clicked to fold its section away. What is folded is
-// remembered on this device.
+// saved with the app, so it is the same on every device; the copy kept in this browser
+// only lets the page open already folded, without a flicker.
 const FOLD_KEY = "energy-tracker-folded";
 const mainEl = document.querySelector("main");
 const headings = [...mainEl.querySelectorAll("h2")];
@@ -2605,6 +2607,31 @@ function setFolded(h2, fold) {
   for (const el of sectionParts(h2)) el.classList.toggle("folded-away", fold);
   if (fold) folded.add(h2.dataset.key); else folded.delete(h2.dataset.key);
   try { localStorage.setItem(FOLD_KEY, JSON.stringify([...folded])); } catch { /* no storage */ }
+  saveLayout();
+}
+let layoutReady = false, layoutTimer = null;
+function saveLayout() {
+  if (!layoutReady) return;
+  clearTimeout(layoutTimer);
+  layoutTimer = setTimeout(() => {
+    fetch("api/layout", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ folded: [...folded], bill_years: [...billYearsFolded] }),
+    }).catch(() => { /* kept in this browser; saved on the next change */ });
+  }, 400);
+}
+async function loadLayout() {
+  try {
+    const saved = await getJson("api/layout");
+    if (saved.saved) {
+      for (const h2 of headings) setFolded(h2, saved.folded.includes(h2.dataset.key));
+      billYearsFolded = new Set(saved.bill_years);
+      try { localStorage.setItem("energy-tracker-bill-years-folded", JSON.stringify(saved.bill_years)); } catch { /* no storage */ }
+      if (lastBills) renderBills(lastBills);
+    }
+    layoutReady = true;
+    if (!saved.saved && (folded.size || billYearsFolded.size)) saveLayout();
+  } catch { layoutReady = true; }
 }
 for (const h2 of headings) {
   h2.dataset.key = h2.id || h2.textContent.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-");
@@ -2618,6 +2645,7 @@ for (const h2 of headings) {
     if (event.key === "Enter" || event.key === " ") { event.preventDefault(); toggle(); }
   });
 }
+loadLayout();
 
 // The Sections menu lists every heading; choosing one opens that section and scrolls to it.
 const jump = document.getElementById("jump");

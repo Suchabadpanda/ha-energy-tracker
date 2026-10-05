@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.15.0
+
+- Folded sections and folded bill years are now saved with the app instead of in the
+  browser, so they stay folded on every device and after the browser's data is cleared.
+
 ## 0.14.0
 
 - Charts: click a legend entry to show or hide that series, on every chart.

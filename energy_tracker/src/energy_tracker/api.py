@@ -88,7 +88,7 @@ async def lifespan(_: FastAPI):
         await asyncio.to_thread(thread.join, 10)
 
 
-app = FastAPI(title="Energy Tracker", version="0.14.0", lifespan=lifespan)
+app = FastAPI(title="Energy Tracker", version="0.15.0", lifespan=lifespan)
 
 
 @app.middleware("http")
@@ -859,6 +859,28 @@ class CostIn(BaseModel):
     date: date
     description: str = Field(default="", max_length=80)
     amount: float = Field(gt=0, le=10_000_000)
+
+
+class LayoutIn(BaseModel):
+    """Which parts of the page are folded away."""
+
+    folded: list[Annotated[str, Field(max_length=80)]] = Field(default=[], max_length=100)
+    bill_years: list[Annotated[int, Field(ge=1990, le=2200)]] = Field(default=[], max_length=100)
+
+
+@app.get("/api/layout")
+def layout() -> dict:
+    """The folded sections, kept here so every device and browser shows the same."""
+    saved = database().get_setting("layout")
+    if saved is None:
+        return {"saved": False, "folded": [], "bill_years": []}
+    return {"saved": True, **LayoutIn.model_validate_json(saved).model_dump()}
+
+
+@app.post("/api/layout")
+def save_layout(body: LayoutIn) -> dict:
+    database().set_setting("layout", body.model_dump_json())
+    return layout()
 
 
 class PaybackIn(BaseModel):
