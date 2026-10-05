@@ -9,9 +9,8 @@
 The page is long, so the header stays in view as you scroll. **Sections**, at the top
 right, lists every part of the page: choose one to go straight to it. Click any section
 heading to fold that section away, and again to bring it back; **Fold all sections** and
-**Open all sections** are at the foot of the menu. What you fold is saved with the app, so it stays folded the next time you open it, on any
-device or browser. (Before 0.15.0 it was remembered only on that
-device, so each phone or computer can keep its own layout.
+**Open all sections** are at the foot of the menu. What you fold is saved with the app, so
+it stays folded the next time you open it, on any device or browser.
 
 ## Charts
 
