@@ -450,9 +450,11 @@
     <div class="hint" id="bills-summary" style="margin-top: 0;"></div>
     <div class="table-scroll">
       <table>
-        <thead><tr><th>Bill period</th><th></th><th class="num">Imported</th><th class="num">Charged</th>
+        <thead><tr><th><button type="button" class="link" id="bills-sort" style="color: inherit; font-weight: inherit; font-size: inherit;">Bill period</button></th>
+          <th></th><th class="num">Imported</th><th class="num">Charged</th>
           <th class="num">Exported</th><th class="num">Export payment</th><th></th></tr></thead>
         <tbody id="bills-rows"></tbody>
+        <tbody id="bills-totals" style="border-top: 2px solid var(--line);"></tbody>
       </table>
     </div>
     <details id="bills-editor">
@@ -1495,6 +1497,14 @@ document.getElementById("summary-print").addEventListener("click", () => {
 
 const billsForm = document.getElementById("bills-form");
 let editingBill = null;
+let lastBills = null;
+let billsNewestFirst = false;
+try { billsNewestFirst = localStorage.getItem("energy-tracker-bills-newest") === "1"; } catch { /* no storage */ }
+document.getElementById("bills-sort").addEventListener("click", () => {
+  billsNewestFirst = !billsNewestFirst;
+  try { localStorage.setItem("energy-tracker-bills-newest", billsNewestFirst ? "1" : "0"); } catch { /* no storage */ }
+  if (lastBills) renderBills(lastBills);
+});
 function billsMessage(text, isError = false) {
   const el = document.getElementById("bills-message");
   el.textContent = text;
@@ -1514,9 +1524,55 @@ function renderBills(data) {
   const gap = (d, format) => !d ? "" : Math.abs(d.amount) < 0.005 ? "same"
     : format(Math.abs(d.amount)) + (d.amount > 0 ? " higher" : " lower") + (d.percent === null ? "" : " (" + Math.abs(d.percent) + "%)");
   billsShown = data.bills;
-  document.getElementById("bills-summary").textContent = data.bills.length ? "" : "No bills entered yet.";
-  const rows = [];
+  lastBills = data;
+  // In date order by the first day billed; the column heading switches the direction.
+  const ordered = [...data.bills].sort((a, b) =>
+    (a.first_day.localeCompare(b.first_day) || a.last_day.localeCompare(b.last_day) || a.id - b.id) *
+    (billsNewestFirst ? -1 : 1));
+  const sorter = document.getElementById("bills-sort");
+  sorter.textContent = "Bill period " + (billsNewestFirst ? "\u25BE" : "\u25B4");
+  sorter.title = billsNewestFirst ? "Newest first. Click for oldest first." : "Oldest first. Click for newest first.";
+
+  // Totals compare like with like: a figure counts only where both the bill and the tracker
+  // have one, and the tracker's readings cover the whole of that bill.
+  const columns = ["import_kwh", "charge_gbp", "export_kwh", "export_gbp"];
+  const sums = Object.fromEntries(columns.map(c => [c, { bill: 0, tracker: 0, count: 0 }]));
+  let partial = 0;
   for (const bill of data.bills) {
+    if (bill.tracker && !bill.tracker.covers_whole_bill) { partial += 1; continue; }
+    for (const c of columns) {
+      if (bill[c] === null || !bill.tracker) continue;
+      sums[c].bill += bill[c];
+      sums[c].tracker += bill.tracker[c];
+      sums[c].count += 1;
+    }
+  }
+  const counted = Math.max(...columns.map(c => sums[c].count));
+  const phrase = (c, what, format) => {
+    const t = sums[c];
+    if (!t.count) return "";
+    const diff = t.bill - t.tracker, share = t.tracker ? Math.abs(diff) / t.tracker * 100 : null;
+    return Math.abs(diff) < 0.005 ? what + " the same as the tracker"
+      : what + " " + format(Math.abs(diff)) + (diff > 0 ? " more" : " less") + " than the tracker" +
+        (share === null ? "" : " (" + share.toFixed(1) + "%)");
+  };
+  const summary = document.getElementById("bills-summary");
+  if (!data.bills.length) {
+    summary.textContent = "No bills entered yet.";
+  } else if (!counted) {
+    summary.textContent = "The tracker's readings do not fully cover any of these bills, so there is nothing to total yet.";
+  } else {
+    const parts = [phrase("import_kwh", "imported", v => v.toFixed(1) + " kWh"), phrase("charge_gbp", "charged", money),
+                   phrase("export_kwh", "exported", v => v.toFixed(1) + " kWh"), phrase("export_gbp", "paid for export", money)]
+      .filter(Boolean);
+    summary.textContent = "Across " + data.bills.length + (data.bills.length === 1 ? " bill" : " bills") +
+      ", the bills show: " + parts.join("; ") + "." +
+      (partial ? " " + partial + (partial === 1 ? " bill is" : " bills are") +
+        " left out of the totals because the tracker's readings do not cover all of the dates." : "");
+  }
+
+  const rows = [];
+  for (const bill of ordered) {
     const t = bill.tracker, d = bill.differences;
     const actions = document.createElement("td");
     actions.rowSpan = 3;
@@ -1560,6 +1616,32 @@ function renderBills(data) {
       line("Bill is", [gap(d.import_kwh, energy), gap(d.charge_gbp, cash), gap(d.export_kwh, energy), gap(d.export_gbp, cash)], "sub"));
   }
   document.getElementById("bills-rows").replaceChildren(...rows);
+
+  // Totals underneath, in the same three lines as each bill.
+  const foot = document.getElementById("bills-totals");
+  if (!counted) { foot.replaceChildren(); return; }
+  const totalLine = (label, pick, className, lead = []) => {
+    const tr = document.createElement("tr");
+    tr.append(...lead, cell(label, className), ...columns.map(c => {
+      const t = sums[c];
+      return cell(t.count ? pick(c, t) : "–", "num" + (className ? " " + className : ""));
+    }), cell(""));
+    return tr;
+  };
+  const show = (c, value) => c.endsWith("kwh") ? energy(value) : cash(value);
+  const heading = cell("Total");
+  heading.rowSpan = 3;
+  heading.style.fontWeight = "600";
+  const note = Object.assign(document.createElement("div"), { className: "hint",
+    textContent: "Each column adds up the bills that have that figure." });
+  note.style.margin = "2px 0 0";
+  note.style.fontWeight = "400";
+  heading.append(note);
+  foot.replaceChildren(
+    totalLine("Bills", (c, t) => show(c, t.bill), "", [heading]),
+    totalLine("Tracker", (c, t) => show(c, t.tracker), "sub"),
+    totalLine("Bills are", (c, t) => gap({ amount: t.bill - t.tracker,
+      percent: t.tracker ? Math.round((t.bill - t.tracker) / t.tracker * 1000) / 10 : null }, v => show(c, v)), "sub"));
 }
 
 // Reading bill PDFs. One file fills in the form to check and save. Several are listed for

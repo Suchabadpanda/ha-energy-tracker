@@ -153,6 +153,12 @@ the figures against the bill first.
 - Import and export statements are read separately; add each as its own entry.
 - On a dual-fuel bill only the electricity is read.
 
+Bills are listed in date order by the first day billed; click **Bill period** to switch
+between oldest first and newest first. Underneath, **Total** adds up the bills, the
+tracker's figures for the same bills, and the difference, and a line at the top says the
+same in words. Totals compare like with like: each column adds up only the bills that have
+that figure, and a bill is left out if the tracker's readings do not cover all of its dates.
+
 Each bill is shown above the tracker's own figures and the difference between them. The
 inverter and the supplier's meter are separate instruments, so a percent or two is normal.
 A larger gap in kWh points at the metering; a gap in money with matching kWh points at the

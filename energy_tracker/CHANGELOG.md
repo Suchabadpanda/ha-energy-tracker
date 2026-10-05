@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.13.1
+
+- Bill check: bills are listed in date order (click the heading to reverse it), with totals
+  underneath and a one-line summary of how the bills and the tracker differ overall.
+
 ## 0.13.0
 
 - A Sections menu at the top right, always in view, to jump to any part of the page.
