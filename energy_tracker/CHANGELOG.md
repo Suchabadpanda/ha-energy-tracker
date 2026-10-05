@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.14.0
+
+- Charts: click a legend entry to show or hide that series, on every chart.
+- Power charts: choose the last 24 hours, today, the last 7 days or the last 30 days.
+- Bill check: bills are grouped under their year, and each year folds away.
+
 ## 0.13.1
 
 - Bill check: bills are listed in date order (click the heading to reverse it), with totals

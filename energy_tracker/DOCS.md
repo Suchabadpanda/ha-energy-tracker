@@ -12,6 +12,18 @@ heading to fold that section away, and again to bring it back; **Fold all sectio
 **Open all sections** are at the foot of the menu. What you fold is remembered on that
 device, so each phone or computer can keep its own layout.
 
+## Charts
+
+- **Choosing what a chart shows**: each entry in a chart's legend is a switch. Click
+  "Imported" to hide it, and again to bring it back; hide all but one to study a single
+  series. The chart rescales to what is left. At least one series always stays on, and the
+  choice is remembered on that device. This works on every chart.
+- **Power charts**: the selector beside **Power flows** sets the period for both power
+  charts: the last 24 hours, today (midnight to midnight), the last 7 days or the last 30
+  days. Longer periods are averaged into wider steps, so short spikes are smoothed out, and
+  they refresh every five minutes instead of every ten seconds. They can only go back as
+  far as readings have been collected.
+
 ## First steps
 
 1. Start the app and open **Energy Tracker** from the sidebar.
@@ -153,8 +165,10 @@ the figures against the bill first.
 - Import and export statements are read separately; add each as its own entry.
 - On a dual-fuel bill only the electricity is read.
 
-Bills are listed in date order by the first day billed; click **Bill period** to switch
-between oldest first and newest first. Underneath, **Total** adds up the bills, the
+Bills are grouped under the year most of their days fall in, with a line for each year
+giving its count and totals; click a year to fold its bills away. Within a year they are in
+date order by the first day billed; click **Bill period** to switch between oldest first
+and newest first. Underneath, **Total** adds up the bills, the
 tracker's figures for the same bills, and the difference, and a line at the top says the
 same in words. Totals compare like with like: each column adds up only the bills that have
 that figure, and a bill is left out if the tracker's readings do not cover all of its dates.

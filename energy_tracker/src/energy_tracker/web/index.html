@@ -116,7 +116,19 @@
   .filters { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 28px 0 10px; }
   .filters h2 { margin: 0; }
   .filters .period-label { font-size: 14px; color: var(--text); font-weight: 600; }
-  .legend span.box::before { height: 10px; width: 10px; border-radius: 2px; }
+  .legend span.box::before, .legend .key.box::before { height: 10px; width: 10px; border-radius: 2px; }
+  /* Legend entries are switches: click one to show or hide that series. */
+  .legend .key { all: unset; cursor: pointer; display: inline-flex; align-items: center; color: var(--text);
+                 padding: 2px 6px; margin: -2px -6px; border-radius: 6px; }
+  .legend .key::before { content: ""; display: inline-block; width: 14px; height: 3px; border-radius: 2px;
+                         background: var(--c); margin-right: 6px; flex: none; }
+  .legend .key.dashed::before { background: repeating-linear-gradient(90deg, var(--c) 0 5px, transparent 5px 8px); }
+  .legend .key:hover { background: var(--bg); }
+  .legend .key:focus-visible { outline: 2px solid var(--load); }
+  .legend .key[aria-pressed="false"] { color: var(--muted); text-decoration: line-through; }
+  .legend .key[aria-pressed="false"]::before { background: var(--line); }
+  tr.year-row td { background: var(--bg); font-weight: 600; cursor: pointer; user-select: none; }
+  tr.year-row td span.detail { font-weight: 400; color: var(--muted); font-size: 13px; margin-left: 10px; }
   .plot { position: relative; }
   #history-tip { position: absolute; pointer-events: none; background: var(--card); color: var(--text);
                  border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font-size: 13px;
@@ -211,20 +223,23 @@
   <div class="tiles" id="month"></div>
   <div class="hint" id="month-hint"></div>
 
-  <h2 id="flows-heading">Power flows, last 24 hours (kW)</h2>
+  <div class="filters">
+    <h2 id="flows-heading">Power flows (kW)</h2>
+    <select id="power-range" aria-label="Period shown by the power charts">
+      <option value="24h" selected>Last 24 hours</option>
+      <option value="today">Today</option>
+      <option value="7d">Last 7 days</option>
+      <option value="30d">Last 30 days</option>
+    </select>
+  </div>
   <div class="chart">
     <div class="empty" id="flows-empty" hidden>No history yet. The chart fills in as readings are collected.</div>
     <svg id="flows" viewBox="0 0 900 300" role="img" aria-label="Power flows over the last 24 hours"></svg>
-    <div class="legend">
-      <span style="--c: var(--solar)">Solar</span>
-      <span style="--c: var(--load)">Total consumption</span>
-      <span style="--c: var(--grid)">Grid (above zero = import, below = export)</span>
-      <span style="--c: var(--battery)">Battery (above zero = charging, below = discharging)</span>
-    </div>
+    <div class="legend" id="flows-legend"></div>
   </div>
 
   <div id="usage-section">
-  <h2>Consumption breakdown, last 24 hours (kW)</h2>
+  <h2 id="usage-heading">Consumption breakdown (kW)</h2>
   <div class="chart">
     <div class="empty" id="usage-empty" hidden>No history yet. The chart fills in as readings are collected.</div>
     <svg id="usage-chart" viewBox="0 0 900 300" role="img" aria-label="Consumption split by heat pump, EV charger and the rest of the house"></svg>
@@ -253,12 +268,7 @@
       <svg id="history-chart" viewBox="0 0 900 300" role="img" aria-label="Energy in each part of the chosen period"></svg>
       <div id="history-tip" hidden></div>
     </div>
-    <div class="legend">
-      <span class="box" style="--c: var(--solar)">Solar generated</span>
-      <span class="box" style="--c: var(--load)">Used</span>
-      <span class="box" style="--c: var(--grid)">Imported</span>
-      <span class="box" style="--c: var(--battery)">Exported</span>
-    </div>
+    <div class="legend" id="history-legend"></div>
     <div class="hint" id="history-hint"></div>
     <details id="history-table-box">
       <summary>Show as a table</summary>
@@ -374,12 +384,7 @@
       has been paid back and when it should break even.</div>
     <svg id="roi-chart" viewBox="0 0 900 300" role="img"
          aria-label="Savings building up towards the cost of the system" hidden></svg>
-    <div class="legend" id="roi-legend" hidden>
-      <span style="--c: var(--battery)">Saved so far</span>
-      <span class="dashed" style="--c: var(--battery)">Projected</span>
-      <span class="dashed" style="--c: var(--solar)" id="roi-legend-adjusted" hidden>With your yearly assumptions</span>
-      <span style="--c: var(--grid)">System cost</span>
-    </div>
+    <div class="legend" id="roi-legend" hidden></div>
     <div class="hint" id="roi-hint"></div>
     <details id="roi-editor">
       <summary>System cost and settings</summary>
@@ -691,11 +696,38 @@ const COST_TILES = [
   { metric: "saved_gbp", label: "Saved by off-peak", prefix: "£" },
 ];
 const FLOW_LINES = [
-  { metric: "pv_power", color: "var(--solar)" },
-  { metric: "load_power", color: "var(--load)" },
-  { metric: "grid_power", color: "var(--grid)" },
-  { metric: "battery_power", color: "var(--battery)" },
+  { metric: "pv_power", color: "var(--solar)", label: "Solar" },
+  { metric: "load_power", color: "var(--load)", label: "Total consumption" },
+  { metric: "grid_power", color: "var(--grid)", label: "Grid (above zero = import, below = export)" },
+  { metric: "battery_power", color: "var(--battery)", label: "Battery (above zero = charging, below = discharging)" },
 ];
+
+// --- Choosing what a chart shows ------------------------------------------------------------
+// Each legend entry switches its series on or off. The choice is remembered on this device.
+const HIDDEN_KEY = "energy-tracker-hidden-series";
+let hiddenSeries = {};
+try { hiddenSeries = JSON.parse(localStorage.getItem(HIDDEN_KEY) ?? "{}") ?? {}; } catch { /* no storage */ }
+const isShown = (chart, key) => !(hiddenSeries[chart] ?? []).includes(key);
+// items: [{ key, label, color, box?, dashed? }]. redraw is called after a change.
+function seriesLegend(el, chart, items, redraw) {
+  el.replaceChildren(...items.map(item => {
+    const button = Object.assign(document.createElement("button"), { type: "button", textContent: item.label });
+    button.className = "key" + (item.box ? " box" : "") + (item.dashed ? " dashed" : "");
+    button.style.setProperty("--c", item.color);
+    const shown = isShown(chart, item.key);
+    button.setAttribute("aria-pressed", String(shown));
+    button.title = shown ? "Click to hide" : "Click to show";
+    button.addEventListener("click", () => {
+      const off = new Set(hiddenSeries[chart] ?? []);
+      if (off.has(item.key)) off.delete(item.key);
+      else if (items.filter(i => !off.has(i.key)).length > 1) off.add(item.key);  // keep at least one
+      hiddenSeries[chart] = [...off];
+      try { localStorage.setItem(HIDDEN_KEY, JSON.stringify(hiddenSeries)); } catch { /* no storage */ }
+      redraw();
+    });
+    return button;
+  }));
+}
 // Bottom layer first.
 const USAGE_LAYERS = [
   { metric: "rest_power", color: "var(--house)", label: "Rest of house" },
@@ -763,7 +795,7 @@ function chartFrame(svgId, emptyId, values) {
   document.getElementById(emptyId).hidden = values.length > 1;
   if (values.length < 2) return null;
 
-  const end = Date.now(), start = end - 24 * 3600 * 1000;
+  const { start, end } = powerRange;
   const lo = Math.min(0, ...values), hi = Math.max(1, ...values);
   const pad = (hi - lo) * 0.08;
   const yMin = lo < 0 ? lo - pad : 0, yMax = hi + pad;
@@ -781,11 +813,27 @@ function chartFrame(svgId, emptyId, values) {
     add("line", { x1: L, x2: W - R, y1: y(v), y2: y(v), class: v === 0 ? "zero" : "gridline" });
     add("text", { x: L - 8, y: y(v) + 4, "text-anchor": "end", class: "axis" }, v);
   }
-  for (let h = 0; h <= 24; h += 4) {
-    const t = start + h * 3600 * 1000;
-    const label = new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-    add("text", { x: x(t), y: H - 8, "text-anchor": h === 0 ? "start" : h === 24 ? "end" : "middle",
-                  class: "axis" }, label);
+  const hours = (end - start) / 3600000;
+  if (hours <= 26) {
+    for (let h = 0; h <= 24; h += 4) {
+      const t = start + h * hours / 24 * 3600 * 1000;
+      const label = new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      add("text", { x: x(t), y: H - 8, "text-anchor": h === 0 ? "start" : h === 24 ? "end" : "middle",
+                    class: "axis" }, label);
+    }
+  } else {
+    // Longer periods are marked at midnight: every day for a week, every fifth for a month.
+    const every = hours <= 24 * 8 ? 1 : 5;
+    const day = new Date(start);
+    day.setHours(24, 0, 0, 0);
+    for (let n = 0; day.getTime() <= end; n++, day.setDate(day.getDate() + 1)) {
+      const t = day.getTime();
+      add("line", { x1: x(t), x2: x(t), y1: T, y2: H - B, class: "gridline" });
+      if (n % every) continue;
+      const label = every === 1 ? day.toLocaleDateString([], { weekday: "short", day: "numeric" })
+        : day.toLocaleDateString([], { day: "numeric", month: "short" });
+      add("text", { x: x(t), y: H - 8, "text-anchor": "middle", class: "axis" }, label);
+    }
   }
   const inRange = data => data.map(([t, v]) => [new Date(t).getTime(), v]).filter(p => p[0] >= start);
   const path = pts => pts.map(([t, v], i) => `${i ? "L" : "M"}${x(t).toFixed(1)},${y(v).toFixed(1)}`).join("");
@@ -794,7 +842,7 @@ function chartFrame(svgId, emptyId, values) {
     const out = [];
     for (const p of pts) {
       const current = out[out.length - 1];
-      if (current && p[0] - current[current.length - 1][0] <= GAP_MS) current.push(p);
+      if (current && p[0] - current[current.length - 1][0] <= powerRange.gap) current.push(p);
       else out.push([p]);
     }
     return out.filter(seg => seg.length > 1);
@@ -802,11 +850,19 @@ function chartFrame(svgId, emptyId, values) {
   return { add, inRange, path, segments };
 }
 
+// What the two power charts cover: set from the period chosen above them.
+let powerRange = { start: Date.now() - 24 * 3600 * 1000, end: Date.now(), gap: GAP_MS };
+let lastPower = null;       // the series last drawn, kept so a legend click can redraw
+const redrawPower = () => { if (lastPower) { renderFlows(lastPower); renderUsage(lastPower); } };
+
 function renderFlows(series) {
-  const values = FLOW_LINES.flatMap(l => (series[l.metric] ?? []).map(p => p[1]));
+  seriesLegend(document.getElementById("flows-legend"), "flows",
+    FLOW_LINES.map(l => ({ key: l.metric, label: l.label, color: l.color })), redrawPower);
+  const lines = FLOW_LINES.filter(l => isShown("flows", l.metric));
+  const values = lines.flatMap(l => (series[l.metric] ?? []).map(p => p[1]));
   const frame = chartFrame("flows", "flows-empty", values);
   if (!frame) return;
-  for (const line of FLOW_LINES) {
+  for (const line of lines) {
     const d = frame.segments(frame.inRange(series[line.metric] ?? [])).map(frame.path).join("");
     if (!d) continue;
     frame.add("path", { d, fill: "none", stroke: line.color,
@@ -817,13 +873,10 @@ function renderFlows(series) {
 // Stacked areas: the top edge of the stack is total consumption.
 function renderUsage(series) {
   const times = (series.rest_power ?? []).map(p => p[0]);
-  const layers = installed(USAGE_LAYERS);
-  document.getElementById("usage-legend").replaceChildren(...layers.map(layer => {
-    const item = document.createElement("span");
-    item.style.setProperty("--c", layer.color);
-    item.textContent = layer.label;
-    return item;
-  }));
+  const fitted = installed(USAGE_LAYERS);
+  seriesLegend(document.getElementById("usage-legend"), "usage",
+    fitted.map(l => ({ key: l.metric, label: l.label, color: l.color, box: true })), redrawPower);
+  const layers = fitted.filter(l => isShown("usage", l.metric));
   const lookups = layers.map(l => new Map(series[l.metric] ?? []));
   let base = times.map(() => 0);
   const stacks = lookups.map(lookup => {
@@ -1177,9 +1230,13 @@ function drawHistory(data) {
   const W = 900, H = 300, L = 44, R = 10, T = 12, B = 26;
   svg.replaceChildren();
   tip.hidden = true;
+  seriesLegend(document.getElementById("history-legend"), "history",
+    HISTORY_SERIES.map(x => ({ key: x.key, label: x.label, color: x.color, box: true })),
+    () => historyData && drawHistory(historyData));
+  const shownSeries = HISTORY_SERIES.filter(x => isShown("history", x.key));
   const rows = data.rows;
-  const values = rows.flatMap(r => HISTORY_SERIES.map(s => r[s.key] ?? 0));
-  const hasData = rows.some(r => HISTORY_SERIES.some(s => r[s.key] !== null && r[s.key] !== undefined));
+  const values = rows.flatMap(r => shownSeries.map(s => r[s.key] ?? 0));
+  const hasData = rows.some(r => shownSeries.some(s => r[s.key] !== null && r[s.key] !== undefined));
   document.getElementById("history-empty").hidden = hasData;
   svg.style.display = hasData ? "" : "none";
   if (!hasData) return;
@@ -1203,12 +1260,12 @@ function drawHistory(data) {
 
   const band = (W - L - R) / rows.length;
   const gap = 2, pad = Math.min(8, band * 0.12);
-  const bar = Math.max(1.5, (band - pad * 2 - gap * (HISTORY_SERIES.length - 1)) / HISTORY_SERIES.length);
+  const bar = Math.max(1.5, (band - pad * 2 - gap * (shownSeries.length - 1)) / shownSeries.length);
   const labelEvery = Math.ceil(rows.length / 16);
   rows.forEach((row, i) => {
     const left = L + i * band;
     const [short, full] = intervalLabels(row, data.interval);
-    HISTORY_SERIES.forEach((series, n) => {
+    shownSeries.forEach((series, n) => {
       const value = row[series.key];
       if (!value) return;
       const x = left + pad + n * (bar + gap), h = Math.max(1, y(0) - y(value)), r = Math.min(4, bar / 2, h);
@@ -1221,10 +1278,10 @@ function drawHistory(data) {
     }
     // The whole column is the hover and keyboard target, and lists every series.
     const hit = add("rect", { x: left, y: T, width: band, height: H - T - B, class: "hit", tabindex: 0,
-                              "aria-label": full + ": " + HISTORY_SERIES.map(s => s.label + " " + kwh(row[s.key])).join(", ") });
+                              "aria-label": full + ": " + shownSeries.map(s => s.label + " " + kwh(row[s.key])).join(", ") });
     const show = () => {
       const heading = Object.assign(document.createElement("div"), { className: "when", textContent: full });
-      const lines = HISTORY_SERIES.map(series => {
+      const lines = shownSeries.map(series => {
         const line = Object.assign(document.createElement("div"), { className: "row" });
         line.style.setProperty("--c", series.color);
         line.append(Object.assign(document.createElement("span"), { textContent: series.label }),
@@ -1498,6 +1555,8 @@ document.getElementById("summary-print").addEventListener("click", () => {
 const billsForm = document.getElementById("bills-form");
 let editingBill = null;
 let lastBills = null;
+let billYearsFolded = new Set();
+try { billYearsFolded = new Set(JSON.parse(localStorage.getItem("energy-tracker-bill-years-folded") ?? "[]")); } catch { /* no storage */ }
 let billsNewestFirst = false;
 try { billsNewestFirst = localStorage.getItem("energy-tracker-bills-newest") === "1"; } catch { /* no storage */ }
 document.getElementById("bills-sort").addEventListener("click", () => {
@@ -1526,9 +1585,14 @@ function renderBills(data) {
   billsShown = data.bills;
   lastBills = data;
   // In date order by the first day billed; the column heading switches the direction.
+  // Bills are grouped under the year most of their days fall in, then put in date order.
+  const yearOf = bill => {
+    const middle = (new Date(bill.first_day).getTime() + new Date(bill.last_day).getTime()) / 2;
+    return new Date(middle).getUTCFullYear();
+  };
   const ordered = [...data.bills].sort((a, b) =>
-    (a.first_day.localeCompare(b.first_day) || a.last_day.localeCompare(b.last_day) || a.id - b.id) *
-    (billsNewestFirst ? -1 : 1));
+    (yearOf(a) - yearOf(b) || a.first_day.localeCompare(b.first_day) ||
+     a.last_day.localeCompare(b.last_day) || a.id - b.id) * (billsNewestFirst ? -1 : 1));
   const sorter = document.getElementById("bills-sort");
   sorter.textContent = "Bill period " + (billsNewestFirst ? "\u25BE" : "\u25B4");
   sorter.title = billsNewestFirst ? "Newest first. Click for oldest first." : "Oldest first. Click for newest first.";
@@ -1571,8 +1635,41 @@ function renderBills(data) {
         " left out of the totals because the tracker's readings do not cover all of the dates." : "");
   }
 
+  // A heading row for each year, which folds that year's bills away when clicked.
   const rows = [];
+  let currentYear = null;
   for (const bill of ordered) {
+    const year = yearOf(bill);
+    if (year !== currentYear) {
+      currentYear = year;
+      const inYear = data.bills.filter(b => yearOf(b) === year);
+      const add = c => inYear.reduce((sum, b) => sum + (b[c] ?? 0), 0);
+      const has = c => inYear.some(b => b[c] !== null);
+      const detail = [inYear.length + (inYear.length === 1 ? " bill" : " bills"),
+        has("import_kwh") && energy(add("import_kwh")) + " imported", has("charge_gbp") && cash(add("charge_gbp")) + " charged",
+        has("export_kwh") && energy(add("export_kwh")) + " exported", has("export_gbp") && cash(add("export_gbp")) + " export payment"]
+        .filter(Boolean).join(", ");
+      const head = document.createElement("tr");
+      head.className = "year-row";
+      const td = document.createElement("td");
+      td.colSpan = 7;
+      const isFolded = billYearsFolded.has(year);
+      td.tabIndex = 0;
+      td.setAttribute("role", "button");
+      td.setAttribute("aria-expanded", String(!isFolded));
+      td.append((isFolded ? "\u25B8 " : "\u25BE ") + year,
+                Object.assign(document.createElement("span"), { className: "detail", textContent: detail }));
+      const flip = () => {
+        if (billYearsFolded.has(year)) billYearsFolded.delete(year); else billYearsFolded.add(year);
+        try { localStorage.setItem("energy-tracker-bill-years-folded", JSON.stringify([...billYearsFolded])); } catch { /* no storage */ }
+        renderBills(lastBills);
+      };
+      td.addEventListener("click", flip);
+      td.addEventListener("keydown", event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); flip(); } });
+      head.append(td);
+      rows.push(head);
+    }
+    if (billYearsFolded.has(year)) continue;
     const t = bill.tracker, d = bill.differences;
     const actions = document.createElement("td");
     actions.rowSpan = 3;
@@ -1948,8 +2045,9 @@ function drawPayback(p, totalCost) {
   svg.replaceChildren();
   const time = d => new Date(d + "T00:00").getTime();
   const actual = p.series.map(([d, v]) => [time(d), v]);
-  const projected = p.projection.map(([d, v]) => [time(d), v]);
-  const adjusted = (p.adjusted?.projection ?? []).map(([d, v]) => [time(d), v]);
+  const on = key => isShown("payback", key);
+  const projected = on("projected") ? p.projection.map(([d, v]) => [time(d), v]) : [];
+  const adjusted = on("adjusted") ? (p.adjusted?.projection ?? []).map(([d, v]) => [time(d), v]) : [];
   const all = [...actual, ...projected];
   const latest = Math.max(...[...all, ...adjusted].map(a => a[0]));
   const start = all[0][0];
@@ -1982,12 +2080,14 @@ function drawPayback(p, totalCost) {
     add("text", { x: x(t), y: H - 8, "text-anchor": "middle", class: "axis" }, year);
   }
   const path = pts => pts.map(([t, v], i) => (i ? "L" : "M") + x(t).toFixed(1) + "," + y(v).toFixed(1)).join("");
-  if (totalCost > 0) {
+  if (totalCost > 0 && on("cost")) {
     add("line", { x1: L, x2: W - R, y1: y(totalCost), y2: y(totalCost), stroke: "var(--grid)",
                   "stroke-width": 1.5 });
   }
-  add("path", { d: path(actual), fill: "none", stroke: "var(--battery)", "stroke-width": 2.5,
-                "stroke-linejoin": "round" });
+  if (on("saved")) {
+    add("path", { d: path(actual), fill: "none", stroke: "var(--battery)", "stroke-width": 2.5,
+                  "stroke-linejoin": "round" });
+  }
   if (projected.length > 1) {
     add("path", { d: path(projected), fill: "none", stroke: "var(--battery)", "stroke-width": 2,
                   "stroke-dasharray": "6 5" });
@@ -1997,13 +2097,15 @@ function drawPayback(p, totalCost) {
                   "stroke-dasharray": "6 5" });
     add("circle", { cx: x(time(p.adjusted.break_even)), cy: y(totalCost), r: 5, fill: "var(--solar)" });
   }
-  if (p.break_even) {
+  if (p.break_even && (p.already_reached ? on("saved") : on("projected"))) {
     const t = time(p.break_even);
     add("circle", { cx: x(t), cy: y(totalCost), r: 5, fill: "var(--battery)" });
   }
 }
 
+let lastRoi = null;
 function renderPayback(data) {
+  lastRoi = data;
   fillRoiForm(data);
   const p = data.payback;
   const ready = data.configured && p?.has_data;
@@ -2041,7 +2143,12 @@ function renderPayback(data) {
           p.adjusted.break_even ? longDate(p.adjusted.break_even) : "Not in sight",
           p.adjusted.break_even ? p.adjusted.years_from_install + " years after install" + (p.rough ? " (rough)" : "")
             : "Savings shrink before the cost is reached")] : []));
-  document.getElementById("roi-legend-adjusted").hidden = !p.adjusted;
+  seriesLegend(document.getElementById("roi-legend"), "payback", [
+    { key: "saved", label: "Saved so far", color: "var(--battery)" },
+    { key: "projected", label: "Projected", color: "var(--battery)", dashed: true },
+    ...(p.adjusted ? [{ key: "adjusted", label: "With your yearly assumptions", color: "var(--solar)", dashed: true }] : []),
+    { key: "cost", label: "System cost", color: "var(--grid)" },
+  ], () => lastRoi && renderPayback(lastRoi));
   drawPayback(p, cost);
   const notes = ["Measured against " + data.baseline_name + ", from " +
     new Date(p.first_day + "T00:00").toLocaleDateString([], { dateStyle: "medium" }) + " (" + p.days + " days of readings)."];
@@ -2372,6 +2479,30 @@ const getJson = url => fetch(url).then(r => { if (!r.ok) throw new Error(r.statu
 
 let knownMetrics = null;
 
+// Fetches the readings for the power charts' chosen period. A day is fetched fresh every
+// time; a week or a month is heavier, so it is reused for five minutes.
+let powerCache = { key: "", at: 0, raw: null };
+async function powerSeries(params) {
+  const choice = document.getElementById("power-range").value;
+  const now = Date.now();
+  const midnight = new Date(now);
+  midnight.setHours(0, 0, 0, 0);
+  const spans = { "24h": 24, "7d": 24 * 7, "30d": 24 * 30,
+                  today: Math.max(1, Math.ceil((now - midnight.getTime()) / 3600000)) };
+  const hours = spans[choice];
+  const bucketMinutes = Math.max(1, Math.floor(hours * 60 / 300));  // as the server groups them
+  powerRange = choice === "today"
+    ? { start: midnight.getTime(), end: midnight.getTime() + 24 * 3600 * 1000 }
+    : { start: now - hours * 3600 * 1000, end: now };
+  powerRange.gap = Math.max(GAP_MS, bucketMinutes * 2.5 * 60 * 1000);
+  const fresh = hours <= 24 ? 0 : 5 * 60 * 1000;
+  if (powerCache.key !== choice || now - powerCache.at >= fresh || !powerCache.raw) {
+    powerCache = { key: choice, at: now, raw: await getJson("api/series?hours=" + hours + "&" + params) };
+  }
+  return powerCache.raw;
+}
+document.getElementById("power-range").addEventListener("change", () => refresh());
+
 async function refresh() {
   const status = document.getElementById("status");
   try {
@@ -2380,7 +2511,7 @@ async function refresh() {
     const params = SERIES_METRICS.filter(m => knownMetrics.has(m)).map(m => "metric=" + m).join("&");
     const [latest, rawSeries, today, month, tariffs, years, found] = await Promise.all([
       getJson("api/latest"),
-      getJson("api/series?hours=24&" + params),
+      powerSeries(params),
       getJson("api/today").catch(() => null),
       getJson("api/month" + (selectedMonth ? "?month=" + selectedMonth : "")).catch(() => null),
       getJson("api/tariffs").catch(() => null),
@@ -2416,6 +2547,7 @@ async function refresh() {
     renderToday(today, month);
     if (tariffs) renderTariffs(tariffs);
     if (years) renderYears(years);
+    lastPower = series;
     renderFlows(series);
     renderUsage(series);
 
