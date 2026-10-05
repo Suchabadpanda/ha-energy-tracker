@@ -136,6 +136,15 @@
   .rate-fix strong { font-weight: 600; }
   .rate-fix .actions { flex-wrap: wrap; }
   #bills-rates { grid-column: 1 / -1; display: grid; gap: 8px; }
+  #roi-progress { margin-top: 12px; background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+                  padding: 14px 16px; }
+  .progress { height: 14px; border-radius: 7px; background: var(--bg); border: 1px solid var(--line); overflow: hidden; }
+  .progress .bar { height: 100%; width: 0; background: var(--battery); border-radius: 7px 0 0 7px;
+                   transition: width .4s ease; }
+  .progress-labels { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 4px 16px; margin-top: 8px;
+                     font-size: 14px; }
+  .progress-labels span:first-child { font-weight: 600; }
+  .progress-labels span:last-child { color: var(--muted); }
   tr.year-row td span.detail { font-weight: 400; color: var(--muted); font-size: 13px; margin-left: 10px; }
   .plot { position: relative; }
   .chart-tip { position: absolute; pointer-events: none; background: var(--card); color: var(--text);
@@ -404,8 +413,14 @@
     </div>
   </div>
 
-  <h2 id="roi-heading">Payback</h2>
+  <h2 id="roi-heading">Return on investment</h2>
   <div class="tiles" id="roi-tiles"></div>
+  <div id="roi-progress" hidden>
+    <div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-label="Share of the system cost paid back">
+      <div class="bar"></div>
+    </div>
+    <div class="progress-labels"><span id="roi-progress-done"></span><span id="roi-progress-left"></span></div>
+  </div>
   <div class="chart" style="margin-top: 12px;">
     <div class="empty" id="roi-empty">Enter what the system cost below to see how much of it
       has been paid back and when it should break even.</div>
@@ -424,6 +439,8 @@
       <form id="roi-form">
         <div class="field-row">
           <label>Installed on <input type="date" name="install_date" required></label>
+          <label>Look ahead (years after install)
+            <input type="number" name="horizon_years" min="5" max="40" step="1" value="20" required></label>
           <label class="grow" style="flex: 2 1 280px;">Tariff without the system
             <select name="baseline"></select></label>
         </div>
@@ -460,7 +477,7 @@
     <details id="income-editor">
       <summary>Add income or change settings</summary>
       <div class="hint">For money earned on top of your tariff, such as Axle Energy payments for
-        exporting during grid events. It counts towards Payback. Add entries by hand here. If
+        exporting during grid events. It counts towards Return on investment. Add entries by hand here. If
         Home Assistant has an Axle event sensor, export events are also recorded automatically,
         with the payment estimated as the energy exported during the event times the rate below.
         Use Edit on an entry to replace an estimate with what you were actually paid.</div>
@@ -2387,6 +2404,7 @@ function fillRoiForm(data) {
     f.battery_ageing.value = data.settings.battery_ageing_percent || "";
     f.price_change.value = data.settings.price_change_percent || "";
     f.project_extra.checked = data.settings.project_extra_income ?? true;
+    f.horizon_years.value = data.settings.horizon_years ?? 20;
     roiCosts.replaceChildren();
     for (const c of data.settings.costs) addCost(c.date, c.description, c.amount);
   }
@@ -2435,6 +2453,23 @@ function drawPayback(p, totalCost) {
     add("text", { x: x(t), y: H - 8, "text-anchor": "middle", class: "axis" }, year);
   }
   const path = pts => pts.map(([t, v], i) => (i ? "L" : "M") + x(t).toFixed(1) + "," + y(v).toFixed(1)).join("");
+  // Whatever lies above the cost line is profit: shaded, by clipping the area under the
+  // savings line to the part of the chart above the cost.
+  const line = [...(on("saved") ? actual : []), ...projected];
+  if (totalCost > 0 && line.length > 1 && line[line.length - 1][1] > totalCost) {
+    const clip = add("clipPath", { id: "roi-profit" });
+    clip.append(Object.assign(document.createElementNS(NS, "rect")));
+    for (const [k, v] of Object.entries({ x: L, y: T, width: W - L - R, height: Math.max(0, y(totalCost) - T) })) {
+      clip.firstChild.setAttribute(k, v);
+    }
+    add("path", { d: path(line) + `L${x(line[line.length - 1][0]).toFixed(1)},${y(totalCost)}L${x(line[0][0]).toFixed(1)},${y(totalCost)}Z`,
+                  fill: "var(--battery)", "fill-opacity": 0.16, "clip-path": "url(#roi-profit)" });
+    const reachedAt = p.break_even ? x(time(p.break_even)) : L;
+    if (W - R - reachedAt > 70) {
+      add("text", { x: W - R - 6, y: y(totalCost) - 8, "text-anchor": "end", class: "axis",
+                    style: "fill: var(--battery); font-weight: 600;" }, "Profit");
+    }
+  }
   if (totalCost > 0 && on("cost")) {
     add("line", { x1: L, x2: W - R, y1: y(totalCost), y2: y(totalCost), stroke: "var(--grid)",
                   "stroke-width": 1.5 });
@@ -2450,7 +2485,9 @@ function drawPayback(p, totalCost) {
   if (adjusted.length > 1) {
     add("path", { d: path(adjusted), fill: "none", stroke: "var(--solar)", "stroke-width": 2,
                   "stroke-dasharray": "6 5" });
-    add("circle", { cx: x(time(p.adjusted.break_even)), cy: y(totalCost), r: 5, fill: "var(--solar)" });
+    if (p.adjusted.break_even && !p.already_reached) {
+      add("circle", { cx: x(time(p.adjusted.break_even)), cy: y(totalCost), r: 5, fill: "var(--solar)" });
+    }
   }
   if (p.break_even && (p.already_reached ? on("saved") : on("projected"))) {
     const t = time(p.break_even);
@@ -2470,6 +2507,7 @@ function renderPayback(data) {
   const hint = document.getElementById("roi-hint");
   if (!ready) {
     document.getElementById("roi-tiles").replaceChildren();
+    document.getElementById("roi-progress").hidden = true;
     hint.textContent = data.configured ? "No full day of readings since the install date yet." : "";
     return;
   }
@@ -2490,7 +2528,8 @@ function renderPayback(data) {
   document.getElementById("roi-tiles").replaceChildren(
     tile("System cost", pounds(cost)),
     tile("Saved so far", pounds(p.saved_gbp), "About " + pounds(p.yearly_gbp) + " a year"),
-    tile("Paid back", p.percent === null ? "–" : p.percent + "%"),
+    tile("Paid back", p.percent === null ? "–" : p.percent + "%",
+         p.remaining_gbp > 0 ? pounds(p.remaining_gbp) + " still to recover" : pounds(-p.remaining_gbp) + " profit so far"),
     tile(p.already_reached ? "Broke even" : "Break-even estimate", breakEven,
          p.break_even ? p.years_from_install + " years after install" + (p.rough && !p.already_reached ? " (rough)" : "")
            : "Savings are not positive on these settings"),
@@ -2498,6 +2537,30 @@ function renderPayback(data) {
           p.adjusted.break_even ? longDate(p.adjusted.break_even) : "Not in sight",
           p.adjusted.break_even ? p.adjusted.years_from_install + " years after install" + (p.rough ? " (rough)" : "")
             : "Savings shrink before the cost is reached")] : []));
+  const horizonYear = new Date(p.horizon + "T00:00").getFullYear();
+  const signed = v => (v < 0 ? "A loss of " + pounds(-v) : pounds(v));
+  if (p.profit_at_horizon_gbp !== null) {
+    document.getElementById("roi-tiles").append(tile(
+      (p.profit_at_horizon_gbp < 0 ? "Projected shortfall by " : "Projected profit by ") + horizonYear,
+      pounds(Math.abs(p.profit_at_horizon_gbp)),
+      p.horizon_years + " years after install" + (p.rough ? " (rough)" : "") +
+        (p.adjusted?.profit_at_horizon_gbp !== null && p.adjusted
+          ? ". " + signed(p.adjusted.profit_at_horizon_gbp) + " with your yearly assumptions" : "")));
+  }
+  // Progress towards the cost, and what is left.
+  const progress = document.getElementById("roi-progress");
+  progress.hidden = p.percent === null;
+  if (p.percent !== null) {
+    const shown = Math.min(100, Math.max(0, p.percent));
+    progress.querySelector(".bar").style.width = shown + "%";
+    progress.querySelector(".bar").style.borderRadius = shown >= 100 ? "7px" : "";
+    progress.querySelector(".progress").setAttribute("aria-valuenow", shown);
+    document.getElementById("roi-progress-done").textContent =
+      pounds(p.saved_gbp) + " of " + pounds(cost) + " paid back (" + p.percent + "%)";
+    document.getElementById("roi-progress-left").textContent = p.remaining_gbp > 0
+      ? pounds(p.remaining_gbp) + " remaining" + (p.break_even ? ", expected by " + longDate(p.break_even) : "")
+      : "Paid for itself. " + pounds(-p.remaining_gbp) + " profit so far";
+  }
   seriesLegend(document.getElementById("roi-legend"), "payback", [
     { key: "saved", label: "Saved so far", color: "var(--battery)" },
     { key: "projected", label: "Projected", color: "var(--battery)", dashed: true },
@@ -2526,6 +2589,11 @@ function renderPayback(data) {
         "seasons. It firms up once a full year is recorded."
       : "Projected by repeating the last 12 months, at today's prices and usage.");
   }
+  if (p.profit_at_horizon_gbp !== null) {
+    notes.push("The line runs on to " + horizonYear + ", " + p.horizon_years + " years after install; what lies above " +
+      "the system cost is profit. That assumes the system keeps working at no further cost: a battery or inverter " +
+      "may need replacing within that time, which is not allowed for.");
+  }
   hint.textContent = notes.join(" ");
 }
 
@@ -2534,7 +2602,7 @@ async function refreshPayback() {
   try {
     renderPayback(await getJson("api/roi"));
   } catch (err) {
-    document.getElementById("roi-hint").textContent = "Could not work out payback (" + err.message + ").";
+    document.getElementById("roi-hint").textContent = "Could not work out the return on investment (" + err.message + ").";
   }
 }
 
@@ -2554,7 +2622,8 @@ roiForm.addEventListener("submit", async event => {
                              panel_ageing_percent: Number(roiForm.elements.panel_ageing.value) || 0,
                              battery_ageing_percent: Number(roiForm.elements.battery_ageing.value) || 0,
                              price_change_percent: Number(roiForm.elements.price_change.value) || 0,
-                             project_extra_income: roiForm.elements.project_extra.checked }),
+                             project_extra_income: roiForm.elements.project_extra.checked,
+                             horizon_years: Number(roiForm.elements.horizon_years.value) || 20 }),
     });
     roiMessage("Saved.");
     renderPayback(data);

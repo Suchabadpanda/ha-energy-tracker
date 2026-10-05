@@ -117,7 +117,7 @@ async def lifespan(_: FastAPI):
         await asyncio.to_thread(thread.join, 10)
 
 
-app = FastAPI(title="Energy Tracker", version="0.17.3", lifespan=lifespan)
+app = FastAPI(title="Energy Tracker", version="0.18.0", lifespan=lifespan)
 # The page and its chart data are mostly text: sent compressed, they are a quarter the size.
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
@@ -1144,6 +1144,8 @@ class PaybackIn(BaseModel):
     # Whether extra income (grid event payments) is assumed to carry on at the same rate.
     # Either way it counts towards what has been saved so far.
     project_extra_income: bool = True
+    # How long after the install date the chart and the profit estimate run.
+    horizon_years: int = Field(default=20, ge=5, le=40)
 
 
 def payback_settings() -> dict | None:
@@ -1246,6 +1248,7 @@ def payback_figures() -> dict:
         settings_.get("battery_ageing_percent", 0) / 100,
         settings_.get("price_change_percent", 0) / 100,
         None if carry_on else extra_by_day,
+        settings_.get("horizon_years", 20),
     )
 
     return result

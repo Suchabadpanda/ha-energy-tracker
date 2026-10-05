@@ -71,7 +71,14 @@ def test_payback_already_reached_and_never_reached():
     earning = {first + timedelta(days=n): 10.0 for n in range(30)}
     done = payback(earning, 100.0, first, first + timedelta(days=30))
     assert done["already_reached"] and done["break_even"] == first + timedelta(days=9)
-    assert done["projection"] == []
+    assert done["remaining_gbp"] == -200.0  # 300 saved against a cost of 100
+    # The line carries on to twenty years after the install, showing the profit by then.
+    assert done["projection"][-1][0] == done["horizon"] == first + timedelta(days=7305)
+    assert done["profit_at_horizon_gbp"] == pytest.approx(10 * 7306 - 100)  # both end days count
+    short = payback(earning, 100.0, first, first + timedelta(days=30), horizon_years=5)
+    assert short["horizon_years"] == 5 and short["profit_at_horizon_gbp"] == pytest.approx(
+        10 * 1827 - 100
+    )
 
     losing = {first + timedelta(days=n): -1.0 for n in range(30)}
     never = payback(losing, 100.0, first, first + timedelta(days=30))
@@ -120,4 +127,16 @@ def test_savings_that_shrink_away_never_reach_the_cost():
     first = date(2026, 1, 1)
     savings = {first + timedelta(days=n): 1.0 for n in range(50)}
     result = payback(savings, 50000.0, first, first + timedelta(days=50), price_change=-0.10)
-    assert result["adjusted"]["break_even"] is None and result["adjusted"]["projection"] == []
+    assert result["adjusted"]["break_even"] is None
+    # The line is still drawn to the horizon, where the system has not paid for itself.
+    assert result["adjusted"]["projection"][-1][0] == result["horizon"]
+    assert result["adjusted"]["profit_at_horizon_gbp"] < 0
+    # The plain estimate would take over a century: no date, and a loss at the horizon.
+    assert result["break_even"] is None and result["projection"][-1][0] == result["horizon"]
+    assert result["profit_at_horizon_gbp"] == pytest.approx(7306 - 50000)
+
+    # A break-even after the horizon is still found, and the line runs on to it.
+    late = payback(savings, 10000.0, first, first + timedelta(days=50))
+    assert late["break_even"] == first + timedelta(days=9999) > late["horizon"]
+    assert late["projection"][-1] == (late["break_even"], 10000.0)
+    assert late["profit_at_horizon_gbp"] == pytest.approx(7306 - 10000)

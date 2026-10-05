@@ -24,7 +24,7 @@ fetched for a folded section until you open it.
 | Power charts | Every minute |
 | History, extra income, rates, costs by year | Every 5 minutes |
 | Device costs | Every 10 minutes |
-| Payback, performance, comparison | Every 30 minutes |
+| Return on investment, performance, comparison | Every 30 minutes |
 
 The long-range figures take a while to work out on a small machine, so the app prepares
 them in the background every ten minutes and keeps them ready. They can therefore be up to
@@ -269,9 +269,9 @@ Set `currency_symbol` and `currency_minor` on the Configuration tab to show amou
 another currency. Prices are always entered in the small unit per kWh, with one hundred to
 the main unit. The Octopus Energy price lookup is for Great Britain only.
 
-## Payback
+## Return on investment
 
-**Payback** shows how much the system has saved, how much of its cost that covers, and an
+**Return on investment** (called Payback before 0.18) shows how much the system has saved, how much of its cost that covers, and an
 estimated break-even date, with a chart of savings building up towards the cost.
 
 Open **System cost and settings** and enter the install date and what you paid. Later
@@ -290,6 +290,15 @@ How it is worked out:
   carried forward and the estimate is marked **rough**; it firms up as readings build.
 - Time between the install date and the first reading is filled in at the average, and the
   amount is stated under the chart.
+- **Progress bar**: how much of the cost has been paid back, the amount remaining and when
+  it is expected to be recovered. Once the system has paid for itself it shows the profit
+  so far.
+- **Projected profit**: the chart runs on past break-even to a number of years after the
+  install date (20 unless you change **Look ahead** under **System cost and settings**).
+  Everything above the system cost line is shaded as profit, and a tile gives the figure
+  at the end. This assumes the system keeps working at no further cost. A battery or an
+  inverter may need replacing within that time, and that is not allowed for, so treat the
+  later years as a ceiling, not a forecast.
 - **Extra income** always counts towards what has been saved. Under **System cost and
   settings**, untick **Assume extra income carries on** to leave it out of the yearly
   figure and the projection: sensible if the payments are occasional or may stop.
@@ -316,7 +325,7 @@ moving differently from each other, or what the money might have earned elsewher
 ## Extra income
 
 **Extra income** is for money earned on top of your tariff, such as Axle Energy payments
-for exporting during grid events. The total counts towards **Payback**. It is kept separate
+for exporting during grid events. The total counts towards **Return on investment**. It is kept separate
 from the cost figures, which stay as what your supplier charges.
 
 - **By hand**: open **Add income or change settings**, and enter the date and amount.

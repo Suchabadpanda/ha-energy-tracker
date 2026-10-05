@@ -50,9 +50,9 @@ The figures shown are made-up example data.
 
 ![A bill's figures beside the tracker's, with the differences](docs/images/bills.png)
 
-**Payback: savings building towards the system's cost**
+**Return on investment: savings building towards the system's cost, and the profit beyond it**
 
-![Payback tiles and a chart of savings rising towards the system cost](docs/images/payback.png)
+![Tiles, a progress bar and a chart of savings rising past the system cost](docs/images/payback.png)
 
 **Extra income, such as Axle Energy export events**
 
@@ -88,8 +88,8 @@ The figures shown are made-up example data.
   rates differ from yours, it offers to correct them.
 - **Extra income**: payments on top of your tariff, typed in or recorded automatically from
   Axle Energy export events.
-- **Payback**: what the system has saved against its cost, with an estimated break-even date
-  and a chart of progress.
+- **Return on investment**: what the system has saved against its cost, with a progress bar,
+  an estimated break-even date and a chart running on to the profit in later years.
 - **Compare tariffs**: replay your real usage on other tariffs, typed in or looked up from
   Octopus Energy's published prices, or test a price change on your own tariff. A second
   figure shows each tariff with battery and car charging moved to its cheapest times.

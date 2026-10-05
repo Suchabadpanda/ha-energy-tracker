@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.18.0
+
+- Payback is now called Return on investment.
+- A progress bar shows how much of the cost has been paid back and the amount remaining.
+- The chart runs on past break-even (20 years after install unless changed) and shades the
+  profit above the system cost, with a tile for the projected profit at the end.
+
 ## 0.17.3
 
 - Consumption breakdown chart: point at it to see each part's power at that moment.

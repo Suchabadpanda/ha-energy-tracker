@@ -83,27 +83,42 @@ def _project(
     panel_ageing: float = 0.0,
     battery_ageing: float = 0.0,
     price_change: float = 0.0,
-) -> tuple[date | None, list[tuple[date, float]]]:
-    """Carry savings forward day by day until they reach the cost.
+    horizon: date | None = None,
+    reached: date | None = None,
+) -> tuple[date | None, list[tuple[date, float]], float | None]:
+    """Carry savings forward day by day: to the day they reach the cost, and on to `horizon`.
 
     The yearly rates are fractions (0.005 for 0.5%). Panel ageing shrinks the solar part,
-    battery ageing the battery part, and a price change scales both.
+    battery ageing the battery part, and a price change scales both. `reached` is the
+    break-even day if it has already passed.
+
+    Returns the break-even day (None if not reached within the limit), points for a chart,
+    and the total saved by the horizon (None if the horizon is not after `last_day`). The
+    points stop at the horizon, or at break-even if that comes later.
     """
+    horizon = horizon or last_day
     points = [(last_day, round(running, 2))]
+    break_even = reached
+    at_horizon = None
     for ahead in range(MAX_PROJECTION_DAYS):
+        day = last_day + timedelta(days=ahead + 1)
+        if break_even is not None and day > horizon:
+            break
         years = (ahead + 1) / YEAR
         prices = (1 + price_change) ** years
         running += prices * (
             solar_pattern[ahead % len(solar_pattern)] * (1 - panel_ageing) ** years
             + battery_pattern[ahead % len(battery_pattern)] * (1 - battery_ageing) ** years
         )
-        day = last_day + timedelta(days=ahead + 1)
-        done = running >= total_cost
-        if done or ahead % 30 == 29:
-            points.append((day, round(running, 2)))
-        if done:
-            return day, points
-    return None, points  # not reached within the limit: no date, and no line to draw
+        just_reached = break_even is None and running >= total_cost
+        if just_reached:
+            break_even = day
+        if day == horizon:
+            at_horizon = running
+        if day <= horizon or just_reached:
+            if just_reached or day == horizon or ahead % 30 == 29:
+                points.append((day, round(running, 2)))
+    return break_even, points, at_horizon
 
 
 def payback(
@@ -116,12 +131,16 @@ def payback(
     battery_ageing: float = 0.0,
     price_change: float = 0.0,
     one_off: dict[date, float] | None = None,
+    horizon_years: int = 20,
 ) -> dict:
     """Cumulative savings so far, and a projection to the day they equal the system's cost.
 
     `one_off` is the part of each day's saving that should not be assumed to carry on
     (extra income the user has chosen to leave out of the projection). It counts in full
     towards what has been saved, but not towards the rate savings are projected at.
+
+    The projection runs on past break-even to `horizon_years` after the install date, to
+    show what the system could be worth beyond its cost.
 
     `savings` is pounds saved on each day with readings. Days between the install date and
     the first reading are filled in at the average, and reported separately.
@@ -171,18 +190,28 @@ def payback(
     def years_after_install(day: date | None) -> float | None:
         return round((day - installed).days / 365.25, 1) if day else None
 
+    horizon = installed + timedelta(days=round(horizon_years * 365.25))
     projection: list[tuple[date, float]] = []
     break_even = reached
+    profit = None
     adjusted = None
-    if reached is None and total_cost > 0:
+    if total_cost > 0:
         if yearly > 0:
-            break_even, projection = _project(
-                saved, days[-1], solar_pattern, battery_pattern, total_cost
+            break_even, projection, at_horizon = _project(
+                saved,
+                days[-1],
+                solar_pattern,
+                battery_pattern,
+                total_cost,
+                0,
+                0,
+                0,
+                horizon,
+                reached,
             )
-            if break_even is None:
-                projection = []
+            profit = at_horizon - total_cost if at_horizon is not None else None
         if panel_ageing or battery_ageing or price_change:
-            adjusted_day, adjusted_points = _project(
+            adjusted_day, adjusted_points, at_horizon = _project(
                 saved,
                 days[-1],
                 solar_pattern,
@@ -191,11 +220,16 @@ def payback(
                 panel_ageing,
                 battery_ageing,
                 price_change,
+                horizon,
+                reached,
             )
             adjusted = {
                 "break_even": adjusted_day,
                 "years_from_install": years_after_install(adjusted_day),
-                "projection": adjusted_points if adjusted_day else [],
+                "projection": adjusted_points,
+                "profit_at_horizon_gbp": (
+                    round(at_horizon - total_cost, 2) if at_horizon is not None else None
+                ),
             }
 
     return {
@@ -211,6 +245,11 @@ def payback(
         "yearly_solar_gbp": round(yearly_solar, 2) if solar is not None else None,
         "yearly_battery_gbp": round(yearly_battery, 2) if solar is not None else None,
         "percent": round(saved / total_cost * 100, 1) if total_cost > 0 else None,
+        # What is still to be recovered; below zero once the system has paid for itself.
+        "remaining_gbp": round(total_cost - saved, 2),
+        "horizon": horizon,
+        "horizon_years": horizon_years,
+        "profit_at_horizon_gbp": round(profit, 2) if profit is not None else None,
         "rough": rough,
         "already_reached": reached is not None,
         "break_even": break_even,
