@@ -21,8 +21,34 @@
   body { margin: 0; padding: 24px 16px 40px; background: var(--bg); color: var(--text);
          font: 16px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
   main { max-width: 980px; margin: 0 auto; }
-  header { display: flex; justify-content: space-between; align-items: baseline;
-           flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
+  /* The header stays at the top while scrolling, so the section menu is always to hand. */
+  header { display: flex; justify-content: space-between; align-items: center;
+           flex-wrap: wrap; gap: 8px 14px; margin-bottom: 8px; padding: 10px 0;
+           position: sticky; top: 0; z-index: 20; background: var(--bg);
+           border-bottom: 1px solid var(--line); }
+  header .right { display: flex; align-items: center; gap: 14px; margin-left: auto; }
+  .jump { position: relative; }
+  .jump > summary { list-style: none; cursor: pointer; font-size: 14px; font-weight: 500;
+                    border: 1px solid var(--line); border-radius: 6px; padding: 6px 12px;
+                    background: var(--card); color: var(--text); user-select: none; }
+  .jump > summary::-webkit-details-marker { display: none; }
+  .jump > summary::after { content: " \25BE"; color: var(--muted); }
+  .jump-panel { position: absolute; right: 0; top: calc(100% + 6px); width: min(280px, 86vw);
+                max-height: min(70vh, 560px); overflow-y: auto; background: var(--card);
+                border: 1px solid var(--line); border-radius: 10px; padding: 6px;
+                box-shadow: 0 8px 24px rgba(0,0,0,.18); }
+  .jump-panel button { display: block; width: 100%; height: auto; text-align: left; border: none;
+                       background: none; padding: 7px 10px; border-radius: 6px; font-size: 14px; }
+  .jump-panel button:hover, .jump-panel button:focus-visible { background: var(--bg); }
+  .jump-panel button.folded { color: var(--muted); }
+  .jump-panel hr { border: none; border-top: 1px solid var(--line); margin: 6px 4px; }
+  /* Section headings fold their section away when clicked. */
+  h2[aria-expanded] { cursor: pointer; user-select: none; scroll-margin-top: 76px; }
+  h2[aria-expanded]::before { content: "\25BE"; display: inline-block; width: 1.1em; }
+  h2[aria-expanded="false"]::before { content: "\25B8"; }
+  h2[aria-expanded]:focus-visible { outline: 2px solid var(--load); outline-offset: 3px; border-radius: 3px; }
+  .folded-away { display: none !important; }
+  .label-text { display: block; }
   h1 { font-size: 22px; margin: 0; }
   h2 { font-size: 14px; font-weight: 600; color: var(--muted); margin: 28px 0 10px;
        text-transform: uppercase; letter-spacing: .05em; }
@@ -138,7 +164,13 @@
 <main>
   <header>
     <h1>Energy Tracker</h1>
-    <div id="status">Loading…</div>
+    <div class="right">
+      <div id="status">Loading…</div>
+      <details class="jump" id="jump">
+        <summary>Sections</summary>
+        <div class="jump-panel" id="jump-panel"></div>
+      </details>
+    </div>
   </header>
 
   <div id="notice" role="alert" hidden>
@@ -946,6 +978,7 @@ function renderYears(data) {
         button.textContent = money(m.cost.net_gbp) + (m.cost.full_period ? "" : " *");
         button.addEventListener("click", () => {
           showMonth(m.key);
+          setFolded(document.getElementById("month-title"), false);
           document.getElementById("month-title").scrollIntoView({ block: "center" });
         });
         td.replaceChildren(button);
@@ -2320,6 +2353,84 @@ async function refresh() {
     status.className = "stale";
   }
 }
+
+// --- Page layout: tidy labels, folding sections, and the section menu ---------------------
+
+// A label's words and any currency symbol inside them are kept together on one line, above
+// the field. Without this each piece would be stacked separately.
+for (const label of document.querySelectorAll("form label")) {
+  const words = [...label.childNodes].filter(node =>
+    !(node instanceof HTMLElement && node.matches("input, select, textarea, button")));
+  if (!words.length || label.classList.contains("wide")) continue;
+  const text = Object.assign(document.createElement("span"), { className: "label-text" });
+  label.prepend(text);
+  text.append(...words);
+}
+
+// Every section heading can be clicked to fold its section away. What is folded is
+// remembered on this device.
+const FOLD_KEY = "energy-tracker-folded";
+const mainEl = document.querySelector("main");
+const headings = [...mainEl.querySelectorAll("h2")];
+let folded = new Set();
+try { folded = new Set(JSON.parse(localStorage.getItem(FOLD_KEY) ?? "[]")); } catch { /* no storage */ }
+
+// The heading's row (it may share one with buttons) and everything up to the next heading.
+function sectionParts(h2) {
+  const row = h2.parentElement.matches(".filters, .section-head, .nav") ? h2.parentElement : h2;
+  const body = [];
+  for (let el = row.nextElementSibling; el; el = el.nextElementSibling) {
+    if (el.matches("h2") || el.querySelector("h2")) break;
+    body.push(el);
+  }
+  const controls = row === h2 ? [] : [...row.children].filter(el => el !== h2);
+  return [...controls, ...body];
+}
+function setFolded(h2, fold) {
+  h2.setAttribute("aria-expanded", String(!fold));
+  for (const el of sectionParts(h2)) el.classList.toggle("folded-away", fold);
+  if (fold) folded.add(h2.dataset.key); else folded.delete(h2.dataset.key);
+  try { localStorage.setItem(FOLD_KEY, JSON.stringify([...folded])); } catch { /* no storage */ }
+}
+for (const h2 of headings) {
+  h2.dataset.key = h2.id || h2.textContent.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-");
+  h2.tabIndex = 0;
+  h2.setAttribute("role", "button");
+  h2.title = "Show or hide this section";
+  setFolded(h2, folded.has(h2.dataset.key));
+  const toggle = () => setFolded(h2, h2.getAttribute("aria-expanded") === "true");
+  h2.addEventListener("click", toggle);
+  h2.addEventListener("keydown", event => {
+    if (event.key === "Enter" || event.key === " ") { event.preventDefault(); toggle(); }
+  });
+}
+
+// The Sections menu lists every heading; choosing one opens that section and scrolls to it.
+const jump = document.getElementById("jump");
+function buildJumpMenu() {
+  const item = (label, onClick, className) => {
+    const button = Object.assign(document.createElement("button"), { type: "button", textContent: label });
+    if (className) button.className = className;
+    button.addEventListener("click", () => { jump.open = false; onClick(); });
+    return button;
+  };
+  const shown = headings.filter(h2 => h2.getClientRects().length);  // skip sections that do not apply
+  document.getElementById("jump-panel").replaceChildren(
+    item("Top of page", () => window.scrollTo({ top: 0, behavior: "smooth" })),
+    document.createElement("hr"),
+    ...shown.map(h2 => item(h2.textContent, () => {
+      setFolded(h2, false);
+      // Stop just below the header, however tall it is on this screen.
+      const header = document.querySelector("header").getBoundingClientRect().height;
+      window.scrollTo({ top: h2.getBoundingClientRect().top + window.scrollY - header - 10, behavior: "smooth" });
+    }, h2.getAttribute("aria-expanded") === "false" ? "folded" : "")),
+    document.createElement("hr"),
+    item("Fold all sections", () => headings.forEach(h2 => setFolded(h2, true))),
+    item("Open all sections", () => headings.forEach(h2 => setFolded(h2, false))));
+}
+jump.addEventListener("toggle", () => { if (jump.open) buildJumpMenu(); });
+document.addEventListener("click", event => { if (jump.open && !jump.contains(event.target)) jump.open = false; });
+document.addEventListener("keydown", event => { if (event.key === "Escape") jump.open = false; });
 
 // Fetch the currency before anything is drawn, so no figure flashes up with the wrong symbol.
 async function start() {

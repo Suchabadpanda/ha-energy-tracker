@@ -4,6 +4,14 @@
 > Sigenergy integration for Home Assistant. Other inverters will not work without editing
 > the sensor list (see "Using different sensors").
 
+## Finding your way around
+
+The page is long, so the header stays in view as you scroll. **Sections**, at the top
+right, lists every part of the page: choose one to go straight to it. Click any section
+heading to fold that section away, and again to bring it back; **Fold all sections** and
+**Open all sections** are at the foot of the menu. What you fold is remembered on that
+device, so each phone or computer can keep its own layout.
+
 ## First steps
 
 1. Start the app and open **Energy Tracker** from the sidebar.

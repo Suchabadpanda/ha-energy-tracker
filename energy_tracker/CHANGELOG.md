@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.13.0
+
+- A Sections menu at the top right, always in view, to jump to any part of the page.
+- Every section can be folded away by clicking its heading; what is folded is remembered.
+- Form labels containing a currency symbol no longer break across several lines.
+
 ## 0.12.1
 
 - Bill check: choose several bill PDFs at once, review what was read, and save them together.
