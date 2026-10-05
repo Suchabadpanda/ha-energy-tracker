@@ -227,3 +227,6 @@ bottom of the dashboard. Home Assistant backups include the database.
 ## Support
 
 This is a personal project shared as it is, with no guarantee of support.
+
+It is free to use. If you would like to say thanks, you can
+[buy me a coffee](https://buymeacoffee.com/badpanda).

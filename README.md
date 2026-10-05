@@ -12,6 +12,8 @@ what your electricity has cost on your own tariff.
 A heat pump (or other device) on the Sigenergy gateway's smart load port and a Tesla Wall
 Connector are picked up automatically if present. Their tiles are left out if not.
 
+If you find it useful, you can [buy me a coffee](https://buymeacoffee.com/badpanda).
+
 ## Screenshots
 
 The figures shown are made-up example data.
@@ -172,3 +174,9 @@ energy_tracker/
 
 This is a personal project shared as it is, with no guarantee of support. Released under
 the [MIT licence](LICENSE).
+
+## Buy me a coffee
+
+Energy Tracker is free and always will be. If it has been useful to you and you would like
+to say thanks, you can [buy me a coffee](https://buymeacoffee.com/badpanda). Donations are
+entirely optional and do not buy support or features.
