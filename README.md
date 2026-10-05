@@ -75,6 +75,8 @@ The figures shown are made-up example data.
   of what a bigger battery would save.
 - **Monthly summary**: a month on one page, against the month before and a year earlier.
 - **Bill check**: your bill's figures beside what the tracker measured for the same dates.
+  It can read them from an E.ON Next or Octopus Energy bill PDF, without the file leaving
+  your device.
 - **Extra income**: payments on top of your tariff, typed in or recorded automatically from
   Axle Energy export events.
 - **Payback**: what the system has saved against its cost, with an estimated break-even date

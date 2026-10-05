@@ -126,6 +126,22 @@ dates. Open **Add a bill** and enter the first and last day billed, and whicheve
 you have: energy imported, the amount charged (energy and standing charge together, with
 VAT, before any export payment), energy exported and the export payment.
 
+### Reading a bill PDF
+
+Instead of typing, choose the bill's PDF under **Add a bill** and press **Read bill**. The
+form is filled in with the billing dates, units and amounts found, and a note lists the
+rates, standing charge and VAT quoted on the bill, which is a handy check on what you have
+entered under **Tariff rates**. Nothing is saved until you press **Save bill**, so check
+the figures against the bill first.
+
+- The PDF is read on your own device. It is not stored and not sent anywhere.
+- It works on PDFs downloaded from the supplier, which contain real text. A scan or a
+  photo of a paper bill cannot be read.
+- It is built around the bill layout that E.ON Next and Octopus Energy share. Bills from
+  other suppliers may give some figures or none; type in whatever is missing.
+- Import and export statements are read separately; add each as its own entry.
+- On a dual-fuel bill only the electricity is read.
+
 Each bill is shown above the tracker's own figures and the difference between them. The
 inverter and the supplier's meter are separate instruments, so a percent or two is normal.
 A larger gap in kWh points at the metering; a gap in money with matching kWh points at the

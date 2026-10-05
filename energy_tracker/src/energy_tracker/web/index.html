@@ -426,11 +426,18 @@
     <details id="bills-editor">
       <summary>Add a bill</summary>
       <div class="hint">Enter the figures from a bill or statement to compare them with what the
-        tracker measured over the same dates. Fill in whichever you have. "Charged" is the
+        tracker measured over the same dates. Fill in whichever you have, or choose the bill's
+        PDF and press Read bill to have them filled in for you to check. The PDF is read on
+        this device and is not kept or sent anywhere. "Charged" is the
         electricity charge including the standing charge and VAT, before any export payment.
         The inverter and the supplier's meter are separate instruments, so a difference of a
         percent or two is normal.</div>
       <form id="bills-form">
+        <div class="lookup">
+          <label>Read the figures from a bill (PDF from your supplier)
+            <input type="file" id="bills-file" accept="application/pdf,.pdf"></label>
+          <button type="button" id="bills-read">Read bill</button>
+        </div>
         <div class="field-row">
           <label>First day billed <input type="date" name="first_day" required></label>
           <label>Last day billed <input type="date" name="last_day" required></label>
@@ -1507,6 +1514,28 @@ function renderBills(data) {
   }
   document.getElementById("bills-rows").replaceChildren(...rows);
 }
+
+// Reading a bill PDF fills in the form; nothing is saved until the person presses Save.
+document.getElementById("bills-read").addEventListener("click", async () => {
+  const file = document.getElementById("bills-file").files[0];
+  if (!file) return billsMessage("Choose the bill's PDF file first.", true);
+  billsMessage("Reading the bill...");
+  try {
+    const data = await sendTariff("api/bills/read", {
+      method: "POST", headers: { "Content-Type": "application/pdf" }, body: file,
+    });
+    editingBill = null;
+    for (const [name, value] of Object.entries(data.found)) billsForm.elements[name].value = value ?? "";
+    const rates = data.rates.map(r => r.kwh + " kWh at " + r.p_per_kwh + MINOR).join(", ");
+    const parts = ["Filled in from the " + data.kind + " bill. Check the figures against it, then save."];
+    if (rates) parts.push("Rates on the bill: " + rates +
+      (data.standing_charge_p_per_day !== null ? "; standing charge " + data.standing_charge_p_per_day + MINOR + " a day" : "") +
+      (data.vat_percent !== null ? "; VAT " + data.vat_percent + "%" : "") + ".");
+    billsMessage([...parts, ...data.notes].join(" "));
+  } catch (err) {
+    billsMessage(err.message, true);
+  }
+});
 
 async function refreshBills() {
   try { renderBills(await getJson("api/bills")); } catch (err) { billsMessage("Could not load bills (" + err.message + ").", true); }

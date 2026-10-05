@@ -25,6 +25,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 
 from . import (
+    billreader,
     collector,
     history,
     import_history,
@@ -87,7 +88,7 @@ async def lifespan(_: FastAPI):
         await asyncio.to_thread(thread.join, 10)
 
 
-app = FastAPI(title="Energy Tracker", version="0.11.0", lifespan=lifespan)
+app = FastAPI(title="Energy Tracker", version="0.12.0", lifespan=lifespan)
 
 
 @app.middleware("http")
@@ -702,6 +703,24 @@ def save_bill(body: BillIn, id: int | None = None) -> dict:  # noqa: A002
         raise HTTPException(status_code=422, detail="Enter at least one figure from the bill")
     database().save_bill(body.model_dump(), id)
     return bills()
+
+
+@app.post("/api/bills/read")
+async def read_bill(request: Request) -> dict:
+    """Pick the figures out of a bill PDF sent as the request body.
+
+    The file is read in memory and not kept. Nothing is saved: the figures go back to the
+    page for the person to check and save themselves.
+    """
+    body = await request.body()
+    if not body:
+        raise HTTPException(status_code=422, detail="Choose a PDF file first")
+    if len(body) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="That file is too large (20 MB at most)")
+    try:
+        return await asyncio.to_thread(billreader.read_pdf, body)
+    except billreader.BillError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @app.delete("/api/bills/{row_id}")

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.12.0
+
+- Bill check can read the figures from a bill PDF (E.ON Next and Octopus Energy layouts), on
+  your own device, for you to check and save.
+
 ## 0.11.0
 
 - Monthly summary: a month on one page, compared with the month before and a year earlier,
