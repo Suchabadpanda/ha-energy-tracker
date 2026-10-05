@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.12.1
+
+- Bill check: choose several bill PDFs at once, review what was read, and save them together.
+
 ## 0.12.0
 
 - Bill check can read the figures from a bill PDF (E.ON Next and Octopus Energy layouts), on

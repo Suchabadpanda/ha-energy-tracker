@@ -427,16 +427,29 @@
       <summary>Add a bill</summary>
       <div class="hint">Enter the figures from a bill or statement to compare them with what the
         tracker measured over the same dates. Fill in whichever you have, or choose the bill's
-        PDF and press Read bill to have them filled in for you to check. The PDF is read on
-        this device and is not kept or sent anywhere. "Charged" is the
+        PDF and press Read to have them filled in for you to check. Choose several PDFs at
+        once to read them all into a list and save them together. PDFs are read on this device
+        and are not kept or sent anywhere. "Charged" is the
         electricity charge including the standing charge and VAT, before any export payment.
         The inverter and the supplier's meter are separate instruments, so a difference of a
         percent or two is normal.</div>
       <form id="bills-form">
         <div class="lookup">
-          <label>Read the figures from a bill (PDF from your supplier)
-            <input type="file" id="bills-file" accept="application/pdf,.pdf"></label>
-          <button type="button" id="bills-read">Read bill</button>
+          <label>Read the figures from bills (PDFs from your supplier; choose one or several)
+            <input type="file" id="bills-file" accept="application/pdf,.pdf" multiple></label>
+          <button type="button" id="bills-read">Read</button>
+        </div>
+        <div id="bills-batch" class="wide" style="grid-column: 1 / -1;" hidden>
+          <div class="table-scroll">
+            <table>
+              <thead><tr><th>File</th><th>Bill period</th><th class="num">Imported</th><th class="num">Charged</th>
+                <th class="num">Exported</th><th class="num">Export payment</th><th></th></tr></thead>
+              <tbody id="bills-batch-rows"></tbody>
+            </table>
+          </div>
+          <div class="actions" style="margin-top: 10px;">
+            <button class="primary" type="button" id="bills-batch-save">Save bills</button>
+          </div>
         </div>
         <div class="field-row">
           <label>First day billed <input type="date" name="first_day" required></label>
@@ -1467,6 +1480,7 @@ function renderBills(data) {
   const cash = v => v === null || v === undefined ? "–" : money(v);
   const gap = (d, format) => !d ? "" : Math.abs(d.amount) < 0.005 ? "same"
     : format(Math.abs(d.amount)) + (d.amount > 0 ? " higher" : " lower") + (d.percent === null ? "" : " (" + Math.abs(d.percent) + "%)");
+  billsShown = data.bills;
   document.getElementById("bills-summary").textContent = data.bills.length ? "" : "No bills entered yet.";
   const rows = [];
   for (const bill of data.bills) {
@@ -1515,25 +1529,107 @@ function renderBills(data) {
   document.getElementById("bills-rows").replaceChildren(...rows);
 }
 
-// Reading a bill PDF fills in the form; nothing is saved until the person presses Save.
+// Reading bill PDFs. One file fills in the form to check and save. Several are listed for
+// review and saved together. Nothing is saved until the person presses a Save button.
+let billsShown = [];     // bills already saved, to spot ones read twice
+let billsToSave = [];    // read from several PDFs and waiting for approval
+const readBill = file => sendTariff("api/bills/read", {
+  method: "POST", headers: { "Content-Type": "application/pdf" }, body: file,
+});
+const ratesNote = data => {
+  const rates = data.rates.map(r => r.kwh + " kWh at " + r.p_per_kwh + MINOR).join(", ");
+  return !rates ? "" : "Rates on the bill: " + rates +
+    (data.standing_charge_p_per_day !== null ? "; standing charge " + data.standing_charge_p_per_day + MINOR + " a day" : "") +
+    (data.vat_percent !== null ? "; VAT " + data.vat_percent + "%" : "") + ".";
+};
+// The same dates and the same kind of figures as a bill already in the list.
+const alreadySaved = found => billsShown.some(bill => bill.first_day === found.first_day &&
+  bill.last_day === found.last_day &&
+  (bill.import_kwh === null) === (found.import_kwh === null) &&
+  (bill.export_kwh === null) === (found.export_kwh === null));
+
+function showBatch(results) {
+  const box = document.getElementById("bills-batch");
+  const cell = (text, className) => {
+    const td = document.createElement("td");
+    td.textContent = text;
+    if (className) td.className = className;
+    return td;
+  };
+  const day = iso => iso ? new Date(iso + "T00:00").toLocaleDateString([], { dateStyle: "medium" }) : "?";
+  const energy = v => v === null || v === undefined ? "–" : v + " kWh";
+  const cash = v => v === null || v === undefined ? "–" : money(v);
+  billsToSave = [];
+  document.getElementById("bills-batch-rows").replaceChildren(...results.map(result => {
+    const tr = document.createElement("tr");
+    const name = cell(result.file);
+    let status;
+    if (result.error) status = result.error;
+    else if (!result.data.found.first_day || !result.data.found.last_day) status = "Dates not found: add this one on its own.";
+    else if (alreadySaved(result.data.found)) status = "Already in the list: skipped.";
+    else if (billsToSave.some(b => JSON.stringify(b) === JSON.stringify(result.data.found))) status = "Same as another file: skipped.";
+    else { status = ["Ready to save.", ...result.data.notes].join(" "); billsToSave.push(result.data.found); }
+    const f = result.data?.found;
+    tr.append(name, cell(f ? day(f.first_day) + " to " + day(f.last_day) : "–"),
+              cell(f ? energy(f.import_kwh) : "–", "num"), cell(f ? cash(f.charge_gbp) : "–", "num"),
+              cell(f ? energy(f.export_kwh) : "–", "num"), cell(f ? cash(f.export_gbp) : "–", "num"),
+              cell(status, "sub"));
+    return tr;
+  }));
+  const save = document.getElementById("bills-batch-save");
+  save.hidden = !billsToSave.length;
+  save.textContent = "Save " + billsToSave.length + (billsToSave.length === 1 ? " bill" : " bills");
+  box.hidden = false;
+}
+
 document.getElementById("bills-read").addEventListener("click", async () => {
-  const file = document.getElementById("bills-file").files[0];
-  if (!file) return billsMessage("Choose the bill's PDF file first.", true);
-  billsMessage("Reading the bill...");
+  const files = [...document.getElementById("bills-file").files];
+  if (!files.length) return billsMessage("Choose one or more bill PDF files first.", true);
+  if (files.length > 40) return billsMessage("Choose 40 files or fewer at a time.", true);
+  document.getElementById("bills-batch").hidden = true;
   try {
-    const data = await sendTariff("api/bills/read", {
-      method: "POST", headers: { "Content-Type": "application/pdf" }, body: file,
-    });
-    editingBill = null;
-    for (const [name, value] of Object.entries(data.found)) billsForm.elements[name].value = value ?? "";
-    const rates = data.rates.map(r => r.kwh + " kWh at " + r.p_per_kwh + MINOR).join(", ");
-    const parts = ["Filled in from the " + data.kind + " bill. Check the figures against it, then save."];
-    if (rates) parts.push("Rates on the bill: " + rates +
-      (data.standing_charge_p_per_day !== null ? "; standing charge " + data.standing_charge_p_per_day + MINOR + " a day" : "") +
-      (data.vat_percent !== null ? "; VAT " + data.vat_percent + "%" : "") + ".");
-    billsMessage([...parts, ...data.notes].join(" "));
+    if (files.length === 1) {
+      billsMessage("Reading the bill...");
+      const data = await readBill(files[0]);
+      editingBill = null;
+      for (const [name, value] of Object.entries(data.found)) billsForm.elements[name].value = value ?? "";
+      billsMessage(["Filled in from the " + data.kind + " bill. Check the figures against it, then save.",
+                    ratesNote(data), ...data.notes].filter(Boolean).join(" "));
+      return;
+    }
+    const results = [];
+    for (const [index, file] of files.entries()) {
+      billsMessage("Reading bill " + (index + 1) + " of " + files.length + "...");
+      try { results.push({ file: file.name, data: await readBill(file) }); }
+      catch (err) { results.push({ file: file.name, error: err.message }); }
+    }
+    showBatch(results);
+    billsMessage("Read " + files.length + " files. Check the figures below against the bills, then save them together.");
   } catch (err) {
     billsMessage(err.message, true);
+  }
+});
+
+document.getElementById("bills-batch-save").addEventListener("click", async () => {
+  const button = document.getElementById("bills-batch-save");
+  button.disabled = true;
+  let saved = 0, last = null;
+  try {
+    for (const found of billsToSave) {
+      last = await sendTariff("api/bills", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(found),
+      });
+      saved += 1;
+    }
+    billsMessage("Saved " + saved + (saved === 1 ? " bill." : " bills."));
+    document.getElementById("bills-batch").hidden = true;
+    document.getElementById("bills-file").value = "";
+    billsToSave = [];
+  } catch (err) {
+    billsMessage("Saved " + saved + " of " + billsToSave.length + ", then stopped: " + err.message, true);
+  } finally {
+    button.disabled = false;
+    if (last) renderBills(last);
   }
 });
 

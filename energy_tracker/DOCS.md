@@ -139,6 +139,9 @@ the figures against the bill first.
   photo of a paper bill cannot be read.
 - It is built around the bill layout that E.ON Next and Octopus Energy share. Bills from
   other suppliers may give some figures or none; type in whatever is missing.
+- Choose several PDFs at once to read them into a list. Each is shown with what was found;
+  any that could not be read, or that match a bill already saved, are skipped. **Save**
+  then stores the rest together.
 - Import and export statements are read separately; add each as its own entry.
 - On a dual-fuel bill only the electricity is read.
 
