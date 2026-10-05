@@ -25,14 +25,19 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 
 from . import (
+    billcheck,
     billreader,
     collector,
+    devices,
     history,
     import_history,
     income,
+    live,
     lookup,
     performance,
+    prices,
     roi,
+    shift,
     tariff_store,
 )
 from .config import Metric, Settings, load_metrics, load_settings
@@ -67,28 +72,49 @@ def local_timezone():
     return settings().timezone
 
 
+# Set to have published half-hourly prices fetched straight away (a tariff was just saved).
+price_refresh = threading.Event()
+
+
+def prices_wanted_from() -> datetime:
+    """How far back published prices are worth having: to when readings began."""
+    first = database().first_time(COST_COUNTERS[0])
+    return first or datetime.now(UTC) - timedelta(days=30)
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     """Start the collector alongside the web server, and stop it cleanly on shutdown."""
     stop = threading.Event()
     thread = None
     if settings().collecting:
+        metrics = list(metrics_by_name().values())
         thread = threading.Thread(
             target=collector.run,
-            args=(settings(), database(), list(metrics_by_name().values()), stop),
+            args=(settings(), database(), metrics, stop),
             name="collector",
             daemon=True,
         )
         thread.start()
+        threading.Thread(
+            target=live.run, args=(settings(), metrics, stop), name="live", daemon=True
+        ).start()
     else:
         log.warning("No Home Assistant connection configured: showing stored readings only")
+    threading.Thread(
+        target=prices.run,
+        args=(database(), stop, price_refresh, prices_wanted_from, clear_caches),
+        name="prices",
+        daemon=True,
+    ).start()
     yield
     stop.set()
+    price_refresh.set()
     if thread:
         await asyncio.to_thread(thread.join, 10)
 
 
-app = FastAPI(title="Energy Tracker", version="0.15.0", lifespan=lifespan)
+app = FastAPI(title="Energy Tracker", version="0.16.0", lifespan=lifespan)
 
 
 @app.middleware("http")
@@ -175,6 +201,28 @@ def latest() -> dict[str, dict]:
     since = datetime.now(UTC) - timedelta(days=1)
     found = database().latest(list(metrics_by_name()), since)
     return {name: {"time": when, "value": value} for name, (when, value) in found.items()}
+
+
+# What the "right now" tiles show.
+LIVE_AFTER = timedelta(minutes=5)
+
+
+@app.get("/api/live")
+def live_readings() -> dict:
+    """The newest value of each power and battery-level sensor, straight from Home Assistant.
+
+    These follow the sensors as they change, between the stored readings. A value that has
+    not been heard for a few minutes is left out, so the page falls back to what is stored.
+    """
+    cutoff = datetime.now(UTC) - LIVE_AFTER
+    return {
+        "live": live.connected,
+        "values": {
+            name: {"time": when, "value": value}
+            for name, (when, value) in live.snapshot().items()
+            if when >= cutoff and name in metrics_by_name()
+        },
+    }
 
 
 @app.get("/api/series")
@@ -290,12 +338,14 @@ def month(
 _years_cache: dict = {"at": 0.0, "value": None}
 _roi_cache: dict = {"at": 0.0, "value": None}
 _performance_cache: dict = {}
+_devices_cache: dict = {"at": 0.0, "value": None}
 
 
 def clear_caches() -> None:
     """Forget worked-out costs, after anything they depend on has changed."""
     _years_cache["value"] = None
     _roi_cache["value"] = None
+    _devices_cache["value"] = None
     _performance_cache.clear()
 
 
@@ -348,6 +398,10 @@ class BandIn(BaseModel):
     p_per_kwh: float = Field(ge=0, le=500)
 
 
+# A tariff that follows published half-hourly prices names them as "PRODUCT/REGION".
+DYNAMIC = Field(default="", pattern=r"^([A-Z0-9-]{3,60}/[A-P])?$")
+
+
 class TariffIn(BaseModel):
     name: str = Field(min_length=1, max_length=80)
     effective_from: date
@@ -355,10 +409,22 @@ class TariffIn(BaseModel):
     standing_charge_p_per_day: float = Field(ge=0, le=1000)
     vat_percent: float = Field(default=0, ge=0, le=100)
     import_bands: list[BandIn] = Field(min_length=1, max_length=48)
+    dynamic: str = DYNAMIC
+
+
+def published_prices(source: str) -> dict | None:
+    """For a tariff that follows published prices: how far they reach, and any problem."""
+    if not source:
+        return None
+    state = prices.status.get(source, {})
+    since, until = prices.held(database(), source)
+    return {"source": source, "from": since, "until": until, "error": state.get("error")}
 
 
 def tariff_json(tariff: Tariff) -> dict:
     return {
+        "dynamic": tariff.dynamic,
+        "published": published_prices(tariff.dynamic),
         "effective_from": tariff.effective_from,
         "name": tariff.name,
         "export_p_per_kwh": tariff.export_p_per_kwh,
@@ -392,11 +458,14 @@ def save_tariff(body: TariffIn) -> dict:
             standing_charge_p_per_day=body.standing_charge_p_per_day,
             effective_from=body.effective_from,
             vat_percent=body.vat_percent,
+            dynamic=body.dynamic,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     tariff_store.save_period(database(), tariff)
     clear_caches()  # costs must be worked out again with the new rates
+    if body.dynamic:
+        price_refresh.set()
     return list_tariffs()
 
 
@@ -416,6 +485,8 @@ def delete_tariff(effective_from: date) -> dict:
 
 # How far back each choice of period reaches. None means everything stored.
 COMPARE_PERIODS = {"30d": 30, "90d": 90, "12m": 365, "all": None}
+# Charging that could be done at any time of day: into the battery, and into the car.
+FLEXIBLE_COUNTERS = ["battery_charge_energy_total", "ev_charger_energy_total"]
 
 
 class ComparisonIn(BaseModel):
@@ -424,6 +495,7 @@ class ComparisonIn(BaseModel):
     standing_charge_p_per_day: float = Field(ge=0, le=1000)
     vat_percent: float = Field(default=0, ge=0, le=100)
     import_bands: list[BandIn] = Field(min_length=1, max_length=48)
+    dynamic: str = DYNAMIC
 
 
 def comparison_tariff(row: dict) -> Tariff:
@@ -433,6 +505,8 @@ def comparison_tariff(row: dict) -> Tariff:
         export_p_per_kwh=row["export_p_per_kwh"],
         standing_charge_p_per_day=row["standing_charge_p_per_day"],
         vat_percent=row["vat_percent"],
+        dynamic=row.get("dynamic") or "",
+        slot_prices=prices.for_row(database(), row),
     )
 
 
@@ -456,19 +530,48 @@ def compare(period: Annotated[str, Query(pattern="^(30d|90d|12m|all)$")] = "12m"
     # Whole local days, ending now, so the standing charge is counted fairly.
     wanted = local_midnight(now, local_timezone()) - timedelta(days=days) if days else first
     start = max(wanted, first)
-    samples = counter_samples(COST_COUNTERS, start - timedelta(days=1), HALF_HOURLY, now)
+    samples = counter_samples(
+        [*COST_COUNTERS, *FLEXIBLE_COUNTERS], start - timedelta(days=1), HALF_HOURLY, now
+    )
+    counters = {name: Counter(series, HALF_HOURLY_GAP) for name, series in samples.items()}
 
     def cost_on(rates: Schedule) -> dict | None:
         return cost_since(samples, start, now, local_timezone(), rates, gap=HALF_HOURLY_GAP)
+
+    def with_charging_moved(rates: Schedule, cost: dict | None) -> dict | None:
+        """The same cost with battery and car charging moved to the tariff's cheapest times."""
+        if not cost or not actual:
+            return None
+        moved = shift.shifted_import(
+            counters[COST_COUNTERS[0]],
+            [counters[name] for name in FLEXIBLE_COUNTERS],
+            cost["since"],
+            now,
+            local_timezone(),
+            rates,
+        )
+        if moved is None:
+            return None
+        net = round(cost["net_gbp"] - cost["import_gbp"] + moved["import_gbp"], 2)
+        return {**moved, "net_gbp": net, "difference_gbp": round(net - actual["net_gbp"], 2)}
 
     actual = cost_on(schedule())
     result["actual"] = actual
     result["from"] = actual["since"] if actual else start
     result["days"] = actual["standing_charge_days"] if actual else 0
     for row in rows:
-        cost = cost_on(Schedule([comparison_tariff(row)]))
+        rates = Schedule([comparison_tariff(row)])
+        cost = cost_on(rates)
         difference = round(cost["net_gbp"] - actual["net_gbp"], 2) if cost and actual else None
-        result["candidates"].append({**row, "cost": cost, "difference_gbp": difference})
+        result["candidates"].append(
+            {
+                **row,
+                "published": published_prices(row.get("dynamic") or ""),
+                "cost": cost,
+                "difference_gbp": difference,
+                "shifted": with_charging_moved(rates, cost),
+            }
+        )
     return result
 
 
@@ -483,6 +586,8 @@ def save_comparison(body: ComparisonIn, id: int | None = None) -> dict:  # noqa:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     saved = database().save_comparison_row(row, id)
     _roi_cache["value"] = None  # it may be the tariff payback is measured against
+    if body.dynamic:
+        price_refresh.set()
     return {"id": saved}
 
 
@@ -492,6 +597,45 @@ def delete_comparison(row_id: int) -> dict:
         raise HTTPException(status_code=404, detail="That tariff is not in the list")
     _roi_cache["value"] = None
     return {"removed": row_id}
+
+
+# --- Running cost by device ----------------------------------------------------------------------
+
+DEVICES_CACHE_SECONDS = 300
+
+
+@app.get("/api/devices")
+def device_costs() -> dict:
+    """What the heat pump (or other smart load), the EV charger and the rest of the house
+    cost to run: today, and for every month and year with readings."""
+    if (
+        _devices_cache["value"] is not None
+        and time.monotonic() - _devices_cache["at"] < DEVICES_CACHE_SECONDS
+    ):
+        return _devices_cache["value"]
+
+    zone = local_timezone()
+    now = datetime.now(UTC)
+    result: dict = {"has_data": False, "smart_load_label": settings().smart_load_label}
+    firsts = [database().first_time(name) for name in (devices.LOAD, devices.IMPORT)]
+    if all(firsts):
+        start = max(firsts).astimezone(zone)
+        samples = counter_samples(devices.COUNTERS, start - timedelta(days=1), HALF_HOURLY, now)
+        counters = {name: Counter(series, HALF_HOURLY_GAP) for name, series in samples.items()}
+        days = devices.daily(counters, start, now, zone, schedule(), settings().ev_on_smart_load)
+        today_local = now.astimezone(zone).date()
+        if days:
+            result = {
+                **result,
+                "has_data": True,
+                "from": min(days),
+                "heat_pump": bool(counters[devices.CIRCUIT]),
+                "ev_charger": bool(counters[devices.EV]),
+                "today": devices.total([days[today_local]]) if today_local in days else None,
+                **devices.by_month_and_year(days),
+            }
+    _devices_cache.update(at=time.monotonic(), value=result)
+    return result
 
 
 # --- Performance and battery sizing --------------------------------------------------------------
@@ -718,9 +862,41 @@ async def read_bill(request: Request) -> dict:
     if len(body) > MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=413, detail="That file is too large (20 MB at most)")
     try:
-        return await asyncio.to_thread(billreader.read_pdf, body)
+        result = await asyncio.to_thread(billreader.read_pdf, body)
     except billreader.BillError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    result["tariff_check"] = billcheck.check(
+        result["kind"],
+        result["found"]["first_day"],
+        [rate["p_per_kwh"] for rate in result["rates"]],
+        result["standing_charge_p_per_day"],
+        result["vat_percent"],
+        schedule(),
+    )
+    return result
+
+
+class RatesIn(BaseModel):
+    """The rates read off a bill, sent back to be compared with the tracker's again."""
+
+    kind: str = Field(pattern="^(import|export)$")
+    first_day: date
+    rates: list[Annotated[float, Field(ge=0, le=500)]] = Field(default=[], max_length=20)
+    standing_charge_p_per_day: float | None = Field(default=None, ge=0, le=1000)
+    vat_percent: float | None = Field(default=None, ge=0, le=100)
+
+
+@app.post("/api/bills/tariff-check")
+def check_bill_rates(body: RatesIn) -> dict:
+    """Compare a bill's rates with the tracker's for the same dates (after a correction, say)."""
+    return billcheck.check(
+        body.kind,
+        body.first_day,
+        body.rates,
+        body.standing_charge_p_per_day,
+        body.vat_percent,
+        schedule(),
+    )
 
 
 @app.delete("/api/bills/{row_id}")
@@ -892,6 +1068,9 @@ class PaybackIn(BaseModel):
     panel_ageing_percent: float = Field(default=0, ge=0, le=5)
     battery_ageing_percent: float = Field(default=0, ge=0, le=10)
     price_change_percent: float = Field(default=0, ge=-10, le=20)
+    # Whether extra income (grid event payments) is assumed to carry on at the same rate.
+    # Either way it counts towards what has been saved so far.
+    project_extra_income: bool = True
 
 
 def payback_settings() -> dict | None:
@@ -964,12 +1143,16 @@ def payback_figures() -> dict:
     savings = {day: otherwise[day] - paid[day] for day in paid}
     # Extra income (grid event payments and the like) counts towards paying the system off.
     extra = 0.0
+    extra_by_day: dict[date, float] = {}
     for entry in database().income_rows():
         day = date.fromisoformat(entry["day"])
         if entry["amount_gbp"] and day in savings:
             savings[day] += entry["amount_gbp"]
+            extra_by_day[day] = extra_by_day.get(day, 0.0) + entry["amount_gbp"]
             extra += entry["amount_gbp"]
     result["extra_income_gbp"] = round(extra, 2)
+    carry_on = settings_.get("project_extra_income", True)
+    result["extra_income_projected"] = carry_on
     # The panels' share of the saving, where solar generation has been recorded.
     solar = None
     if counters[SOLAR_COUNTER]:
@@ -991,6 +1174,7 @@ def payback_figures() -> dict:
         settings_.get("panel_ageing_percent", 0) / 100,
         settings_.get("battery_ageing_percent", 0) / 100,
         settings_.get("price_change_percent", 0) / 100,
+        None if carry_on else extra_by_day,
     )
 
     _roi_cache.update(at=time.monotonic(), value=result)
@@ -1009,12 +1193,14 @@ def octopus_products() -> dict:
     """Octopus Energy import tariffs on sale now, and the regions prices are published for."""
     try:
         with lookup_client() as client:
-            products = lookup.list_products(client)
+            products, half_hourly = lookup.product_lists(client)
     except lookup.PriceLookupError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     return {
         "regions": [{"code": code, "name": name} for code, name in lookup.REGIONS.items()],
         "products": products,
+        # Tariffs whose price changes every half hour: followed day by day, not typed in.
+        "half_hourly": half_hourly,
     }
 
 

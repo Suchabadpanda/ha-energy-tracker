@@ -18,7 +18,7 @@ import pytest  # noqa: E402
 def empty_database():
     """Start every test from an empty database, so none depends on another or on the time
     of day it happens to run."""
-    from energy_tracker import api, collector
+    from energy_tracker import api, collector, live, prices
 
     database = api.database()
     with closing(sqlite3.connect(database.path)) as conn, conn:
@@ -28,9 +28,13 @@ def empty_database():
             "comparison_tariffs",
             "extra_income",
             "bills",
+            "slot_prices",
             "meta",
         ):
             conn.execute(f"DELETE FROM {table}")  # noqa: S608 - fixed table names
     api.clear_caches()
     collector.missing.clear()
+    prices.forget()
+    prices.status.clear()
+    live.values.clear()
     yield

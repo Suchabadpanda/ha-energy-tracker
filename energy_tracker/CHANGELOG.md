@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.16.0
+
+- Live tiles: "Right now" and "Where it's going" follow Home Assistant as the sensors
+  change, instead of waiting for the next stored reading. Nothing extra is stored.
+- Tariff rates: any number of time windows (up to six) with their own prices, not just one
+  cheap period.
+- Half-hourly tariffs: a tariff can follow Octopus Agile's published prices, for your own
+  rates and for tariffs you compare against.
+- Compare tariffs: a "With charging moved" column shows each tariff with battery and car
+  charging moved to its cheapest times.
+- Running costs by device: what the heat pump, the EV charger and the rest of the house
+  cost, by month and year.
+- Bill check: rates read from a bill PDF are compared with the tracker's, and a
+  correction is offered where they differ.
+- Payback: a switch for whether extra income is assumed to carry on in the projection.
+
 ## 0.15.0
 
 - Folded sections and folded bill years are now saved with the app instead of in the

@@ -29,22 +29,27 @@ def cost_between(
     bands: dict[tuple[str, float], float] = {}
     import_pence = export_pence = day_rate_pence = 0.0
     import_kwh = export_kwh = 0.0
+    published_kwh = published_pence = 0.0  # import priced at published half-hourly prices
 
     for piece_start, piece_end in half_hour_slots(start, end):
         local = piece_start.astimezone(timezone)
         tariff = schedule.on(local.date())
-        band = tariff.band_at(local)
-
         imported = imports.between(piece_start, piece_end)
         exported = exports.between(piece_start, piece_end)
-        key = (band.label, band.p_per_kwh)
-        bands[key] = bands.get(key, 0.0) + imported
+        published = tariff.published_price(piece_start)
+        if published is not None:
+            price = published
+            published_kwh += imported
+            published_pence += imported * published
+        else:
+            band = tariff.band_at(local)
+            price = band.p_per_kwh * tariff.vat_multiplier
+            key = (band.label, band.p_per_kwh)
+            bands[key] = bands.get(key, 0.0) + imported
         import_kwh += imported
         export_kwh += exported
-        import_pence += imported * band.p_per_kwh * tariff.vat_multiplier
-        day_rate_pence += (
-            imported * max(b.p_per_kwh for b in tariff.import_bands) * tariff.vat_multiplier
-        )
+        import_pence += imported * price
+        day_rate_pence += imported * tariff.day_rate(local)
         export_pence += exported * tariff.export_p_per_kwh
 
     # A period that ends exactly at midnight does not include the day that starts then.
@@ -74,7 +79,22 @@ def cost_between(
             # The price is as entered (before VAT); the cost figures above include VAT.
             {"label": label, "p_per_kwh": rate, "kwh": round(kwh, 3)}
             for (label, rate), kwh in sorted(bands.items())
-        ],
+        ]
+        + (
+            [
+                {
+                    "label": "Half-hourly prices",
+                    # The average paid per unit, which already includes VAT.
+                    "p_per_kwh": round(published_pence / published_kwh, 2)
+                    if published_kwh
+                    else None,
+                    "kwh": round(published_kwh, 3),
+                    "average": True,
+                }
+            ]
+            if schedule.on(last_day).dynamic or published_kwh
+            else []
+        ),
     }
 
 

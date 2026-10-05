@@ -115,7 +115,7 @@ def rows(
             for piece_start, piece_end in half_hour_slots(begin, upto):
                 local = piece_start.astimezone(timezone)
                 tariff = schedule.on(local.date())
-                rate = tariff.band_at(local).p_per_kwh * tariff.vat_multiplier
+                rate = tariff.import_price(local)
                 import_pence += imports.between(piece_start, piece_end) * rate
                 export_pence += exports.between(piece_start, piece_end) * tariff.export_p_per_kwh
             row["import_cost_gbp"] = round(import_pence / 100, 4)

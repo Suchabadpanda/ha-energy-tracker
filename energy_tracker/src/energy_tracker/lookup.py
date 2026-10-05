@@ -46,8 +46,7 @@ def _get(client: httpx.Client, url: str, **params: object) -> dict:
         raise PriceLookupError(f"Could not reach Octopus Energy's price list ({exc})") from exc
 
 
-def list_products(client: httpx.Client) -> list[dict]:
-    """Import tariffs on sale now that have the same prices every day."""
+def _all_products(client: httpx.Client) -> list[dict]:
     products: list[dict] = []
     url: str | None = f"{BASE_URL}/products/"
     params: dict = {"brand": "OCTOPUS_ENERGY", "is_business": "false"}
@@ -57,16 +56,66 @@ def list_products(client: httpx.Client) -> list[dict]:
         url, params = page.get("next"), {}
         if not url:
             break
-    usable = [
-        {"code": p["code"], "name": p.get("full_name") or p["code"]}
-        for p in products
-        if p.get("direction") == "IMPORT"
-        and not p.get("is_prepay")
-        and not p.get("is_tracker")
-        # Agile prices change every half hour of every day: no fixed daily pattern to use.
-        and not p["code"].startswith("AGILE")
-    ]
-    return sorted(usable, key=lambda p: p["name"])
+    return [p for p in products if p.get("direction") == "IMPORT" and not p.get("is_prepay")]
+
+
+def _named(products: list[dict]) -> list[dict]:
+    named = [{"code": p["code"], "name": p.get("full_name") or p["code"]} for p in products]
+    return sorted(named, key=lambda p: p["name"])
+
+
+def product_lists(client: httpx.Client) -> tuple[list[dict], list[dict]]:
+    """Import tariffs on sale now: those with the same prices every day, and those whose
+    price changes every half hour (Agile)."""
+    products = _all_products(client)
+    half_hourly = [p for p in products if p["code"].startswith("AGILE")]
+    # Agile has no fixed daily pattern, and a tracker's price changes daily: neither can be
+    # typed in as a set of time windows.
+    fixed = [p for p in products if p not in half_hourly and not p.get("is_tracker")]
+    return _named(fixed), _named(half_hourly)
+
+
+def list_products(client: httpx.Client) -> list[dict]:
+    """Import tariffs on sale now that have the same prices every day."""
+    return product_lists(client)[0]
+
+
+def fetch_slot_prices(
+    client: httpx.Client, product: str, region: str, start: datetime, end: datetime
+) -> list[tuple[int, float]]:
+    """Every half hour's price between two moments, as (start in seconds since 1970, pence
+    per kWh including VAT)."""
+    if region not in REGIONS:
+        raise PriceLookupError("Choose a region")
+    stamp = "%Y-%m-%dT%H:%MZ"
+    url: str | None = (
+        f"{BASE_URL}/products/{product}/electricity-tariffs/"
+        f"E-1R-{product}-{region}/standard-unit-rates/"
+    )
+    params: dict = {
+        "period_from": start.astimezone(UTC).strftime(stamp),
+        "period_to": end.astimezone(UTC).strftime(stamp),
+        "page_size": 1500,
+    }
+    rates: list[dict] = []
+    for _ in range(400):  # 1,500 half hours a page: far more than ten years
+        page = _get(client, url, **params)
+        rates += page.get("results", [])
+        url, params = page.get("next"), {}
+        if not url:
+            break
+    preferred = [r for r in rates if r.get("payment_method") in (None, "DIRECT_DEBIT")] or rates
+    first, last = int(start.timestamp()), int(end.timestamp())
+    prices: dict[int, float] = {}
+    for rate in preferred:
+        begins = int(_moment(rate["valid_from"]).timestamp())
+        finish = _moment(rate.get("valid_to"))
+        ends = int(finish.timestamp()) if finish else last
+        slot = -(-max(begins, first) // 1800) * 1800  # the next half hour boundary
+        while slot < min(ends, last):
+            prices[slot] = round(float(rate["value_inc_vat"]), 4)
+            slot += 1800
+    return sorted(prices.items())
 
 
 def _moment(text: str | None) -> datetime | None:

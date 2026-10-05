@@ -33,6 +33,14 @@ SCHEMA = """
         import_bands              TEXT NOT NULL
     );
 
+    -- Published half-hourly prices (pence per kWh including VAT), by where they came from.
+    CREATE TABLE IF NOT EXISTS slot_prices (
+        source TEXT    NOT NULL,
+        time   INTEGER NOT NULL,
+        price  REAL    NOT NULL,
+        PRIMARY KEY (source, time)
+    ) WITHOUT ROWID;
+
     CREATE TABLE IF NOT EXISTS comparison_tariffs (
         id                        INTEGER PRIMARY KEY,
         name                      TEXT NOT NULL,
@@ -88,6 +96,11 @@ class Database:
             # WAL lets the dashboard read while the collector writes.
             conn.execute("PRAGMA journal_mode = WAL")
             conn.executescript(SCHEMA)
+            # Added in 0.16: tariffs that follow published half-hourly prices.
+            for table in ("tariff_periods", "comparison_tariffs"):
+                columns = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+                if "dynamic" not in columns:
+                    conn.execute(f"ALTER TABLE {table} ADD COLUMN dynamic TEXT NOT NULL DEFAULT ''")
             conn.commit()
 
     def _connect(self) -> sqlite3.Connection:
@@ -247,7 +260,8 @@ class Database:
         with closing(self._connect()) as conn, conn:
             conn.execute(
                 "INSERT OR REPLACE INTO tariff_periods (effective_from, name, export_p_per_kwh, "
-                "standing_charge_p_per_day, vat_percent, import_bands) VALUES (?, ?, ?, ?, ?, ?)",
+                "standing_charge_p_per_day, vat_percent, import_bands, dynamic) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (
                     row["effective_from"].isoformat(),
                     row["name"],
@@ -255,6 +269,7 @@ class Database:
                     row["standing_charge_p_per_day"],
                     row["vat_percent"],
                     json.dumps(row["import_bands"]),
+                    row.get("dynamic") or "",
                 ),
             )
 
@@ -265,6 +280,40 @@ class Database:
                 "DELETE FROM tariff_periods WHERE effective_from = ?", (effective_from.isoformat(),)
             )
             return conn.total_changes > before
+
+    # --- published half-hourly prices --------------------------------------------------------
+
+    def save_slot_prices(self, source: str, rows: Iterable[tuple[int, float]]) -> int:
+        """Store prices, replacing any already held for the same half hours."""
+        data = [(source, int(time), float(price)) for time, price in rows]
+        with closing(self._connect()) as conn, conn:
+            conn.executemany("INSERT OR REPLACE INTO slot_prices VALUES (?, ?, ?)", data)
+        return len(data)
+
+    def slot_prices(self, source: str) -> dict[int, float]:
+        with closing(self._connect()) as conn:
+            rows = conn.execute(
+                "SELECT time, price FROM slot_prices WHERE source = ?", (source,)
+            ).fetchall()
+        return dict(rows)
+
+    def slot_price_range(self, source: str) -> tuple[int | None, int | None]:
+        """The first and last half hour held for a source."""
+        with closing(self._connect()) as conn:
+            row = conn.execute(
+                "SELECT min(time), max(time) FROM slot_prices WHERE source = ?", (source,)
+            ).fetchone()
+        return row[0], row[1]
+
+    def delete_slot_prices_except(self, sources: Iterable[str]) -> int:
+        """Drop prices no tariff uses any more."""
+        keep = list(sources)
+        marks = ",".join("?" * len(keep))
+        with closing(self._connect()) as conn, conn:
+            return conn.execute(
+                f"DELETE FROM slot_prices WHERE source NOT IN ({marks})",  # noqa: S608
+                keep,
+            ).rowcount
 
     # --- small settings ---------------------------------------------------------------------
 
@@ -297,19 +346,22 @@ class Database:
             row["standing_charge_p_per_day"],
             row["vat_percent"],
             json.dumps(row["import_bands"]),
+            row.get("dynamic") or "",
         )
         with closing(self._connect()) as conn, conn:
             if row_id is not None:
                 cursor = conn.execute(
                     "UPDATE comparison_tariffs SET name = ?, export_p_per_kwh = ?, "
-                    "standing_charge_p_per_day = ?, vat_percent = ?, import_bands = ? WHERE id = ?",
+                    "standing_charge_p_per_day = ?, vat_percent = ?, import_bands = ?, "
+                    "dynamic = ? WHERE id = ?",
                     (*values, row_id),
                 )
                 if cursor.rowcount:
                     return row_id
             cursor = conn.execute(
                 "INSERT INTO comparison_tariffs (name, export_p_per_kwh, "
-                "standing_charge_p_per_day, vat_percent, import_bands) VALUES (?, ?, ?, ?, ?)",
+                "standing_charge_p_per_day, vat_percent, import_bands, dynamic) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
                 values,
             )
             return cursor.lastrowid

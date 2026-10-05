@@ -30,6 +30,10 @@ The figures shown are made-up example data.
 
 ![Yearly and monthly cost tables and the tariff rates list](docs/images/costs.png)
 
+**Running costs by device**
+
+![Table of energy and cost for the heat pump, EV charger and rest of the house, by month and year](docs/images/devices.png)
+
 **History for any day, week, month or year**
 
 ![Bar chart of a month's solar, use, import and export by day, with totals above](docs/images/history.png)
@@ -56,12 +60,15 @@ The figures shown are made-up example data.
 
 **Comparing tariffs on your real usage**
 
-![Table comparing what the same usage would cost on other tariffs](docs/images/compare.png)
+![Table comparing what the same usage would cost on other tariffs, as it happened and with charging moved](docs/images/compare.png)
 
 ## What it shows
 
-- **Right now**: solar, house load, grid, battery power and battery charge level.
+- **Right now**: solar, house load, grid, battery power and battery charge level, following
+  Home Assistant live.
 - **Where it's going**: smart load (such as a heat pump), EV charger and the rest of the house, where those are fitted.
+- **Running costs by device**: what the smart load, the EV charger and the rest of the house
+  cost to run, by month and year.
 - **Today**: energy generated, used, imported and exported, and use by device.
 - **Cost today and by month**: import cost, export credit, standing charge and VAT, with
   buttons to step back through earlier months.
@@ -77,15 +84,18 @@ The figures shown are made-up example data.
 - **Monthly summary**: a month on one page, against the month before and a year earlier.
 - **Bill check**: your bill's figures beside what the tracker measured for the same dates.
   It can read them from an E.ON Next or Octopus Energy bill PDF, without the file leaving
-  your device. Bills are grouped by year, with totals for each year and overall.
+  your device. Bills are grouped by year, with totals for each year and overall. If a bill's
+  rates differ from yours, it offers to correct them.
 - **Extra income**: payments on top of your tariff, typed in or recorded automatically from
   Axle Energy export events.
 - **Payback**: what the system has saved against its cost, with an estimated break-even date
   and a chart of progress.
 - **Compare tariffs**: replay your real usage on other tariffs, typed in or looked up from
-  Octopus Energy's published prices, or test a price change on your own tariff.
+  Octopus Energy's published prices, or test a price change on your own tariff. A second
+  figure shows each tariff with battery and car charging moved to its cheapest times.
 - **Tariff rates**: editable on the page. Each set of rates has a start date, so a price
-  change only affects days from that date onward.
+  change only affects days from that date onward. A day can have several time windows with
+  their own prices, or follow Octopus Agile's half-hourly prices.
 - **Older history**: imports hourly history from Home Assistant, plus an export from the
   mySigen app for the time before Home Assistant has any. See
   [how to get an hourly export from Sigen AI](energy_tracker/DOCS.md#getting-an-hourly-export-from-sigen-ai).
@@ -172,7 +182,9 @@ energy_tracker/
 
 | Address | Returns |
 |---|---|
-| `GET /api/latest` | Most recent value of every metric |
+| `GET /api/latest` | Most recent stored value of every metric |
+| `GET /api/live` | Newest value of each power sensor, straight from Home Assistant |
+| `GET /api/devices` | Running cost by device, by month and year |
 | `GET /api/series?metric=…&hours=24` | Averaged history for charts |
 | `GET /api/today` | Today's energy by device and cost so far |
 | `GET /api/month?month=YYYY-MM` | Cost of a calendar month |
@@ -184,8 +196,8 @@ energy_tracker/
 
 - Costs are estimates from the inverter's counters, not your supplier's meter. Expect small
   differences from your bill.
-- One import tariff with a single cheap window per day (or a flat rate). Tariffs with
-  several windows or half-hourly prices are not supported yet.
+- Half-hourly prices can only be followed for Octopus Energy's Agile tariffs, the one
+  price list an app can read without an account.
 - The history import reads Sigenergy exports only.
 - Runs on 64-bit ARM and x86 machines (aarch64, amd64).
 

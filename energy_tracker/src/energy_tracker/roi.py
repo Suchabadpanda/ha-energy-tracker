@@ -38,7 +38,7 @@ def daily_costs(
         if day not in pence:
             pence[day] = tariff.standing_charge_p_per_day * tariff.vat_multiplier
         imported = imports.between(piece_start, piece_end)
-        pence[day] += imported * tariff.band_at(local).p_per_kwh * tariff.vat_multiplier
+        pence[day] += imported * tariff.import_price(local)
         if exports is not None:
             pence[day] -= exports.between(piece_start, piece_end) * tariff.export_p_per_kwh
     return {day: value / 100 for day, value in pence.items()}
@@ -68,7 +68,7 @@ def daily_solar_value(
         buying = import_prices.on(day)
         pence[day] = (
             pence.get(day, 0.0)
-            + used * buying.band_at(local).p_per_kwh * buying.vat_multiplier
+            + used * buying.import_price(local)
             + (generated - used) * export_prices.on(day).export_p_per_kwh
         )
     return {day: value / 100 for day, value in pence.items()}
@@ -115,8 +115,13 @@ def payback(
     panel_ageing: float = 0.0,
     battery_ageing: float = 0.0,
     price_change: float = 0.0,
+    one_off: dict[date, float] | None = None,
 ) -> dict:
     """Cumulative savings so far, and a projection to the day they equal the system's cost.
+
+    `one_off` is the part of each day's saving that should not be assumed to carry on
+    (extra income the user has chosen to leave out of the projection). It counts in full
+    towards what has been saved, but not towards the rate savings are projected at.
 
     `savings` is pounds saved on each day with readings. Days between the install date and
     the first reading are filled in at the average, and reported separately.
@@ -128,7 +133,8 @@ def payback(
     days = sorted(savings)
     if not days:
         return {"has_data": False}
-    values = [savings[d] for d in days]
+    # What can be expected to carry on: each day's saving less anything one-off.
+    values = [savings[d] - (one_off or {}).get(d, 0.0) for d in days]
     average = sum(values) / len(values)
     # Without a solar figure nothing can be told apart, so all of it counts as "battery"
     # and panel ageing has nothing to act on.

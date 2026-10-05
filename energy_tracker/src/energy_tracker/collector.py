@@ -12,7 +12,7 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 
-from . import backfill, income
+from . import backfill, income, live
 from .config import Metric, Settings
 from .db import Database
 from .normalise import normalise
@@ -112,6 +112,7 @@ def run(settings: Settings, db: Database, metrics: list[Metric], stop: threading
                 if rows:
                     db.insert_readings(rows)
                     last_stored = now
+                    live.note_rows(rows, metrics)
                 log.debug("Stored %d of %d readings", len(rows), len(metrics))
 
                 # Note any grid event the Axle sensor is showing, and measure finished ones.

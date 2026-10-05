@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import date
 
+from . import prices
 from .config import BUNDLED_TARIFF_FILE
 from .db import Database
 from .tariff import Schedule, Tariff, build_tariff, load_tariff
@@ -16,6 +17,7 @@ def _row(tariff: Tariff) -> dict:
         "export_p_per_kwh": tariff.export_p_per_kwh,
         "standing_charge_p_per_day": tariff.standing_charge_p_per_day,
         "vat_percent": tariff.vat_percent,
+        "dynamic": tariff.dynamic,
         "import_bands": [
             {"start": b.start, "end": b.end, "p_per_kwh": b.p_per_kwh} for b in tariff.import_bands
         ],
@@ -28,7 +30,7 @@ def load_periods(db: Database) -> list[Tariff]:
     if not rows:
         db.save_tariff_row(_row(load_tariff(BUNDLED_TARIFF_FILE)))
         rows = db.tariff_rows()
-    return [build_tariff(**row) for row in rows]
+    return [build_tariff(**row, slot_prices=prices.for_row(db, row)) for row in rows]
 
 
 def load_schedule(db: Database) -> Schedule:

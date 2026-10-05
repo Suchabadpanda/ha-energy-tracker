@@ -45,18 +45,19 @@ def daily(
                 "dear_kwh": 0.0,
                 "dear_pence": 0.0,
                 # The cheapest import price that day, with VAT: what extra charging would cost.
-                "cheap_p": min(b.p_per_kwh for b in tariff.import_bands) * tariff.vat_multiplier,
-                "flat": len({b.p_per_kwh for b in tariff.import_bands}) == 1,
+                "cheap_p": tariff.cheap_rate(local),
+                "flat": not tariff.dynamic and len({b.p_per_kwh for b in tariff.import_bands}) == 1,
             },
         )
         for name in COUNTERS:
             if counters.get(name):
                 day[name] += counters[name].between(piece_start, piece_end)
-        band = tariff.band_at(local)
-        if counters.get(IMPORT) and band.p_per_kwh * tariff.vat_multiplier > day["cheap_p"]:
+        price = tariff.import_price(local)
+        # A hair's allowance, so a price equal to the cheap rate is not counted as dear.
+        if counters.get(IMPORT) and price > day["cheap_p"] + 1e-9:
             imported = counters[IMPORT].between(piece_start, piece_end)
             day["dear_kwh"] += imported
-            day["dear_pence"] += imported * band.p_per_kwh * tariff.vat_multiplier
+            day["dear_pence"] += imported * price
     return days
 
 

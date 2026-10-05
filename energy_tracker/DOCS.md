@@ -67,6 +67,18 @@ With neither, the "Today by device" section and the breakdown chart are left out
 Power sensors may be in W or kW and energy sensors in Wh, kWh or MWh; they are converted.
 Grid power must be positive when importing, and battery power positive when charging.
 
+## Live tiles
+
+**Right now** and **Where it's going** follow Home Assistant directly: when a power sensor
+or the battery level changes, the tile shows it within a couple of seconds. The status at
+the top of the page reads **Live** while this is working. How quickly a figure moves is
+then set by how often the Sigenergy integration itself updates its sensors.
+
+These live values are only shown, not stored. Everything else on the page (charts, energy
+totals, costs) still comes from the readings stored every `poll_seconds`. If the live
+connection drops, for example while Home Assistant restarts, the tiles carry on from the
+stored readings and reconnect on their own.
+
 ## Costs
 
 - Costs come from the inverter's lifetime import and export counters, split into half-hour
@@ -74,10 +86,46 @@ Grid power must be positive when importing, and battery power positive when char
   your bill.
 - Enter prices before VAT and set the VAT percentage, or enter prices including VAT and
   set VAT to 0. VAT is added to import and the standing charge, not to export.
-- One cheap window per day (or a flat rate) is supported. Prices are shown in pounds and
-  pence.
 - "Saved by off-peak" is what the same import would have cost at the dearest rate, minus
-  what it did cost.
+  what it did cost. On half-hourly prices it is measured against each day's average price.
+
+### Time windows
+
+Under **Tariff rates**, give a **standard rate**, then **Add a time window** for each
+period of the day with a different price: one for a single cheap period, or up to six for
+tariffs with several. A window may run past midnight (23:30 until 05:30). With no windows,
+the standard rate applies all day.
+
+### Half-hourly prices (Octopus Agile)
+
+For a tariff whose price changes every half hour, choose your region and the tariff under
+**Half-hourly prices**. Each half hour is then charged at the price Octopus Energy
+published for it.
+
+- Published prices already include VAT, so VAT is not added to them. The standing charge
+  is still what you type in.
+- Prices are fetched within a minute of saving, back to when your readings began, and
+  topped up every hour (tomorrow's are published in the afternoon). The **Tariff rates**
+  table shows the dates they are held for, and says if a fetch failed.
+- The rates you type in are still needed: they are used for any half hour with no
+  published price, such as dates before the tariff existed.
+- Only a tariff code and a region letter are sent to Octopus Energy.
+- Performance treats the cheapest four hours of each day as that day's cheap rate.
+
+## Running costs by device
+
+Shown when a smart load or an EV charger is fitted. For today, and for each month and year,
+it gives the energy each device used and its share of the import cost. Click a year to show
+or hide its months.
+
+Each day's import cost is shared out by how much of that day's electricity each device
+used: a heat pump that used 40% of the day's consumption carries 40% of what was paid for
+import that day. This spreads cheap overnight battery charging across whatever the battery
+later powered, without following each unit through the battery. As a result:
+
+- A device run mostly from solar still carries a share of the day's import, and a car
+  charged overnight is costed at the day's average price, not purely the night rate.
+- The standing charge and export income are left out. They belong to the house as a whole.
 
 ## History and downloads
 
@@ -150,9 +198,24 @@ VAT, before any export payment), energy exported and the export payment.
 
 Instead of typing, choose the bill's PDF under **Add a bill** and press **Read bill**. The
 form is filled in with the billing dates, units and amounts found, and a note lists the
-rates, standing charge and VAT quoted on the bill, which is a handy check on what you have
-entered under **Tariff rates**. Nothing is saved until you press **Save bill**, so check
-the figures against the bill first.
+rates, standing charge and VAT quoted on the bill. Nothing is saved until you press **Save
+bill**, so check the figures against the bill first.
+
+### Correcting your rates from a bill
+
+The rates on each bill read are compared with the rates the tracker holds for the bill's
+first day. Where they differ, a box lists each difference (cheap rate, day rate, standing
+charge, VAT, or export rate) with two buttons:
+
+- **Correct the rates in use**: replaces the wrong figures in the set of rates that covers
+  the bill. Use this when the rates were typed in wrongly.
+- **Start new rates on** the bill's first day: adds a new set of rates from that date and
+  leaves earlier days alone. Use this when the price really changed.
+
+Nothing changes until you press one, and every cost on the page is then worked out again.
+Rates are only matched up when the bill and the tracker show the same number of import
+rates; otherwise the box says so and the rates are left for you to edit. A bill says
+nothing about time windows, so those are never changed.
 
 - The PDF is read on your own device. It is not stored and not sent anywhere.
 - It works on PDFs downloaded from the supplier, which contain real text. A scan or a
@@ -205,6 +268,9 @@ How it is worked out:
   carried forward and the estimate is marked **rough**; it firms up as readings build.
 - Time between the install date and the first reading is filled in at the average, and the
   amount is stated under the chart.
+- **Extra income** always counts towards what has been saved. Under **System cost and
+  settings**, untick **Assume extra income carries on** to leave it out of the yearly
+  figure and the projection: sensible if the payments are occasional or may stop.
 
 ### Optional yearly assumptions
 
@@ -261,17 +327,29 @@ tariffs, over the last 30 days, 90 days, 12 months or everything stored.
 - **Look up Octopus Energy prices**: choose your region and a tariff, then **Fill in
   prices**. The form is filled with today's published prices including VAT, with VAT to
   add set to 0. Check the export rate (it is left as your own), then save.
+- **Half-hourly prices (Octopus Agile)**: choose your region and the tariff under "Or
+  follow half-hourly prices". Each half hour is priced at what was published for it; the
+  rates typed in cover any half hour without a published price.
+
+Two costs are shown for each tariff:
+
+- **Net cost** replays your usage exactly as it happened. A tariff whose cheap window
+  differs from yours looks dearer here than it would be in practice, because your battery
+  and car were charging to suit your current window.
+- **With charging moved** also moves the import that went into the battery and the car to
+  the tariff's cheapest half hours of the same day, no faster than they have actually
+  charged. Everything else stays where it was. It is a best case: it does not check that
+  the battery would last until its next charge, so a tariff whose cheap hours fall late in
+  the day may do a little worse. It needs the battery charge counter (and the EV charger's,
+  if there is one); without them the column shows a dash.
 
 Things to know:
 
-- Your usage is replayed exactly as it happened. A tariff whose cheap window differs from
-  yours will look dearer than it would be in practice, because your battery and car were
-  charging to suit your current window.
 - Looked-up prices are today's. They are not updated afterwards, and earlier months are
   priced at today's rates.
-- The lookup covers Octopus Energy only, and leaves out tariffs whose prices change every
-  half hour (Agile) or track the wholesale price. Other suppliers do not publish a price
-  list that an app can read.
+- The lookup covers Octopus Energy only, and "Fill in prices" leaves out tariffs that
+  track the wholesale price. Other suppliers do not publish a price list that an app can
+  read.
 - The price list is only contacted when you open the form or press **Fill in prices**. A
   region letter and tariff code are sent; nothing else.
 

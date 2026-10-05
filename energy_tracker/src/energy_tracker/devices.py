@@ -1,0 +1,89 @@
+"""What each device cost to run: the heat pump (or other smart load), the EV charger and
+the rest of the house.
+
+Each day's import cost is shared out by how much of the day's electricity each device used.
+A device that used 40% of the day's consumption carries 40% of what was paid for import
+that day. This counts cheap overnight charging of the battery towards whatever it later
+powered, without having to follow every unit through the battery. The standing charge and
+export income belong to the house as a whole and are left out.
+"""
+
+from __future__ import annotations
+
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
+
+from .tariff import Schedule
+from .usage import Counter, half_hour_slots
+
+LOAD = "load_energy_total"
+CIRCUIT = "smart_load_energy_total"
+EV = "ev_charger_energy_total"
+IMPORT = "import_energy_total"
+COUNTERS = [LOAD, CIRCUIT, EV, IMPORT]
+PARTS = ("heat_pump", "ev_charger", "rest")
+
+
+def daily(
+    counters: dict[str, Counter],
+    start: datetime,
+    end: datetime,
+    timezone: ZoneInfo,
+    schedule: Schedule,
+    ev_on_smart_load: bool = True,
+) -> dict[date, dict]:
+    """Energy and share of the import cost for each device, for each local day."""
+    load, circuit, ev, imports = (counters.get(name) for name in COUNTERS)
+    raw: dict[date, dict] = {}
+    for piece_start, piece_end in half_hour_slots(start, end):
+        local = piece_start.astimezone(timezone)
+        day = raw.setdefault(local.date(), {"load": 0.0, "circuit": 0.0, "ev": 0.0, "pence": 0.0})
+        day["load"] += load.between(piece_start, piece_end)
+        if circuit:
+            day["circuit"] += circuit.between(piece_start, piece_end)
+        if ev:
+            day["ev"] += ev.between(piece_start, piece_end)
+        imported = imports.between(piece_start, piece_end)
+        day["pence"] += imported * schedule.on(local.date()).import_price(local)
+
+    days: dict[date, dict] = {}
+    for when, day in raw.items():
+        ev_kwh = day["ev"]
+        smart_kwh = day["circuit"]
+        if circuit and ev and ev_on_smart_load:
+            ev_kwh = min(ev_kwh, smart_kwh)  # the charger cannot use more than its circuit
+            smart_kwh -= ev_kwh
+        total = max(day["load"], smart_kwh + ev_kwh)
+        rest_kwh = total - smart_kwh - ev_kwh
+        row: dict = {"total_kwh": total, "import_gbp": day["pence"] / 100}
+        for name, kwh, present in (
+            ("heat_pump", smart_kwh, bool(circuit)),
+            ("ev_charger", ev_kwh, bool(ev)),
+            ("rest", rest_kwh, True),
+        ):
+            if present:
+                row[f"{name}_kwh"] = kwh
+                row[f"{name}_gbp"] = day["pence"] / 100 * kwh / total if total > 0 else 0.0
+        days[when] = row
+    return days
+
+
+def total(rows: list[dict]) -> dict:
+    """Add days together."""
+    keys = sorted({key for row in rows for key in row})
+    return {
+        key: round(sum(row.get(key, 0.0) for row in rows), 2 if key.endswith("gbp") else 1)
+        for key in keys
+    }
+
+
+def by_month_and_year(days: dict[date, dict]) -> dict:
+    months: dict[str, list[dict]] = {}
+    years: dict[str, list[dict]] = {}
+    for day, row in sorted(days.items()):
+        months.setdefault(f"{day:%Y-%m}", []).append(row)
+        years.setdefault(f"{day:%Y}", []).append(row)
+    return {
+        "months": [{"month": k, "days": len(v), **total(v)} for k, v in months.items()],
+        "years": [{"year": k, "days": len(v), **total(v)} for k, v in years.items()],
+    }

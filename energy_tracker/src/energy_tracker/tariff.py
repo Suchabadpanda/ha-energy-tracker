@@ -7,12 +7,16 @@ takes effect. A day is always priced at the rates that applied on that day.
 from __future__ import annotations
 
 import tomllib
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
 
 MINUTES_PER_DAY = 24 * 60
 BEGINNING = date(2000, 1, 1)  # "from the start": used for the first period
+SLOT_SECONDS = 30 * 60
+# How many of a day's cheapest half hours count as its "cheap rate" on half-hourly prices.
+CHEAP_SLOTS = 8
 
 
 def _minutes(clock: str) -> int:
@@ -51,10 +55,58 @@ class Tariff:
     # Added to the import price and the standing charge (not to export). Use 0 if the
     # prices entered already include VAT.
     vat_percent: float = 0.0
+    # For a tariff whose price changes every half hour: where its prices are published, as
+    # "PRODUCT/REGION" (Octopus Energy). The bands above are then only a fallback.
+    dynamic: str = ""
+    # Published prices in pence per kWh including VAT, by the start of each half hour
+    # (seconds since 1970).
+    slot_prices: Mapping[int, float] | None = field(default=None, compare=False, repr=False)
+    _by_day: dict = field(default_factory=dict, compare=False, repr=False)
 
     @property
     def vat_multiplier(self) -> float:
         return 1 + self.vat_percent / 100
+
+    def published_price(self, when: datetime) -> float | None:
+        """The published price for the half hour containing `when`, if there is one."""
+        if not self.slot_prices:
+            return None
+        return self.slot_prices.get(int(when.timestamp()) // SLOT_SECONDS * SLOT_SECONDS)
+
+    def import_price(self, local_time: datetime) -> float:
+        """Pence per kWh to import at this moment, including VAT."""
+        published = self.published_price(local_time)
+        if published is not None:
+            return published
+        return self.band_at(local_time).p_per_kwh * self.vat_multiplier
+
+    def _published_on(self, local_time: datetime) -> list[float]:
+        """That local day's published prices, cheapest first (empty if there are none)."""
+        if not self.slot_prices:
+            return []
+        day = local_time.date()
+        if day not in self._by_day:
+            midnight = local_time.replace(hour=0, minute=0, second=0, microsecond=0)
+            first = int(midnight.timestamp())
+            found = (self.slot_prices.get(first + n * SLOT_SECONDS) for n in range(48))
+            self._by_day[day] = sorted(p for p in found if p is not None)
+        return self._by_day[day]
+
+    def day_rate(self, local_time: datetime) -> float:
+        """The price, with VAT, that import is measured against to show what cheaper times
+        saved: the dearest band, or the day's average on half-hourly prices."""
+        prices = self._published_on(local_time)
+        if prices:
+            return sum(prices) / len(prices)
+        return max(b.p_per_kwh for b in self.import_bands) * self.vat_multiplier
+
+    def cheap_rate(self, local_time: datetime) -> float:
+        """The cheapest price that day, with VAT: what charging a battery would cost."""
+        prices = self._published_on(local_time)
+        if prices:
+            cheapest = prices[:CHEAP_SLOTS]
+            return sum(cheapest) / len(cheapest)
+        return min(b.p_per_kwh for b in self.import_bands) * self.vat_multiplier
 
     def band_at(self, local_time: datetime) -> Band:
         minute_of_day = local_time.hour * 60 + local_time.minute
@@ -71,6 +123,9 @@ def build_tariff(
     standing_charge_p_per_day: float,
     effective_from: date = BEGINNING,
     vat_percent: float = 0.0,
+    dynamic: str = "",
+    slot_prices: Mapping[int, float] | None = None,
+    **_: object,
 ) -> Tariff:
     """Create a Tariff, checking that the import bands cover the whole day exactly once."""
     bands = tuple(sorted((Band(**item) for item in import_bands), key=lambda b: _minutes(b.start)))
@@ -98,6 +153,8 @@ def build_tariff(
         standing_charge_p_per_day=float(standing_charge_p_per_day),
         effective_from=effective_from,
         vat_percent=float(vat_percent),
+        dynamic=dynamic or "",
+        slot_prices=slot_prices if dynamic else None,
     )
 
 
