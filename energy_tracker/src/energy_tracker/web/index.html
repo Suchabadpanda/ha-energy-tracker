@@ -245,6 +245,43 @@
     </div>
   </div>
 
+  <div class="filters">
+    <h2 id="performance-heading">Performance</h2>
+    <select id="performance-period" aria-label="Period to measure over">
+      <option value="30d">Last 30 days</option>
+      <option value="90d">Last 90 days</option>
+      <option value="12m" selected>Last 12 months</option>
+      <option value="all">Everything stored</option>
+    </select>
+  </div>
+  <div class="tiles" id="performance-tiles"></div>
+  <div class="chart" style="margin-top: 12px;">
+    <div class="hint" id="performance-hint" style="margin-top: 0;"></div>
+    <details id="performance-months">
+      <summary>Month by month</summary>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Month</th><th class="num">Solar</th><th class="num">Used</th>
+            <th class="num">Imported</th><th class="num">Exported</th><th class="num">Self-sufficiency</th>
+            <th class="num">Solar used at home</th><th class="num">Dear-rate import</th></tr></thead>
+          <tbody id="performance-rows"></tbody>
+        </table>
+      </div>
+    </details>
+    <div id="sizing-box" hidden>
+      <div class="group-title" style="margin-top: 16px;">Would a bigger battery pay?</div>
+      <div class="hint" id="sizing-summary"></div>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Extra capacity</th><th class="num">Dear-rate import avoided a year</th>
+            <th class="num">Saving a year</th></tr></thead>
+          <tbody id="sizing-rows"></tbody>
+        </table>
+      </div>
+      <div class="hint" id="sizing-hint"></div>
+    </div>
+  </div>
+
   <h2 id="years-heading">Costs by year</h2>
   <div class="chart">
     <div class="table-scroll">
@@ -1144,6 +1181,87 @@ document.getElementById("history-next").addEventListener("click", () => { histor
 document.getElementById("history-now").addEventListener("click", () => { historyDay = null; refreshHistory(); });
 document.getElementById("history-interval").addEventListener("change", () => historyData && updateDownload(historyData));
 
+// --- Performance and battery sizing --------------------------------------------------------
+
+const percent = value => value === null || value === undefined ? "–" : value.toFixed(0) + "%";
+
+function renderPerformance(data) {
+  const tiles = document.getElementById("performance-tiles");
+  const hint = document.getElementById("performance-hint");
+  const sizingBox = document.getElementById("sizing-box");
+  if (!data.has_data) {
+    tiles.replaceChildren();
+    sizingBox.hidden = true;
+    hint.textContent = "Needs at least one full day of readings.";
+    document.getElementById("performance-rows").replaceChildren();
+    return;
+  }
+  const o = data.overall;
+  const reading = (value, note) => value === null || value === undefined ? undefined : { value, note };
+  renderTiles(tiles, [
+    { metric: "self", label: "Self-sufficiency", unit: "%", digits: 0 },
+    { metric: "solar", label: "Solar used at home", unit: "%", digits: 0 },
+    { metric: "battery", label: "Battery efficiency", unit: "%", digits: 0 },
+    { metric: "dear", label: "Dear-rate import", unit: "kWh", digits: 0 },
+  ], {
+    self: reading(o.self_sufficiency_percent, "of what you used did not come from the grid"),
+    solar: reading(o.solar_used_percent, "of what the panels made, the rest exported"),
+    battery: reading(o.battery_efficiency_percent, "out for every 100 in"),
+    dear: reading(o.dear_import_kwh, percent(o.dear_import_percent) + " of import, costing " + money(o.dear_import_gbp)),
+  });
+  hint.textContent = "Measured over " + data.days + " full days from " +
+    new Date(data.from + "T00:00").toLocaleDateString([], { dateStyle: "medium" }) + ". " +
+    (o.battery_efficiency_percent === null ? "Battery efficiency needs at least two weeks of battery readings. " : "") +
+    "Dear-rate import is anything bought outside your cheapest rate.";
+
+  const cell = (text, numeric = true) => {
+    const td = document.createElement("td");
+    td.textContent = text;
+    if (numeric) td.className = "num";
+    return td;
+  };
+  document.getElementById("performance-rows").replaceChildren(...[...data.monthly].reverse().map(m => {
+    const tr = document.createElement("tr");
+    const month = new Date(m.month + "-01T00:00").toLocaleDateString([], { month: "short", year: "numeric" });
+    tr.append(cell(month, false), cell(kwh(m.solar_kwh)), cell(kwh(m.consumption_kwh)), cell(kwh(m.import_kwh)),
+              cell(kwh(m.export_kwh)), cell(percent(m.self_sufficiency_percent)), cell(percent(m.solar_used_percent)),
+              cell(kwh(m.dear_import_kwh)));
+    return tr;
+  }));
+
+  const s = data.sizing;
+  sizingBox.hidden = !s;
+  if (!s) return;
+  document.getElementById("sizing-summary").textContent = s.short_days
+    ? "On " + s.short_days + " of " + s.days + " days (" + s.short_percent + "%) the battery did not last until the " +
+      "cheap rate, and electricity was bought at a dearer rate: about " + s.dear_kwh_year + " kWh a year, costing " +
+      pounds(s.dear_gbp_year) + ". The worst day was " + s.worst_day_kwh + " kWh."
+    : "The battery lasted until the cheap rate on every one of the " + s.days + " days measured. More capacity " +
+      "would not have saved anything.";
+  document.getElementById("sizing-rows").replaceChildren(...s.options.map(option => {
+    const tr = document.createElement("tr");
+    tr.append(cell("+" + option.extra_kwh + " kWh", false), cell(option.avoided_kwh_year.toFixed(0) + " kWh"),
+              cell(pounds(option.saved_gbp_year)));
+    return tr;
+  }));
+  document.getElementById("sizing-hint").textContent =
+    "Replays the days measured as if the extra capacity had been charged at your cheapest rate and used before " +
+    "buying at a dearer one, allowing for " + s.efficiency_percent + "% battery efficiency. " +
+    (s.rough ? "Scaled up from under a year of readings, so the yearly figures are rough. " : "") +
+    "It is an upper limit: it assumes the inverter can deliver the extra power when needed (a car charging fast " +
+    "can outrun it) and that there is time to fill the extra capacity in the cheap window. Divide the price of " +
+    "the extra battery by the yearly saving for the years it would take to pay back.";
+}
+
+async function refreshPerformance() {
+  try {
+    renderPerformance(await getJson("api/performance?period=" + document.getElementById("performance-period").value));
+  } catch (err) {
+    document.getElementById("performance-hint").textContent = "Could not work out performance (" + err.message + ").";
+  }
+}
+document.getElementById("performance-period").addEventListener("change", refreshPerformance);
+
 // --- Extra income --------------------------------------------------------------------------
 
 const incomeForm = document.getElementById("income-form");
@@ -1818,6 +1936,8 @@ refreshPayback();
 setInterval(refreshPayback, 30 * 60 * 1000);
 refreshIncome();
 setInterval(refreshIncome, 5 * 60 * 1000);
+refreshPerformance();
+setInterval(refreshPerformance, 30 * 60 * 1000);
 refreshHistory();
 // Keep the latest period current; a past period being browsed is left alone.
 setInterval(() => { if (!historyDay) refreshHistory(); }, 5 * 60 * 1000);

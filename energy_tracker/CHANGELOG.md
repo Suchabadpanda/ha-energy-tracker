@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.10.0
+
+- Performance: self-sufficiency, solar used at home, battery efficiency and dear-rate import,
+  overall and month by month.
+- Would a bigger battery pay? Replays your days to estimate what extra capacity would save.
+
 ## 0.9.2
 
 - Tidier settings forms: fields line up in every row, and the payback settings are grouped

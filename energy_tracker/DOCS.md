@@ -77,6 +77,35 @@ its half hours are an even split.
 If the download does not start inside the Home Assistant phone app, open Home Assistant in
 a web browser instead.
 
+## Performance
+
+**Performance** measures how the system is doing over the last 30 days, 90 days, 12 months
+or everything stored, in whole days up to yesterday.
+
+- **Self-sufficiency**: the share of what you used that did not come from the grid.
+  Charging the battery from the grid counts as grid use, so a household that runs mostly
+  on cheap-rate battery power will show a low figure here and a low dear-rate import.
+- **Solar used at home**: the share of what the panels made that was not exported.
+- **Battery efficiency**: energy out for every 100 in. Shown once there are two weeks of
+  battery readings, because over a short time the battery may just be fuller or emptier
+  than it started.
+- **Dear-rate import**: everything bought outside your cheapest rate, with its cost.
+
+**Month by month** gives the same figures for each month.
+
+### Would a bigger battery pay?
+
+On a tariff with a cheap rate, this replays the days measured and asks what would have
+happened with more capacity. Energy bought at a dearer rate on a day is what the battery
+failed to cover. Extra capacity, charged at the cheap rate, would have avoided up to its
+own size of that, once a day. The saving is the dearer price avoided, less the cheap price
+of charging, allowing for the battery's measured efficiency (90% until that is known).
+
+It is an upper limit. It assumes the inverter can supply the extra power when it is wanted,
+that the cheap window is long enough to fill the extra capacity, and that your usage stays
+the same. With under a year of readings the yearly figures are scaled up and marked rough.
+To judge a purchase, divide the price of the extra battery by the yearly saving.
+
 ## Payback
 
 **Payback** shows how much the system has saved, how much of its cost that covers, and an

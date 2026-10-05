@@ -24,7 +24,16 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 
-from . import collector, history, import_history, income, lookup, roi, tariff_store
+from . import (
+    collector,
+    history,
+    import_history,
+    income,
+    lookup,
+    performance,
+    roi,
+    tariff_store,
+)
 from .config import Metric, Settings, load_metrics, load_settings
 from .costs import combine
 from .db import Database
@@ -78,7 +87,7 @@ async def lifespan(_: FastAPI):
         await asyncio.to_thread(thread.join, 10)
 
 
-app = FastAPI(title="Energy Tracker", version="0.9.2", lifespan=lifespan)
+app = FastAPI(title="Energy Tracker", version="0.10.0", lifespan=lifespan)
 
 
 @app.middleware("http")
@@ -275,12 +284,14 @@ def month(
 
 _years_cache: dict = {"at": 0.0, "value": None}
 _roi_cache: dict = {"at": 0.0, "value": None}
+_performance_cache: dict = {}
 
 
 def clear_caches() -> None:
     """Forget worked-out costs, after anything they depend on has changed."""
     _years_cache["value"] = None
     _roi_cache["value"] = None
+    _performance_cache.clear()
 
 
 YEARS_CACHE_SECONDS = 300
@@ -476,6 +487,52 @@ def delete_comparison(row_id: int) -> dict:
         raise HTTPException(status_code=404, detail="That tariff is not in the list")
     _roi_cache["value"] = None
     return {"removed": row_id}
+
+
+# --- Performance and battery sizing --------------------------------------------------------------
+
+
+@app.get("/api/performance")
+def system_performance(
+    period: Annotated[str, Query(pattern="^(30d|90d|12m|all)$")] = "12m",
+) -> dict:
+    """Self-sufficiency, battery efficiency and what a bigger battery would have saved."""
+    cached = _performance_cache.get(period)
+    if cached and time.monotonic() - cached[0] < ROI_CACHE_SECONDS:
+        return cached[1]
+
+    zone = local_timezone()
+    now = datetime.now(UTC)
+    first = first_cost_reading()
+    result: dict = {"period": period, "has_data": False}
+    end = local_midnight(now, zone)  # whole days only, up to the end of yesterday
+    if first is not None:
+        span = COMPARE_PERIODS[period]
+        start = max(end - timedelta(days=span) if span else first, first).astimezone(zone)
+        if start.time() != clock(0):  # begin on the first whole day
+            start = datetime.combine(start.date() + timedelta(days=1), clock(0), zone)
+        if start < end:
+            samples = counter_samples(
+                performance.COUNTERS, start - timedelta(days=1), HALF_HOURLY, end
+            )
+            counters = {name: Counter(series, HALF_HOURLY_GAP) for name, series in samples.items()}
+            days = performance.daily(counters, start, end, zone, schedule())
+            overall = performance.figures(list(days.values()))
+            measured = overall["battery_efficiency_percent"]
+            result = {
+                "period": period,
+                "has_data": True,
+                "from": start.date(),
+                "days": len(days),
+                "overall": overall,
+                "monthly": performance.monthly(days),
+                # Use the battery's own measured efficiency when it is believable.
+                "sizing": performance.sizing(
+                    days, measured / 100 if measured and 60 <= measured <= 100 else None
+                ),
+            }
+    _performance_cache[period] = (time.monotonic(), result)
+    return result
 
 
 # --- Extra income ----------------------------------------------------------------------------
