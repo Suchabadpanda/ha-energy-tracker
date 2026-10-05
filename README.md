@@ -22,7 +22,7 @@ The figures shown are made-up example data.
 
 ![Live tiles, today's energy by device, and cost today and this month](docs/images/overview.png)
 
-**Power flows and consumption breakdown, here over the last 7 days**
+**Power metrics and consumption breakdown, here over the last 7 days**
 
 ![Charts of solar, consumption, grid and battery, and consumption split by device](docs/images/charts.png)
 

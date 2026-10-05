@@ -1,6 +1,6 @@
 [project]
 name = "energy-tracker"
-version = "0.16.1"
+version = "0.16.2"
 description = "Collects home energy readings from Home Assistant and serves a LAN dashboard"
 requires-python = ">=3.12"
 dependencies = [

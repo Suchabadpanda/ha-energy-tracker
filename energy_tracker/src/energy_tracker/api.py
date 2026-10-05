@@ -114,7 +114,7 @@ async def lifespan(_: FastAPI):
         await asyncio.to_thread(thread.join, 10)
 
 
-app = FastAPI(title="Energy Tracker", version="0.16.1", lifespan=lifespan)
+app = FastAPI(title="Energy Tracker", version="0.16.2", lifespan=lifespan)
 
 
 @app.middleware("http")

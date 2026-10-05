@@ -18,7 +18,7 @@ it stays folded the next time you open it, on any device or browser.
   "Imported" to hide it, and again to bring it back; hide all but one to study a single
   series. The chart rescales to what is left. At least one series always stays on, and the
   choice is remembered on that device. This works on every chart.
-- **Power charts**: the selector beside **Power flows** sets the period for both power
+- **Power charts**: the selector beside **Power Metrics Chart** sets the period for both power
   charts: the last 24 hours, today (midnight to midnight), the last 7 days or the last 30
   days. Longer periods are averaged into wider steps, so short spikes are smoothed out, and
   they refresh every five minutes instead of every ten seconds. They can only go back as

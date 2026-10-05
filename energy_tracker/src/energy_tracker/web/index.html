@@ -8,12 +8,15 @@
   :root {
     --bg: #f5f6f4; --card: #ffffff; --text: #1c2321; --muted: #66706c; --line: #dfe3e0;
     --solar: #c98a00; --load: #3b6fb6; --grid: #b0483c; --battery: #2f8f6b;
+    /* The power metrics chart uses the colours of Sigenergy's own app. */
+    --flow-solar: #c9a800; --flow-load: #9a3fe6; --flow-grid: #6c6cf0; --flow-battery: #10b3ac;
     --heatpump: #b8592a; --ev: #7a52b3; --house: #3b6fb6;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #151917; --card: #1e2421; --text: #e8ece9; --muted: #98a39e; --line: #2e3632;
       --solar: #f0b429; --load: #7aa7e6; --grid: #e5796c; --battery: #5cc79e;
+      --flow-solar: #f2e24a; --flow-load: #b266f5; --flow-grid: #8f8ffb; --flow-battery: #4ee6e0;
       --heatpump: #e8956a; --ev: #b79be8; --house: #7aa7e6;
     }
   }
@@ -229,7 +232,7 @@
   <div class="hint" id="month-hint"></div>
 
   <div class="filters">
-    <h2 id="flows-heading">Power flows (kW)</h2>
+    <h2 id="flows-heading">Power Metrics Chart (kW)</h2>
     <select id="power-range" aria-label="Period shown by the power charts">
       <option value="24h" selected>Last 24 hours</option>
       <option value="today">Today</option>
@@ -239,7 +242,7 @@
   </div>
   <div class="chart">
     <div class="empty" id="flows-empty" hidden>No history yet. The chart fills in as readings are collected.</div>
-    <svg id="flows" viewBox="0 0 900 300" role="img" aria-label="Power flows over the last 24 hours"></svg>
+    <svg id="flows" viewBox="0 0 900 300" role="img" aria-label="Power metrics over the chosen period"></svg>
     <div class="legend" id="flows-legend"></div>
   </div>
 
@@ -731,10 +734,10 @@ const COST_TILES = [
   { metric: "saved_gbp", label: "Saved by off-peak", prefix: "£" },
 ];
 const FLOW_LINES = [
-  { metric: "pv_power", color: "var(--solar)", label: "Solar" },
-  { metric: "load_power", color: "var(--load)", label: "Total consumption" },
-  { metric: "grid_power", color: "var(--grid)", label: "Grid (above zero = import, below = export)" },
-  { metric: "battery_power", color: "var(--battery)", label: "Battery (above zero = discharging, below = charging)", flip: true },
+  { metric: "pv_power", color: "var(--flow-solar)", label: "Solar" },
+  { metric: "load_power", color: "var(--flow-load)", label: "Total consumption" },
+  { metric: "grid_power", color: "var(--flow-grid)", label: "Grid (above zero = import, below = export)" },
+  { metric: "battery_power", color: "var(--flow-battery)", label: "Battery (above zero = discharging, below = charging)", flip: true },
 ];
 
 // --- Choosing what a chart shows ------------------------------------------------------------

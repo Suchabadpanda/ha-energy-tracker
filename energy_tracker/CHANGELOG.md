@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.16.2
+
+- The power flows chart is now the Power Metrics Chart, in the colours of Sigenergy's app.
+
 ## 0.16.1
 
 - Power flows chart: the battery is drawn with discharging above zero and charging below,
