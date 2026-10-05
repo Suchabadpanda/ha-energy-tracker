@@ -22,7 +22,7 @@ The figures shown are made-up example data.
 
 ![Live tiles, today's energy by device, and cost today and this month](docs/images/overview.png)
 
-**Power flows and consumption breakdown over the last 24 hours**
+**Power flows and consumption breakdown, here over the last 7 days**
 
 ![Charts of solar, consumption, grid and battery, and consumption split by device](docs/images/charts.png)
 
@@ -68,15 +68,16 @@ The figures shown are made-up example data.
 - **Costs by year**: every month and year side by side.
 - **Saved by off-peak**: what the same import would have cost at the day rate, minus what
   it did cost.
-- **Charts**: power flows and consumption breakdown for the last 24 hours. Breaks in the
-  data are shown as breaks, not joined up.
+- **Charts**: power flows and consumption breakdown for the last 24 hours, today, the last
+  7 days or the last 30 days. Click a legend entry on any chart to show or hide that
+  series. Breaks in the data are shown as breaks, not joined up.
 - **History**: any past day, week, month or year as a chart and table, with a CSV download.
 - **Performance**: self-sufficiency, battery efficiency and dear-rate import, with an estimate
   of what a bigger battery would save.
 - **Monthly summary**: a month on one page, against the month before and a year earlier.
 - **Bill check**: your bill's figures beside what the tracker measured for the same dates.
   It can read them from an E.ON Next or Octopus Energy bill PDF, without the file leaving
-  your device.
+  your device. Bills are grouped by year, with totals for each year and overall.
 - **Extra income**: payments on top of your tariff, typed in or recorded automatically from
   Axle Energy export events.
 - **Payback**: what the system has saved against its cost, with an estimated break-even date
