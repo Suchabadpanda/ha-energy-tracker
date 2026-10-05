@@ -19,6 +19,8 @@
 | `backfill_days` | 10 | How far back to fill gaps from Home Assistant's history. 0 turns it off. |
 | `detail_days` | 30 | How long full-detail readings are kept before being thinned to one per 5 minutes. |
 | `keep_years` | 10 | Readings older than this are deleted, a day's worth each day, so storage stops growing. Costs for months older than this are no longer shown. |
+| `currency_symbol` | £ | The symbol shown before amounts of money. |
+| `currency_minor` | p | The small unit prices are entered in, such as p or c. One hundred of them make one of the main unit. |
 | `axle_event_entity` | sensor.axle_event | Only for the manual Axle set-up with a differently named sensor. The HACS "Axle VPP" integration is found without it. |
 | `smart_load_label` | Heat pump | What is connected to the gateway's smart load port 1, as named on the dashboard. |
 | `ev_on_smart_load` | true | On if the EV charger is wired through smart load port 1. Its use is then taken off the smart load figure. Turn off if the charger is on its own circuit. |
@@ -69,7 +71,7 @@ including anything brought in by **Import older history**.
 
 **Download CSV** saves the period being viewed as a spreadsheet file, with one row per half
 hour, hour, day or month. Columns are energy in kWh for every counter collected, plus import
-cost and export credit in pounds at the rates in force at the time. The standing charge is
+cost and export credit in your currency at the rates in force at the time. The standing charge is
 not included in the rows. Times are local, and an empty cell means there was no reading.
 Half-hourly rows are only as detailed as the stored readings: imported history is hourly, so
 its half hours are an even split.
@@ -105,6 +107,35 @@ It is an upper limit. It assumes the inverter can supply the extra power when it
 that the cheap window is long enough to fill the extra capacity, and that your usage stays
 the same. With under a year of readings the yearly figures are scaled up and marked rough.
 To judge a purchase, divide the price of the extra battery by the yearly saving.
+
+## Monthly summary
+
+**Monthly summary** puts a calendar month on one page: what it cost and why, how that
+compares with the month before and the same month last year, what the panels made, how
+much was bought outside the cheapest rate, any extra income, and the dearest, cheapest,
+sunniest and busiest days. It opens on last month; use the arrows for others.
+
+**Print** prints the summary on its own, or saves it as a PDF if you choose that as the
+printer. It counts whole days up to yesterday, so the current month is a part month and is
+marked as such, as is any month the readings only partly cover.
+
+## Bill check
+
+**Bill check** compares a bill or statement with what the tracker measured over the same
+dates. Open **Add a bill** and enter the first and last day billed, and whichever figures
+you have: energy imported, the amount charged (energy and standing charge together, with
+VAT, before any export payment), energy exported and the export payment.
+
+Each bill is shown above the tracker's own figures and the difference between them. The
+inverter and the supplier's meter are separate instruments, so a percent or two is normal.
+A larger gap in kWh points at the metering; a gap in money with matching kWh points at the
+rates entered under **Tariff rates**, or at an estimated reading on the bill.
+
+## Other currencies
+
+Set `currency_symbol` and `currency_minor` on the Configuration tab to show amounts in
+another currency. Prices are always entered in the small unit per kWh, with one hundred to
+the main unit. The Octopus Energy price lookup is for Great Britain only.
 
 ## Payback
 

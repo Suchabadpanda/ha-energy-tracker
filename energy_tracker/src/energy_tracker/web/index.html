@@ -106,6 +106,11 @@
              border-radius: 8px; color: var(--text); background: var(--card); font-size: 14px; }
   .export-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 12px; font-size: 13px;
                 color: var(--muted); }
+  td.sub { color: var(--muted); font-size: 13px; }
+  @media print {
+    body.print-summary main > *:not(#summary-section), body.print-summary .nav { display: none !important; }
+    body.print-summary { background: #fff; }
+  }
   #roi-message { grid-column: 1 / -1; font-size: 13px; min-height: 18px; color: var(--muted); }
   #roi-message.error { color: var(--grid); }
   .legend span.dashed::before { background: repeating-linear-gradient(90deg, var(--c) 0 5px, transparent 5px 8px); }
@@ -282,6 +287,31 @@
     </div>
   </div>
 
+  <div id="summary-section">
+    <div class="filters">
+      <h2 id="summary-heading">Monthly summary</h2>
+      <div class="nav">
+        <button type="button" id="summary-prev" aria-label="Earlier month">&lsaquo;</button>
+        <button type="button" id="summary-next" aria-label="Later month">&rsaquo;</button>
+        <button type="button" id="summary-last">Last month</button>
+        <button type="button" id="summary-print">Print</button>
+      </div>
+      <span class="period-label" id="summary-label"></span>
+    </div>
+    <div class="chart">
+      <div class="empty" id="summary-empty" hidden>No readings for this month.</div>
+      <ul id="summary-points" style="margin: 0 0 12px; padding-left: 20px; line-height: 1.7; font-size: 14px;"></ul>
+      <div class="table-scroll">
+        <table id="summary-table">
+          <thead><tr><th></th><th class="num" id="summary-col-this"></th><th class="num">Month before</th>
+            <th class="num">Same month last year</th></tr></thead>
+          <tbody id="summary-rows"></tbody>
+        </table>
+      </div>
+      <div class="hint" id="summary-hint"></div>
+    </div>
+  </div>
+
   <h2 id="years-heading">Costs by year</h2>
   <div class="chart">
     <div class="table-scroll">
@@ -370,15 +400,49 @@
       <form id="income-form">
         <label>Date <input type="date" name="day" required></label>
         <label>For <input type="text" name="description" maxlength="80" value="Axle export event" required></label>
-        <label>Amount (£) <input type="number" name="amount" min="0" step="0.01" required></label>
+        <label>Amount (<span class="major">£</span>) <input type="number" name="amount" min="0" step="0.01" required></label>
         <div class="actions"><button class="primary" type="submit">Save entry</button></div>
         <div id="income-message" style="grid-column: 1 / -1; font-size: 13px; min-height: 18px; color: var(--muted);"></div>
       </form>
       <form id="axle-form">
-        <label>Axle pays per kWh exported in an event (p)
+        <label>Axle pays per kWh exported in an event (<span class="minor">p</span>)
           <input type="number" name="rate" min="0" max="2000" step="0.1" required></label>
         <div class="actions"><button type="submit">Save rate</button></div>
         <div class="hint" id="axle-status" style="grid-column: 1 / -1; margin: 0;"></div>
+      </form>
+    </details>
+  </div>
+
+  <h2 id="bills-heading">Bill check</h2>
+  <div class="chart">
+    <div class="hint" id="bills-summary" style="margin-top: 0;"></div>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>Bill period</th><th></th><th class="num">Imported</th><th class="num">Charged</th>
+          <th class="num">Exported</th><th class="num">Export payment</th><th></th></tr></thead>
+        <tbody id="bills-rows"></tbody>
+      </table>
+    </div>
+    <details id="bills-editor">
+      <summary>Add a bill</summary>
+      <div class="hint">Enter the figures from a bill or statement to compare them with what the
+        tracker measured over the same dates. Fill in whichever you have. "Charged" is the
+        electricity charge including the standing charge and VAT, before any export payment.
+        The inverter and the supplier's meter are separate instruments, so a difference of a
+        percent or two is normal.</div>
+      <form id="bills-form">
+        <div class="field-row">
+          <label>First day billed <input type="date" name="first_day" required></label>
+          <label>Last day billed <input type="date" name="last_day" required></label>
+        </div>
+        <div class="field-row">
+          <label>Imported (kWh) <input type="number" name="import_kwh" min="0" step="0.001"></label>
+          <label>Charged (<span class="major">£</span>) <input type="number" name="charge_gbp" min="0" step="0.01"></label>
+          <label>Exported (kWh) <input type="number" name="export_kwh" min="0" step="0.001"></label>
+          <label>Export payment (<span class="major">£</span>) <input type="number" name="export_gbp" min="0" step="0.01"></label>
+        </div>
+        <div class="actions"><button class="primary" type="submit">Save bill</button></div>
+        <div id="bills-message" style="grid-column: 1 / -1; font-size: 13px; min-height: 18px; color: var(--muted);"></div>
       </form>
     </details>
   </div>
@@ -415,13 +479,13 @@
           <button type="button" id="compare-lookup">Fill in prices</button>
         </div>
         <label>Tariff name <input type="text" name="name" maxlength="120" required></label>
-        <label>Export (p per kWh)
+        <label>Export (<span class="minor">p</span> per kWh)
           <input type="number" name="export" min="0" step="0.0001" required></label>
-        <label>Standing charge (p per day)
+        <label>Standing charge (<span class="minor">p</span> per day)
           <input type="number" name="standing" min="0" step="0.0001" required></label>
         <label>VAT to add (%)
           <input type="number" name="vat" min="0" max="100" step="0.1" value="0" required></label>
-        <label>Standard rate (p per kWh)
+        <label>Standard rate (<span class="minor">p</span> per kWh)
           <input type="number" name="other_rate" min="0" step="0.0001" required></label>
         <div class="windows" id="compare-windows"></div>
         <div class="actions">
@@ -453,18 +517,18 @@
       <form id="tariff-form">
         <label>Rates start on <input type="date" name="effective_from" required></label>
         <label>Tariff name <input type="text" name="name" maxlength="80" required></label>
-        <label>Export (p per kWh)
+        <label>Export (<span class="minor">p</span> per kWh)
           <input type="number" name="export" min="0" step="0.001" required></label>
-        <label>Standing charge (p per day)
+        <label>Standing charge (<span class="minor">p</span> per day)
           <input type="number" name="standing" min="0" step="0.001" required></label>
         <label>VAT to add (%)
           <input type="number" name="vat" min="0" max="100" step="0.1" required></label>
         <label class="wide"><input type="checkbox" name="flat"> One import price all day</label>
         <label class="cheap">Cheap rate from <select name="cheap_start"></select></label>
         <label class="cheap">Cheap rate until <select name="cheap_end"></select></label>
-        <label class="cheap">Cheap rate (p per kWh)
+        <label class="cheap">Cheap rate (<span class="minor">p</span> per kWh)
           <input type="number" name="cheap_rate" min="0" step="0.001"></label>
-        <label><span id="other-label">All other times (p per kWh)</span>
+        <label><span id="other-label">All other times</span> (<span class="minor">p</span> per kWh)
           <input type="number" name="other_rate" min="0" step="0.001" required></label>
         <button class="primary" type="submit">Save rates</button>
         <div id="tariff-message"></div>
@@ -505,6 +569,17 @@
 //   rest of house = total consumption - that circuit
 // The sensors update at slightly different moments, so a result can dip below zero for a
 // reading or two when something switches on or off; it is clamped at zero.
+// How money is written: the main symbol and the small unit prices are entered in. Set from
+// the app's options (api/setup) before anything is drawn.
+let CUR = "£", MINOR = "p";
+function applyCurrency(currency) {
+  if (!currency) return;
+  CUR = currency.symbol;
+  MINOR = currency.minor;
+  for (const el of document.querySelectorAll(".major")) el.textContent = CUR;
+  for (const el of document.querySelectorAll(".minor")) el.textContent = MINOR;
+}
+
 // Which optional equipment exists (from api/setup). Tiles for anything missing are left out.
 let setup = { smart_load: true, ev_charger: true, ev_on_smart_load: true,
               smart_load_label: "Heat pump", sigenergy_found: true };
@@ -596,7 +671,7 @@ function renderTiles(el, tiles, latest) {
       const v = reading.value;
       // A negative amount of money reads "-£1.20", not "£-1.20".
       const shown = t.abs || (t.prefix && v < 0) ? Math.abs(v) : v;
-      value.textContent = (t.prefix && v < 0 ? "-" : "") + (t.prefix ?? "") + shown.toFixed(t.digits ?? 2);
+      value.textContent = (t.prefix && v < 0 ? "-" : "") + (t.prefix ? CUR : "") + shown.toFixed(t.digits ?? 2);
       if (t.unit) {
         const unit = document.createElement("small");
         unit.textContent = t.unit;
@@ -746,7 +821,7 @@ const asReadings = (part, notes = {}) => Object.fromEntries(Object.entries(part 
 function renderCost(tilesId, hintId, cost, finished = false) {
   // Under the import tile, show how many kWh fell in each price band.
   const bands = (cost?.import_bands ?? [])
-    .map(b => b.kwh.toFixed(1) + " kWh at " + b.p_per_kwh + "p").join(", ");
+    .map(b => b.kwh.toFixed(1) + " kWh at " + b.p_per_kwh + MINOR).join(", ");
   const days = cost?.standing_charge_days;
   // A month that is over shows its final cost, not a running total.
   const tiles = COST_TILES.map(t => finished && t.metric === "net_gbp" ? { ...t, label: "Net cost" } : t);
@@ -754,7 +829,7 @@ function renderCost(tilesId, hintId, cost, finished = false) {
     import_gbp: bands,
     export_credit_gbp: cost ? cost.export_kwh.toFixed(1) + " kWh" : "",
     standing_charge_gbp: days > 1 ? days + " days" : "",
-    saved_gbp: cost ? "£" + cost.all_day_rate_gbp.toFixed(2) + " if all at the day rate" : "",
+    saved_gbp: cost ? CUR + cost.all_day_rate_gbp.toFixed(2) + " if all at the day rate" : "",
   }));
   document.getElementById(hintId).textContent = cost
     ? [cost.tariff + ".",
@@ -793,7 +868,7 @@ document.getElementById("month-prev").addEventListener("click", () => showMonth(
 document.getElementById("month-next").addEventListener("click", () => showMonth(monthLinks.next));
 document.getElementById("month-current").addEventListener("click", () => showMonth(null));
 
-const money = value => (value < 0 ? "-£" : "£") + Math.abs(value).toFixed(2);  // a credit shows as -£12.97
+const money = value => (value < 0 ? "-" : "") + CUR + Math.abs(value).toFixed(2);  // a credit shows as -£12.97
 
 function renderYears(data) {
   const cell = (text, numeric = true) => {
@@ -889,7 +964,7 @@ function syncFlat() {
   for (const el of form.querySelectorAll(".cheap")) el.hidden = flat;
   form.elements.cheap_rate.required = !flat;
   document.getElementById("other-label").textContent =
-    flat ? "Import (p per kWh)" : "All other times (p per kWh)";
+    flat ? "Import" : "All other times";
 }
 form.elements.flat.addEventListener("change", syncFlat);
 
@@ -949,9 +1024,9 @@ function renderTariffs(data) {
     });
     if (data.periods.length > 1) action("Remove", () => removeTariff(period.effective_from));
     tr.append(from, cell(period.name),
-      cell(period.import_bands.map(b => b.start + "–" + b.end + ": " + b.p_per_kwh + "p").join(", ")
+      cell(period.import_bands.map(b => b.start + "–" + b.end + ": " + b.p_per_kwh + MINOR).join(", ")
            + (period.vat_percent ? " (+" + period.vat_percent + "% VAT)" : "")),
-      cell(period.export_p_per_kwh + "p"), cell(period.standing_charge_p_per_day + "p a day"), actions);
+      cell(period.export_p_per_kwh + MINOR), cell(period.standing_charge_p_per_day + MINOR + " a day"), actions);
     return tr;
   });
   document.getElementById("tariff-rows").replaceChildren(...rows);
@@ -1262,6 +1337,200 @@ async function refreshPerformance() {
 }
 document.getElementById("performance-period").addEventListener("change", refreshPerformance);
 
+// --- Monthly summary -----------------------------------------------------------------------
+
+let summaryMonth = null;   // null means last month
+let summaryLinks = {};
+const dayName = iso => new Date(iso + "T00:00").toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" });
+// "12% less", "£4.10 more": how this month compares with another.
+function change(now, then, format) {
+  if (now === null || now === undefined || then === null || then === undefined) return "";
+  const diff = now - then;
+  if (Math.abs(diff) < 0.005) return "the same";
+  return format(Math.abs(diff)) + (diff > 0 ? " more" : " less");
+}
+
+function renderSummary(data) {
+  summaryLinks = { previous: data.previous, next: data.next };
+  document.getElementById("summary-prev").disabled = !data.previous;
+  document.getElementById("summary-next").disabled = !data.next;
+  document.getElementById("summary-label").textContent = data.month;
+  document.getElementById("summary-col-this").textContent = data.month;
+  const m = data.this, before = data.month_before, lastYear = data.year_before;
+  const points = document.getElementById("summary-points");
+  document.getElementById("summary-empty").hidden = !!m;
+  document.getElementById("summary-table").hidden = !m;
+  if (!m) {
+    points.replaceChildren();
+    document.getElementById("summary-hint").textContent = "";
+    return;
+  }
+  const lines = [];
+  const c = m.cost;
+  lines.push("Electricity cost " + money(c.net_gbp) + " in all: " + money(c.import_gbp) + " for " +
+    c.import_kwh.toFixed(0) + " kWh imported, plus " + money(c.standing_charge_gbp) + " standing charge, less " +
+    money(c.export_credit_gbp) + " for " + c.export_kwh.toFixed(0) + " kWh exported.");
+  if (before) lines.push("That is " + change(c.net_gbp, before.cost.net_gbp, money) + " than the month before" +
+    (lastYear ? ", and " + change(c.net_gbp, lastYear.cost.net_gbp, money) + " than the same month last year." : "."));
+  if (c.saved_gbp > 0) lines.push("Importing at cheaper times saved " + money(c.saved_gbp) +
+    " against paying the day rate for everything.");
+  if (m.solar_kwh !== null) lines.push("The panels made " + kwh(m.solar_kwh) + (m.solar_used_percent !== null
+    ? ", of which " + percent(m.solar_used_percent) + " was used at home." : "."));
+  if (m.self_sufficiency_percent !== null) lines.push(percent(m.self_sufficiency_percent) +
+    " of the " + kwh(m.consumption_kwh) + " used did not come from the grid.");
+  if (m.dear_import_kwh > 0) lines.push(kwh(m.dear_import_kwh) + " was bought outside the cheapest rate, costing " +
+    money(m.dear_import_gbp) + ".");
+  if (m.extra_income_gbp > 0) lines.push("Extra income came to " + money(m.extra_income_gbp) + ".");
+  if (m.dearest_day) lines.push("The dearest day was " + dayName(m.dearest_day.day) + " at " + money(m.dearest_day.value) +
+    (m.cheapest_day ? "; the cheapest was " + dayName(m.cheapest_day.day) + " at " + money(m.cheapest_day.value) + "." : "."));
+  if (m.sunniest_day && m.sunniest_day.value > 0) lines.push("The sunniest day was " + dayName(m.sunniest_day.day) +
+    " with " + kwh(m.sunniest_day.value) + " generated.");
+  if (m.busiest_day) lines.push("The most electricity was used on " + dayName(m.busiest_day.day) + ": " +
+    kwh(m.busiest_day.value) + ".");
+  points.replaceChildren(...lines.map(text => Object.assign(document.createElement("li"), { textContent: text })));
+
+  const cell = (text, numeric = true) => {
+    const td = document.createElement("td");
+    td.textContent = text;
+    if (numeric) td.className = "num";
+    return td;
+  };
+  const cash = v => v === null || v === undefined ? "–" : money(v);
+  const rows = [
+    ["Net cost", x => cash(x.cost.net_gbp)],
+    ["Import cost", x => cash(x.cost.import_gbp)],
+    ["Export credit", x => cash(x.cost.export_credit_gbp)],
+    ["Standing charge", x => cash(x.cost.standing_charge_gbp)],
+    ["Extra income", x => cash(x.extra_income_gbp)],
+    ["Solar generated", x => kwh(x.solar_kwh)],
+    ["Used", x => kwh(x.consumption_kwh)],
+    ["Imported", x => kwh(x.import_kwh)],
+    ["Exported", x => kwh(x.export_kwh)],
+    ["Self-sufficiency", x => percent(x.self_sufficiency_percent)],
+    ["Dear-rate import", x => kwh(x.dear_import_kwh)],
+    ["Days counted", x => String(x.days)],
+  ];
+  document.getElementById("summary-rows").replaceChildren(...rows.map(([label, pick]) => {
+    const tr = document.createElement("tr");
+    tr.append(cell(label, false), ...[m, before, lastYear].map(x => cell(x ? pick(x) : "–")));
+    return tr;
+  }));
+  const partial = [[m, data.month], [before, "The month before"], [lastYear, "The same month last year"]]
+    .filter(([x]) => x && !x.complete).map(([x, name]) => name + " covers " + x.days + " days");
+  document.getElementById("summary-hint").textContent =
+    (partial.length ? partial.join("; ") + ", so compare with care. " : "") +
+    "Whole days up to yesterday. Costs are the tracker's estimate at your tariff rates.";
+}
+
+async function refreshSummary() {
+  try {
+    renderSummary(await getJson("api/summary" + (summaryMonth ? "?month=" + summaryMonth : "")));
+  } catch (err) {
+    document.getElementById("summary-hint").textContent = "Could not load the summary (" + err.message + ").";
+  }
+}
+document.getElementById("summary-prev").addEventListener("click", () => { summaryMonth = summaryLinks.previous; refreshSummary(); });
+document.getElementById("summary-next").addEventListener("click", () => { summaryMonth = summaryLinks.next; refreshSummary(); });
+document.getElementById("summary-last").addEventListener("click", () => { summaryMonth = null; refreshSummary(); });
+document.getElementById("summary-print").addEventListener("click", () => {
+  document.body.classList.add("print-summary");
+  window.print();
+  document.body.classList.remove("print-summary");
+});
+
+// --- Bill check ----------------------------------------------------------------------------
+
+const billsForm = document.getElementById("bills-form");
+let editingBill = null;
+function billsMessage(text, isError = false) {
+  const el = document.getElementById("bills-message");
+  el.textContent = text;
+  el.style.color = isError ? "var(--grid)" : "";
+}
+
+function renderBills(data) {
+  const cell = (text, className) => {
+    const td = document.createElement("td");
+    td.textContent = text;
+    if (className) td.className = className;
+    return td;
+  };
+  const day = iso => new Date(iso + "T00:00").toLocaleDateString([], { dateStyle: "medium" });
+  const energy = v => v === null || v === undefined ? "–" : v.toFixed(1) + " kWh";
+  const cash = v => v === null || v === undefined ? "–" : money(v);
+  const gap = (d, format) => !d ? "" : Math.abs(d.amount) < 0.005 ? "same"
+    : format(Math.abs(d.amount)) + (d.amount > 0 ? " higher" : " lower") + (d.percent === null ? "" : " (" + Math.abs(d.percent) + "%)");
+  document.getElementById("bills-summary").textContent = data.bills.length ? "" : "No bills entered yet.";
+  const rows = [];
+  for (const bill of data.bills) {
+    const t = bill.tracker, d = bill.differences;
+    const actions = document.createElement("td");
+    actions.rowSpan = 3;
+    const action = (label, onClick) => {
+      const button = Object.assign(document.createElement("button"), { className: "link", type: "button", textContent: label });
+      button.style.marginRight = "12px";
+      button.addEventListener("click", onClick);
+      actions.append(button);
+    };
+    action("Edit", () => {
+      editingBill = bill.id;
+      for (const name of ["first_day", "last_day", "import_kwh", "charge_gbp", "export_kwh", "export_gbp"]) {
+        billsForm.elements[name].value = bill[name] ?? "";
+      }
+      document.getElementById("bills-editor").open = true;
+      billsMessage("Editing this bill. Saving replaces it.");
+      billsForm.scrollIntoView({ block: "nearest" });
+    });
+    action("Remove", async () => {
+      if (!confirm("Remove this bill?")) return;
+      try { renderBills(await sendTariff("api/bills/" + bill.id, { method: "DELETE" })); }
+      catch (err) { billsMessage(err.message, true); }
+    });
+    const period = cell(day(bill.first_day) + " to " + day(bill.last_day));
+    period.rowSpan = 3;
+    if (t && (!t.covers_whole_bill || t.estimated_hours > 0)) {
+      const note = Object.assign(document.createElement("div"), { className: "hint", textContent: !t.covers_whole_bill
+        ? "The tracker's readings do not cover all of these dates." : "Includes " + t.estimated_hours + " h without detailed readings." });
+      note.style.margin = "2px 0 0";
+      period.append(note);
+    }
+    const line = (label, values, className, lead = []) => {
+      const tr = document.createElement("tr");
+      tr.append(...lead, cell(label, className), ...values.map(v => cell(v, "num" + (className ? " " + className : ""))));
+      return tr;
+    };
+    const first = line("Bill", [energy(bill.import_kwh), cash(bill.charge_gbp), energy(bill.export_kwh), cash(bill.export_gbp)], "", [period]);
+    first.append(actions);
+    rows.push(first,
+      line("Tracker", t ? [energy(t.import_kwh), cash(t.charge_gbp), energy(t.export_kwh), cash(t.export_gbp)] : ["–", "–", "–", "–"], "sub"),
+      line("Bill is", [gap(d.import_kwh, energy), gap(d.charge_gbp, cash), gap(d.export_kwh, energy), gap(d.export_gbp, cash)], "sub"));
+  }
+  document.getElementById("bills-rows").replaceChildren(...rows);
+}
+
+async function refreshBills() {
+  try { renderBills(await getJson("api/bills")); } catch (err) { billsMessage("Could not load bills (" + err.message + ").", true); }
+}
+billsForm.addEventListener("submit", async event => {
+  event.preventDefault();
+  try {
+    const f = billsForm.elements;
+    const number = name => f[name].value === "" ? null : Number(f[name].value);
+    const data = await sendTariff("api/bills" + (editingBill ? "?id=" + editingBill : ""), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ first_day: f.first_day.value, last_day: f.last_day.value, import_kwh: number("import_kwh"),
+                             charge_gbp: number("charge_gbp"), export_kwh: number("export_kwh"), export_gbp: number("export_gbp") }),
+    });
+    editingBill = null;
+    billsForm.reset();
+    billsMessage("Saved.");
+    renderBills(data);
+  } catch (err) {
+    billsMessage(err.message, true);
+  }
+});
+
 // --- Extra income --------------------------------------------------------------------------
 
 const incomeForm = document.getElementById("income-form");
@@ -1383,7 +1652,7 @@ const roiForm = document.getElementById("roi-form");
 const roiCosts = document.getElementById("roi-costs");
 const longDate = iso => new Date(iso + "T00:00").toLocaleDateString([], { month: "short", year: "numeric" });
 // Large sums read better in whole pounds: £12,400.
-const pounds = value => (value < 0 ? "-£" : "£") + Math.round(Math.abs(value)).toLocaleString();
+const pounds = value => (value < 0 ? "-" : "") + CUR + Math.round(Math.abs(value)).toLocaleString();
 
 function roiMessage(text, isError = false) {
   const el = document.getElementById("roi-message");
@@ -1407,7 +1676,7 @@ function addCost(date = "", description = "", amount = "") {
   const what = field("For ", { type: "text", maxLength: 80, placeholder: "Solar and battery", value: description });
   what.className = "grow";
   row.append(field("Paid on ", { type: "date", required: true, value: date }), what,
-             field("Amount (£) ", { type: "number", min: "0.01", step: "0.01", required: true, value: amount }),
+             field("Amount (" + CUR + ") ", { type: "number", min: "0.01", step: "0.01", required: true, value: amount }),
              remove);
   roiCosts.append(row);
 }
@@ -1462,7 +1731,7 @@ function drawPayback(p, totalCost) {
   const step = [1, 2, 5, 10].map(m => m * power).find(s => s >= raw);
   for (let v = Math.ceil(bottom / step) * step; v <= top; v += step) {
     add("line", { x1: L, x2: W - R, y1: y(v), y2: y(v), class: v === 0 ? "zero" : "gridline" });
-    add("text", { x: L - 8, y: y(v) + 4, "text-anchor": "end", class: "axis" }, "£" + v.toLocaleString());
+    add("text", { x: L - 8, y: y(v) + 4, "text-anchor": "end", class: "axis" }, CUR + v.toLocaleString());
   }
   // A label at each 1 January, thinned so they never crowd.
   const firstYear = new Date(start).getFullYear() + 1, lastYear = new Date(end).getFullYear();
@@ -1622,7 +1891,7 @@ function addWindow(start = 0, end = 360, rate = "") {
   remove.textContent = "Remove";
   remove.addEventListener("click", () => row.remove());
   row.append(field("Different rate from ", times(start)), field("until ", times(end % 1440)),
-             field("Rate (p per kWh) ", price), remove);
+             field("Rate (" + MINOR + " per kWh) ", price), remove);
   windowsBox.append(row);
 }
 
@@ -1668,8 +1937,8 @@ function fillCompareForm(tariff) {
   for (const w of rest.slice(0, MAX_WINDOWS)) addWindow(w.start, w.end, w.rate);
 }
 
-const ratesText = bands => bands.length === 1 ? bands[0].p_per_kwh + "p all day"
-  : bands.map(b => b.start + "–" + b.end + ": " + b.p_per_kwh + "p").join(", ");
+const ratesText = bands => bands.length === 1 ? bands[0].p_per_kwh + MINOR + " all day"
+  : bands.map(b => b.start + "–" + b.end + ": " + b.p_per_kwh + MINOR).join(", ");
 
 function renderCompare(data) {
   const cell = (text, className) => {
@@ -1694,7 +1963,7 @@ function renderCompare(data) {
     detail.style.margin = "2px 0 0";
     detail.textContent = ratesText(candidate.import_bands) +
       (candidate.vat_percent ? " (+" + candidate.vat_percent + "% VAT)" : "") +
-      "; export " + candidate.export_p_per_kwh + "p; " + candidate.standing_charge_p_per_day + "p a day";
+      "; export " + candidate.export_p_per_kwh + MINOR + "; " + candidate.standing_charge_p_per_day + MINOR + " a day";
     name.append(detail);
     const diff = candidate.difference_gbp;
     const against = diff === null ? cell("–")
@@ -1878,7 +2147,7 @@ async function refresh() {
       getJson("api/years").catch(() => null),
       getJson("api/setup").catch(() => null),
     ]);
-    if (found) setup = found;
+    if (found) { setup = found; applyCurrency(found.currency); }
     const anyDevice = setup.smart_load || setup.ev_charger;
     document.getElementById("notice").hidden = setup.sigenergy_found;
     document.getElementById("storage").textContent = setup.database_mb === undefined ? ""
@@ -1927,20 +2196,28 @@ async function refresh() {
   }
 }
 
-refresh();
-setInterval(refresh, 10000);
-// The comparison prices a long period several times over, so it is refreshed far less often.
-refreshCompare();
-setInterval(refreshCompare, 30 * 60 * 1000);
-refreshPayback();
-setInterval(refreshPayback, 30 * 60 * 1000);
-refreshIncome();
-setInterval(refreshIncome, 5 * 60 * 1000);
-refreshPerformance();
-setInterval(refreshPerformance, 30 * 60 * 1000);
-refreshHistory();
-// Keep the latest period current; a past period being browsed is left alone.
-setInterval(() => { if (!historyDay) refreshHistory(); }, 5 * 60 * 1000);
+// Fetch the currency before anything is drawn, so no figure flashes up with the wrong symbol.
+async function start() {
+  try { applyCurrency((await getJson("api/setup")).currency); } catch (err) { /* defaults stand */ }
+  refresh();
+  setInterval(refresh, 10000);
+  // The comparison prices a long period several times over, so it is refreshed far less often.
+  refreshCompare();
+  setInterval(refreshCompare, 30 * 60 * 1000);
+  refreshPayback();
+  setInterval(refreshPayback, 30 * 60 * 1000);
+  refreshIncome();
+  setInterval(refreshIncome, 5 * 60 * 1000);
+  refreshPerformance();
+  setInterval(refreshPerformance, 30 * 60 * 1000);
+  refreshHistory();
+  // Keep the latest period current; a past period being browsed is left alone.
+  setInterval(() => { if (!historyDay) refreshHistory(); }, 5 * 60 * 1000);
+  refreshSummary();
+  setInterval(() => { if (!summaryMonth) refreshSummary(); }, 60 * 60 * 1000);
+  refreshBills();
+}
+start();
 </script>
 </body>
 </html>

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.11.0
+
+- Monthly summary: a month on one page, compared with the month before and a year earlier,
+  with a print button.
+- Bill check: enter a bill's figures to compare them with what the tracker measured.
+- Currency: new `currency_symbol` and `currency_minor` options.
+- CSV money columns are now headed `import_cost` and `export_credit`.
+
 ## 0.10.0
 
 - Performance: self-sufficiency, solar used at home, battery efficiency and dear-rate import,

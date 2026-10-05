@@ -7,7 +7,7 @@ what your electricity has cost on your own tariff.
 > **Compatibility: Sigenergy systems only.** This was built for a Sigenergy solar and
 > battery system and reads the sensors created by the Sigenergy integration for Home
 > Assistant. It will show nothing on other inverters unless you edit the sensor list
-> yourself. Costs are in pounds and pence, with one cheap-rate window per day.
+> yourself. Amounts show in pounds and pence unless you set another currency.
 
 A heat pump (or other device) on the Sigenergy gateway's smart load port and a Tesla Wall
 Connector are picked up automatically if present. Their tiles are left out if not.
@@ -38,6 +38,14 @@ The figures shown are made-up example data.
 
 ![Performance tiles and a table of savings from extra battery capacity](docs/images/performance.png)
 
+**Monthly summary**
+
+![A month summarised in sentences with a comparison table](docs/images/summary.png)
+
+**Bill check**
+
+![A bill's figures beside the tracker's, with the differences](docs/images/bills.png)
+
 **Payback: savings building towards the system's cost**
 
 ![Payback tiles and a chart of savings rising towards the system cost](docs/images/payback.png)
@@ -65,6 +73,8 @@ The figures shown are made-up example data.
 - **History**: any past day, week, month or year as a chart and table, with a CSV download.
 - **Performance**: self-sufficiency, battery efficiency and dear-rate import, with an estimate
   of what a bigger battery would save.
+- **Monthly summary**: a month on one page, against the month before and a year earlier.
+- **Bill check**: your bill's figures beside what the tracker measured for the same dates.
 - **Extra income**: payments on top of your tariff, typed in or recorded automatically from
   Axle Energy export events.
 - **Payback**: what the system has saved against its cost, with an estimated break-even date

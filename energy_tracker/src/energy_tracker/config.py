@@ -80,6 +80,10 @@ class Settings:
     # If set, only this address may connect (Home Assistant's ingress proxy).
     allowed_client: str | None
     port: int
+    # How money is written on the dashboard: the main symbol, and the small unit prices
+    # are entered in (pence, cents).
+    currency_symbol: str = "£"
+    currency_minor: str = "p"
     # Home Assistant sensor showing Axle Energy grid events, if there is one.
     axle_event_entity: str = "sensor.axle_event"
     # What the Sigenergy "smart load 1" port feeds, as shown on the dashboard.
@@ -136,6 +140,8 @@ def load_settings() -> Settings:
             allowed_client="172.30.32.2",
             port=8099,
             smart_load_label=_text(options.get("smart_load_label"), "Heat pump"),
+            currency_symbol=_text(options.get("currency_symbol"), "£")[:4],
+            currency_minor=_text(options.get("currency_minor"), "p")[:4],
             axle_event_entity=str(options.get("axle_event_entity") or "sensor.axle_event").strip(),
             ev_on_smart_load=_flag(options.get("ev_on_smart_load"), True),
         )
@@ -155,6 +161,8 @@ def load_settings() -> Settings:
         allowed_client=env.get("ALLOWED_CLIENT") or None,
         port=_int(env.get("PORT"), 8000, 1, 65535),
         smart_load_label=_text(env.get("SMART_LOAD_LABEL"), "Heat pump"),
+        currency_symbol=_text(env.get("CURRENCY_SYMBOL"), "£")[:4],
+        currency_minor=_text(env.get("CURRENCY_MINOR"), "p")[:4],
         axle_event_entity=(env.get("AXLE_EVENT_ENTITY") or "sensor.axle_event").strip(),
         ev_on_smart_load=_flag(env.get("EV_ON_SMART_LOAD"), True),
     )

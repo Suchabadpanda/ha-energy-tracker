@@ -145,7 +145,8 @@ def to_csv(data: list[dict], timezone: ZoneInfo) -> str:
     ]
     out = io.StringIO()
     writer = csv.writer(out, lineterminator="\r\n")
-    writer.writerow(["start", "end", *columns])
+    # Money columns are in your own currency, so the headings do not name one.
+    writer.writerow(["start", "end", *[c.removesuffix("_gbp") for c in columns]])
     for row in data:
         writer.writerow(
             [

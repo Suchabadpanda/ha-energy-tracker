@@ -66,7 +66,7 @@ def test_rows_give_energy_and_cost_and_leave_gaps_empty():
     assert history.totals(data)["import_kwh"] == pytest.approx(14.0)
 
     lines = history.to_csv(data, LONDON).split("\r\n")
-    assert lines[0] == "start,end,import_kwh,export_kwh,import_cost_gbp,export_credit_gbp"
+    assert lines[0] == "start,end,import_kwh,export_kwh,import_cost,export_credit"
     assert lines[2] == "2026-06-02T01:00+01:00,2026-06-02T02:00+01:00,,,,"
     assert lines[5].startswith("2026-06-02T04:00+01:00,2026-06-02T05:00+01:00,2.0,1.0,0.2,")
 

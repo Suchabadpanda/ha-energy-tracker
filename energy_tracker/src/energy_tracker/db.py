@@ -55,6 +55,16 @@ SCHEMA = """
         hidden      INTEGER NOT NULL DEFAULT 0
     );
 
+    CREATE TABLE IF NOT EXISTS bills (
+        id          INTEGER PRIMARY KEY,
+        first_day   TEXT NOT NULL,
+        last_day    TEXT NOT NULL,
+        import_kwh  REAL,
+        charge_gbp  REAL,
+        export_kwh  REAL,
+        export_gbp  REAL
+    );
+
     CREATE TABLE IF NOT EXISTS meta (
         key   TEXT PRIMARY KEY,
         value TEXT NOT NULL
@@ -391,3 +401,40 @@ class Database:
                 "WHERE id = ? AND amount_gbp IS NULL",
                 (kwh, amount, row_id),
             )
+
+    # --- bills entered for checking -------------------------------------------------------------
+
+    def bill_rows(self) -> list[dict]:
+        with closing(self._connect()) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute("SELECT * FROM bills ORDER BY first_day DESC, id DESC").fetchall()
+        return [dict(row) for row in rows]
+
+    def save_bill(self, row: dict, row_id: int | None = None) -> int:
+        values = (
+            row["first_day"].isoformat(),
+            row["last_day"].isoformat(),
+            row["import_kwh"],
+            row["charge_gbp"],
+            row["export_kwh"],
+            row["export_gbp"],
+        )
+        with closing(self._connect()) as conn, conn:
+            if row_id is not None:
+                cursor = conn.execute(
+                    "UPDATE bills SET first_day = ?, last_day = ?, import_kwh = ?, charge_gbp = ?, "
+                    "export_kwh = ?, export_gbp = ? WHERE id = ?",
+                    (*values, row_id),
+                )
+                if cursor.rowcount:
+                    return row_id
+            cursor = conn.execute(
+                "INSERT INTO bills (first_day, last_day, import_kwh, charge_gbp, export_kwh, "
+                "export_gbp) VALUES (?, ?, ?, ?, ?, ?)",
+                values,
+            )
+            return cursor.lastrowid
+
+    def delete_bill(self, row_id: int) -> bool:
+        with closing(self._connect()) as conn, conn:
+            return conn.execute("DELETE FROM bills WHERE id = ?", (row_id,)).rowcount > 0

@@ -189,3 +189,80 @@ def test_extra_income_is_listed_totalled_and_counts_towards_payback():
     assert client.delete(f"/api/income/{entry}").json()["entries"] == []
     assert client.delete(f"/api/income/{entry}").status_code == 404
     assert client.post("/api/income", json={**body, "amount_gbp": -1}).status_code == 422
+
+
+def test_currency_comes_from_settings(monkeypatch):
+    assert client.get("/api/setup").json()["currency"] == {"symbol": "£", "minor": "p"}
+    monkeypatch.setenv("CURRENCY_SYMBOL", "€")
+    monkeypatch.setenv("CURRENCY_MINOR", "c")
+    settings = load_settings()
+    assert (settings.currency_symbol, settings.currency_minor) == ("€", "c")
+
+
+def test_bill_is_set_beside_the_trackers_own_figures():
+    house_with_payback_set_up()  # 0.5 kW imported round the clock, nothing exported
+    today = datetime.now(api.local_timezone()).date()
+    first, last = today - timedelta(days=8), today - timedelta(days=2)  # seven whole days
+    body = {
+        "first_day": first.isoformat(),
+        "last_day": last.isoformat(),
+        "import_kwh": 90,
+        "charge_gbp": 20,
+    }
+    data = client.post("/api/bills", json=body).json()["bills"][0]
+
+    assert data["tracker"]["import_kwh"] == pytest.approx(84.0, abs=0.6)  # 7 days x 12 kWh
+    assert data["tracker"]["covers_whole_bill"] is True
+    assert data["differences"]["import_kwh"]["amount"] == pytest.approx(6.0, abs=0.6)
+    assert data["differences"]["import_kwh"]["percent"] == pytest.approx(7.1, abs=0.8)
+    assert data["differences"]["charge_gbp"]["amount"] == pytest.approx(
+        20 - data["tracker"]["charge_gbp"]
+    )
+    assert data["differences"]["export_kwh"] is None  # not entered, so not compared
+
+    edited = client.post(f"/api/bills?id={data['id']}", json={**body, "import_kwh": 84}).json()[
+        "bills"
+    ]
+    assert len(edited) == 1 and abs(edited[0]["differences"]["import_kwh"]["amount"]) < 0.6
+    assert client.post("/api/bills", json={**body, "last_day": "2020-01-01"}).status_code == 422
+    assert (
+        client.post(
+            "/api/bills", json={"first_day": body["first_day"], "last_day": body["last_day"]}
+        ).status_code
+        == 422
+    )
+    assert client.delete(f"/api/bills/{data['id']}").json() == {"bills": []}
+    assert client.delete(f"/api/bills/{data['id']}").status_code == 404
+
+
+def test_monthly_summary_compares_with_other_months():
+    assert client.get("/api/summary").json()["this"] is None
+    zone = api.local_timezone()
+    now = datetime.now(zone).replace(minute=0, second=0, microsecond=0)
+    rows = []
+    for hours in range(24 * 100):
+        when = now - timedelta(hours=hours)
+        rows += [
+            (when, "load_energy_total", 900000 - hours * 2.0),
+            (when, "import_energy_total", 700000 - hours * 0.5),
+            (when, "export_energy_total", 60000 - hours * 0.25),
+            (when, "pv_energy_total", 500000 - hours * 1.0),
+        ]
+    api.database().insert_readings(rows)
+    api.clear_caches()
+
+    data = client.get("/api/summary").json()
+    this, before = data["this"], data["month_before"]
+    assert this["complete"] and before and data["year_before"] is None
+    days = this["days"]
+    assert 28 <= days <= 31 and this["cost"]["import_kwh"] == pytest.approx(days * 12, abs=1)
+    assert this["solar_kwh"] == pytest.approx(days * 24, abs=1)
+    assert this["self_sufficiency_percent"] == 75.0
+    assert this["dearest_day"]["value"] >= this["cheapest_day"]["value"]
+    assert this["busiest_day"]["value"] == pytest.approx(48.0, abs=2.1)  # a 25-hour day uses more
+    assert data["next"] is not None and data["previous"] is not None
+
+    current = client.get("/api/summary", params={"month": data["next"]}).json()
+    assert current["next"] is None
+    assert current["this"] is None or current["this"]["complete"] is False
+    assert client.get("/api/summary", params={"month": "2099-01"}).status_code == 404

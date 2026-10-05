@@ -87,7 +87,7 @@ async def lifespan(_: FastAPI):
         await asyncio.to_thread(thread.join, 10)
 
 
-app = FastAPI(title="Energy Tracker", version="0.10.0", lifespan=lifespan)
+app = FastAPI(title="Energy Tracker", version="0.11.0", lifespan=lifespan)
 
 
 @app.middleware("http")
@@ -153,6 +153,10 @@ def setup() -> dict:
 
     return {
         "collecting": settings().collecting,
+        "currency": {
+            "symbol": settings().currency_symbol,
+            "minor": settings().currency_minor,
+        },
         "database_mb": round(database().size_bytes() / 1e6, 1),
         "keep_years": settings().keep_years,
         # Until the first poll there is nothing to judge by, so assume the best.
@@ -533,6 +537,178 @@ def system_performance(
             }
     _performance_cache[period] = (time.monotonic(), result)
     return result
+
+
+# --- Monthly summary ---------------------------------------------------------------------------
+
+
+def month_figures(start: datetime, now: datetime) -> dict | None:
+    """Everything the summary says about one calendar month, or None if it has no readings."""
+    zone = local_timezone()
+    end = min(following_month(start), local_midnight(now, zone))  # whole days only
+    first = first_cost_reading()
+    if first is None or start >= end or first >= end:
+        return None
+    begin = max(start, first.astimezone(zone))
+    if begin.time() != clock(0):  # readings began partway through a day: start on the next
+        begin = datetime.combine(begin.date() + timedelta(days=1), clock(0), zone)
+    if begin >= end:
+        return None
+    rates = schedule()
+    names = list(dict.fromkeys([*performance.COUNTERS, *COST_COUNTERS]))
+    samples = counter_samples(names, begin - timedelta(days=1), HALF_HOURLY, end)
+    counters = {name: Counter(series, HALF_HOURLY_GAP) for name, series in samples.items()}
+    days = performance.daily(counters, begin, end, zone, rates)
+    cost = cost_since(samples, begin, end, zone, rates, gap=HALF_HOURLY_GAP)
+    if cost is None:
+        return None
+    net_by_day = roi.daily_costs(
+        counters[COST_COUNTERS[0]], counters[COST_COUNTERS[1]], begin, end, zone, rates
+    )
+    last_day = (end - timedelta(days=1)).date()
+    extra = sum(
+        entry["amount_gbp"] or 0.0
+        for entry in database().income_rows()
+        if begin.date().isoformat() <= entry["day"] <= last_day.isoformat()
+    )
+
+    def standout(values: dict, highest: bool) -> dict | None:
+        usable = {day: value for day, value in values.items() if value is not None}
+        if not usable:
+            return None
+        day = (max if highest else min)(usable, key=usable.get)
+        return {"day": day, "value": round(usable[day], 2)}
+
+    return {
+        "from": begin.date(),
+        "to": last_day,
+        "days": len(days),
+        "complete": begin == start and end == following_month(start),
+        "cost": cost,
+        "extra_income_gbp": round(extra, 2),
+        **performance.figures(list(days.values())),
+        "dearest_day": standout(net_by_day, True),
+        "cheapest_day": standout(net_by_day, False),
+        "sunniest_day": standout({d: v[performance.SOLAR] for d, v in days.items()}, True),
+        "busiest_day": standout({d: v[performance.LOAD] for d, v in days.items()}, True),
+    }
+
+
+@app.get("/api/summary")
+def monthly_summary(
+    month: Annotated[
+        str | None,
+        Query(pattern=r"^\d{4}-(0[1-9]|1[0-2])$", description="YYYY-MM; defaults to last month"),
+    ] = None,
+) -> dict:
+    """A calendar month in one page, set beside the month before and the same month last year."""
+    now = datetime.now(UTC)
+    zone = local_timezone()
+    current = local_midnight(now, zone).replace(day=1)
+    start = previous_month(current) if month is None else month_start(*map(int, month.split("-")))
+    if start > current:
+        raise HTTPException(status_code=404, detail="That month has not started yet")
+    first = first_cost_reading()
+    earliest = (
+        first.astimezone(zone).replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        if first
+        else current
+    )
+    # With no earlier month to show, fall back to the current one.
+    if month is None and start < earliest:
+        start = current
+    return {
+        "key": month_key(start),
+        "month": f"{start:%B %Y}",
+        "previous": month_key(previous_month(start)) if start > earliest else None,
+        "next": month_key(following_month(start)) if start < current else None,
+        "this": month_figures(start, now),
+        "month_before": month_figures(previous_month(start), now),
+        "year_before": month_figures(month_start(start.year - 1, start.month), now),
+    }
+
+
+# --- Checking a bill ---------------------------------------------------------------------------
+
+
+class BillIn(BaseModel):
+    first_day: date
+    last_day: date
+    import_kwh: float | None = Field(default=None, ge=0, le=1_000_000)
+    charge_gbp: float | None = Field(default=None, ge=0, le=1_000_000)
+    export_kwh: float | None = Field(default=None, ge=0, le=1_000_000)
+    export_gbp: float | None = Field(default=None, ge=0, le=1_000_000)
+
+
+def difference(billed: float | None, measured: float | None) -> dict | None:
+    """How far the bill is from the tracker's figure: positive means the bill is higher."""
+    if billed is None or measured is None:
+        return None
+    return {
+        "amount": round(billed - measured, 2),
+        "percent": round((billed - measured) / measured * 100, 1) if measured else None,
+    }
+
+
+@app.get("/api/bills")
+def bills() -> dict:
+    """Bills entered by hand, each beside the tracker's own figures for the same dates."""
+    zone = local_timezone()
+    now = datetime.now(UTC)
+    rates = schedule()
+    checked = []
+    for row in database().bill_rows():
+        start = datetime.combine(date.fromisoformat(row["first_day"]), clock(0), zone)
+        end = datetime.combine(
+            date.fromisoformat(row["last_day"]) + timedelta(days=1), clock(0), zone
+        )
+        samples = counter_samples(COST_COUNTERS, start - timedelta(days=1), HALF_HOURLY, end)
+        cost = None
+        if start < now:
+            cost = cost_since(samples, start, min(end, now), zone, rates, gap=HALF_HOURLY_GAP)
+        measured = None
+        if cost:
+            measured = {
+                "import_kwh": cost["import_kwh"],
+                # What a bill charges: energy and standing charge together, VAT included.
+                "charge_gbp": round(cost["import_gbp"] + cost["standing_charge_gbp"], 2),
+                "export_kwh": cost["export_kwh"],
+                "export_gbp": cost["export_credit_gbp"],
+                "covers_whole_bill": cost["full_period"] and end <= now,
+                "estimated_hours": cost["estimated_hours"],
+            }
+        checked.append(
+            {
+                **row,
+                "tracker": measured,
+                "differences": {
+                    key: difference(row[key], measured[key] if measured else None)
+                    for key in ("import_kwh", "charge_gbp", "export_kwh", "export_gbp")
+                },
+            }
+        )
+    return {"bills": checked}
+
+
+@app.post("/api/bills")
+def save_bill(body: BillIn, id: int | None = None) -> dict:  # noqa: A002
+    if body.last_day < body.first_day:
+        raise HTTPException(
+            status_code=422, detail="The bill must end on or after the day it starts"
+        )
+    if (body.last_day - body.first_day).days > 400:
+        raise HTTPException(status_code=422, detail="A bill can cover at most about a year")
+    if all(v is None for v in (body.import_kwh, body.charge_gbp, body.export_kwh, body.export_gbp)):
+        raise HTTPException(status_code=422, detail="Enter at least one figure from the bill")
+    database().save_bill(body.model_dump(), id)
+    return bills()
+
+
+@app.delete("/api/bills/{row_id}")
+def delete_bill(row_id: int) -> dict:
+    if not database().delete_bill(row_id):
+        raise HTTPException(status_code=404, detail="That bill is not in the list")
+    return bills()
 
 
 # --- Extra income ----------------------------------------------------------------------------
