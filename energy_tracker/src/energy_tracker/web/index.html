@@ -253,7 +253,10 @@
   <h2 id="usage-heading">Consumption breakdown (kW)</h2>
   <div class="chart">
     <div class="empty" id="usage-empty" hidden>No history yet. The chart fills in as readings are collected.</div>
-    <svg id="usage-chart" viewBox="0 0 900 300" role="img" aria-label="Consumption split by heat pump, EV charger and the rest of the house"></svg>
+    <div class="plot">
+      <svg id="usage-chart" viewBox="0 0 900 300" role="img" aria-label="Consumption split by heat pump, EV charger and the rest of the house"></svg>
+      <div id="usage-tip" class="chart-tip" hidden></div>
+    </div>
     <div class="legend" id="usage-legend"></div>
   </div>
   </div>
@@ -923,28 +926,19 @@ function renderFlows(series) {
   flowsHover(frame, runs);
 }
 
-// Pointing at the power metrics chart marks the nearest reading and lists every line's value
-// at that moment, with what a figure above or below zero means.
-function flowsHover(frame, runs) {
-  const tip = document.getElementById("flows-tip");
+// Pointing at a power chart marks the nearest reading and lists what the chart shows at
+// that moment. `entriesAt(time)` gives the lines to list: label, colour, text, and the
+// height to put a dot at.
+function chartHover(frame, tipId, times, entriesAt) {
+  const tip = document.getElementById(tipId);
   tip.hidden = true;
-  const series = runs.map(({ line, segments }) => ({ line, points: segments.flat() })).filter(s => s.points.length);
-  const times = [...new Set(series.flatMap(s => s.points.map(p => p[0])))].sort((a, b) => a - b);
+  times = [...new Set(times)].sort((a, b) => a - b);
   if (!times.length) return;
-  const lookups = series.map(s => new Map(s.points));
   const cursor = frame.add("line", { y1: frame.T, y2: frame.H - frame.B, class: "zero", visibility: "hidden" });
-  const dots = series.map(s => frame.add("circle", { r: 4, fill: s.line.color, stroke: "var(--card)",
-                                                     "stroke-width": 1.5, visibility: "hidden" }));
+  const dots = [];
   const hit = frame.add("rect", { x: frame.L, y: frame.T, width: frame.W - frame.L - frame.R,
                                   height: frame.H - frame.T - frame.B, fill: "transparent" });
   hit.style.touchAction = "pan-y";
-  const describe = (line, v) => {
-    const size = Math.abs(v).toFixed(2) + " kW";
-    if (Math.abs(v) < 0.005) return "0.00 kW";
-    if (line.metric === "grid_power") return size + (v > 0 ? " importing" : " exporting");
-    if (line.metric === "battery_power") return size + (v > 0 ? " discharging" : " charging");
-    return v.toFixed(2) + " kW";
-  };
   const hide = () => {
     tip.hidden = true;
     for (const node of [cursor, ...dots]) node.setAttribute("visibility", "hidden");
@@ -961,24 +955,26 @@ function flowsHover(frame, runs) {
     cursor.setAttribute("x1", px);
     cursor.setAttribute("x2", px);
     cursor.setAttribute("visibility", "visible");
-    const moment = new Date(t);
     const long = frame.end - frame.start > 26 * 3600 * 1000;
     const heading = Object.assign(document.createElement("div"), { className: "when",
-      textContent: moment.toLocaleString([], long
+      textContent: new Date(t).toLocaleString([], long
         ? { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }
         : { hour: "2-digit", minute: "2-digit" }) });
-    const rows = [];
-    series.forEach((s, i) => {
-      const v = lookups[i].get(t);
-      dots[i].setAttribute("visibility", v === undefined ? "hidden" : "visible");
-      if (v === undefined) return;
-      dots[i].setAttribute("cx", px);
-      dots[i].setAttribute("cy", frame.y(v));
+    const entries = entriesAt(t);
+    for (const dot of dots) dot.setAttribute("visibility", "hidden");
+    const rows = entries.map((entry, i) => {
+      if (entry.y !== undefined) {
+        // Dots are made as needed and drawn under the pointer target, which stays on top.
+        dots[i] ??= frame.svg.insertBefore(document.createElementNS("http://www.w3.org/2000/svg", "circle"), hit);
+        const dot = dots[i];
+        for (const [k, v] of Object.entries({ r: 4, fill: entry.color, stroke: "var(--card)", "stroke-width": 1.5,
+                                              cx: px, cy: frame.y(entry.y), visibility: "visible" })) dot.setAttribute(k, v);
+      }
       const row = Object.assign(document.createElement("div"), { className: "row" });
-      row.style.setProperty("--c", s.line.color);
-      row.append(Object.assign(document.createElement("span"), { textContent: s.line.label.split(" (")[0] }),
-                 Object.assign(document.createElement("strong"), { textContent: describe(s.line, v) }));
-      rows.push(row);
+      row.style.setProperty("--c", entry.color);
+      row.append(Object.assign(document.createElement("span"), { textContent: entry.label }),
+                 Object.assign(document.createElement("strong"), { textContent: entry.text }));
+      return row;
     });
     tip.replaceChildren(heading, ...rows);
     tip.hidden = false;
@@ -990,6 +986,21 @@ function flowsHover(frame, runs) {
   };
   for (const name of ["pointerenter", "pointermove", "pointerdown"]) hit.addEventListener(name, show);
   for (const name of ["pointerleave", "pointercancel"]) hit.addEventListener(name, hide);
+}
+
+// On the power metrics chart: every line's value, with what above or below zero means.
+function flowsHover(frame, runs) {
+  const series = runs.map(({ line, segments }) => ({ line, lookup: new Map(segments.flat()) })).filter(s => s.lookup.size);
+  const describe = (line, v) => {
+    const size = Math.abs(v).toFixed(2) + " kW";
+    if (Math.abs(v) < 0.005) return "0.00 kW";
+    if (line.metric === "grid_power") return size + (v > 0 ? " importing" : " exporting");
+    if (line.metric === "battery_power") return size + (v > 0 ? " discharging" : " charging");
+    return v.toFixed(2) + " kW";
+  };
+  chartHover(frame, "flows-tip", series.flatMap(s => [...s.lookup.keys()]), t =>
+    series.filter(s => s.lookup.has(t)).map(s => ({
+      label: s.line.label.split(" (")[0], color: s.line.color, text: describe(s.line, s.lookup.get(t)), y: s.lookup.get(t) })));
 }
 
 // Stacked areas: the top edge of the stack is total consumption.
@@ -1020,6 +1031,15 @@ function renderUsage(series) {
     if (!d) return;
     frame.add("path", { d, fill: layer.color, "fill-opacity": 0.75, stroke: layer.color,
                         "stroke-width": 1, "stroke-linejoin": "round" });
+  });
+  // Pointing at the chart lists each part's own power, top of the stack first, and the total.
+  const index = new Map(runs.flat());
+  chartHover(frame, "usage-tip", [...index.keys()], t => {
+    const i = index.get(t);
+    const parts = layers.map((layer, n) => ({ label: layer.label, color: layer.color,
+      text: (stacks[n].top[i] - stacks[n].bottom[i]).toFixed(2) + " kW", y: stacks[n].top[i] })).reverse();
+    return layers.length > 1
+      ? [...parts, { label: layers.length === fitted.length ? "Total consumption" : "Total shown", color: "var(--muted)", text: base[i].toFixed(2) + " kW" }] : parts;
   });
 }
 

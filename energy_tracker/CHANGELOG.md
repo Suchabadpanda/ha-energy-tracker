@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.17.3
+
+- Consumption breakdown chart: point at it to see each part's power at that moment.
+
 ## 0.17.2
 
 - Power Metrics Chart: "Total consumption" is now "Consumption".

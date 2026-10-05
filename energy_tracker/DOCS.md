@@ -37,7 +37,7 @@ at once. Nothing is fetched while the page is in a background tab.
   "Imported" to hide it, and again to bring it back; hide all but one to study a single
   series. The chart rescales to what is left. At least one series always stays on, and the
   choice is remembered on that device. This works on every chart.
-- **Exact values**: point at the Power Metrics Chart (or touch it) to mark a moment and
+- **Exact values**: point at either power chart (or touch it) to mark a moment and
   list each line's value then, with whether the grid was importing or exporting and the
   battery charging or discharging. The history chart does the same for each bar.
 - **Power charts**: the selector beside **Power Metrics Chart** sets the period for both power
