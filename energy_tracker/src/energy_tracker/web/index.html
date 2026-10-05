@@ -734,7 +734,7 @@ const FLOW_LINES = [
   { metric: "pv_power", color: "var(--solar)", label: "Solar" },
   { metric: "load_power", color: "var(--load)", label: "Total consumption" },
   { metric: "grid_power", color: "var(--grid)", label: "Grid (above zero = import, below = export)" },
-  { metric: "battery_power", color: "var(--battery)", label: "Battery (above zero = charging, below = discharging)" },
+  { metric: "battery_power", color: "var(--battery)", label: "Battery (above zero = discharging, below = charging)", flip: true },
 ];
 
 // --- Choosing what a chart shows ------------------------------------------------------------
@@ -894,11 +894,21 @@ function renderFlows(series) {
   seriesLegend(document.getElementById("flows-legend"), "flows",
     FLOW_LINES.map(l => ({ key: l.metric, label: l.label, color: l.color })), redrawPower);
   const lines = FLOW_LINES.filter(l => isShown("flows", l.metric));
-  const values = lines.flatMap(l => (series[l.metric] ?? []).map(p => p[1]));
+  // The battery is stored as positive when charging; it is drawn the other way up, so
+  // that power coming out of the battery sits above zero like solar does.
+  const points = line => (series[line.metric] ?? []).map(([t, v]) => [t, line.flip ? -v : v]);
+  const values = lines.flatMap(l => points(l).map(p => p[1]));
   const frame = chartFrame("flows", "flows-empty", values);
   if (!frame) return;
-  for (const line of lines) {
-    const d = frame.segments(frame.inRange(series[line.metric] ?? [])).map(frame.path).join("");
+  const runs = lines.map(line => ({ line, segments: frame.segments(frame.inRange(points(line))) }));
+  // A faded fill between each line and zero, drawn first so every line stays on top.
+  for (const { line, segments } of runs) {
+    const d = segments.map(seg =>
+      frame.path([...seg, [seg[seg.length - 1][0], 0], [seg[0][0], 0]]) + "Z").join("");
+    if (d) frame.add("path", { d, fill: line.color, "fill-opacity": 0.16, stroke: "none" });
+  }
+  for (const { line, segments } of runs) {
+    const d = segments.map(frame.path).join("");
     if (!d) continue;
     frame.add("path", { d, fill: "none", stroke: line.color,
                         "stroke-width": 2, "stroke-linejoin": "round" });

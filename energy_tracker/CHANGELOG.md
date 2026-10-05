@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.16.1
+
+- Power flows chart: the battery is drawn with discharging above zero and charging below,
+  and each line has a faded fill down to zero.
+
 ## 0.16.0
 
 - Live tiles: "Right now" and "Where it's going" follow Home Assistant as the sensors
