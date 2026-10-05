@@ -6,6 +6,7 @@ Run with:  python -m energy_tracker
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import logging
 import sqlite3
@@ -15,12 +16,13 @@ import time
 from contextlib import asynccontextmanager
 from datetime import UTC, date, datetime, timedelta
 from datetime import time as clock
-from functools import lru_cache
+from functools import lru_cache, wraps
 from pathlib import Path
 from typing import Annotated
 
 import httpx
 from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 
@@ -101,6 +103,7 @@ async def lifespan(_: FastAPI):
         ).start()
     else:
         log.warning("No Home Assistant connection configured: showing stored readings only")
+    threading.Thread(target=keep_figures_ready, args=(stop,), name="figures", daemon=True).start()
     threading.Thread(
         target=prices.run,
         args=(database(), stop, price_refresh, prices_wanted_from, clear_caches),
@@ -114,7 +117,9 @@ async def lifespan(_: FastAPI):
         await asyncio.to_thread(thread.join, 10)
 
 
-app = FastAPI(title="Energy Tracker", version="0.16.2", lifespan=lifespan)
+app = FastAPI(title="Energy Tracker", version="0.17.0", lifespan=lifespan)
+# The page and its chart data are mostly text: sent compressed, they are a quarter the size.
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 
 @app.middleware("http")
@@ -335,32 +340,109 @@ def month(
     }
 
 
-_years_cache: dict = {"at": 0.0, "value": None}
-_roi_cache: dict = {"at": 0.0, "value": None}
-_performance_cache: dict = {}
-_devices_cache: dict = {"at": 0.0, "value": None}
+# --- Keeping worked-out figures ready -----------------------------------------------------------
+#
+# The figures that cover a long stretch (years, payback, comparisons, performance) take
+# seconds to work out on a small machine and change slowly, most of them only at midnight.
+# They are kept once worked out, and a background task works them out afresh every few
+# minutes, so opening the page never has to wait for them.
+
+CACHE_SECONDS = 20 * 60  # how long a kept figure may be served
+KEEP_FRESH_SECONDS = 10 * 60  # how often the usual ones are worked out again
+CACHE_SIZE = 200
+
+
+class Kept:
+    """Results by key, each with the moment it was worked out."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._values: dict[tuple, tuple[float, object]] = {}
+        self._working: dict[tuple, threading.Lock] = {}
+        self._generation = 0
+
+    def clear(self) -> None:
+        with self._lock:
+            self._values.clear()
+            self._generation += 1  # anything being worked out now is out of date already
+
+    def get(self, key: tuple, work, fresh: bool = False):
+        """The kept result for `key`, working it out if there is none (or `fresh` is set)."""
+        with self._lock:
+            held = self._values.get(key)
+            if held and not fresh and time.monotonic() - held[0] < CACHE_SECONDS:
+                return held[1]
+            working = self._working.setdefault(key, threading.Lock())
+        with working:  # one caller works it out; any others wait and share the result
+            with self._lock:
+                held = self._values.get(key)
+                generation = self._generation
+                if held and not fresh and time.monotonic() - held[0] < CACHE_SECONDS:
+                    return held[1]
+            value = work()
+            with self._lock:
+                if generation == self._generation:
+                    if len(self._values) >= CACHE_SIZE:
+                        del self._values[min(self._values, key=lambda k: self._values[k][0])]
+                    self._values[key] = (time.monotonic(), value)
+            return value
+
+
+_kept = Kept()
+
+
+def kept(func):
+    """Keep an endpoint's result for each set of arguments. `func.fresh(...)` works it out
+    again regardless."""
+    signature = inspect.signature(func)
+
+    def key(args: tuple, kwargs: dict) -> tuple:
+        bound = signature.bind(*args, **kwargs)
+        bound.apply_defaults()
+        return (func.__name__, *bound.arguments.items())
+
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        return _kept.get(key(args, kwargs), lambda: func(*args, **kwargs))
+
+    wrapper.fresh = lambda *args, **kwargs: _kept.get(
+        key(args, kwargs), lambda: func(*args, **kwargs), fresh=True
+    )
+    return wrapper
 
 
 def clear_caches() -> None:
     """Forget worked-out costs, after anything they depend on has changed."""
-    _years_cache["value"] = None
-    _roi_cache["value"] = None
-    _devices_cache["value"] = None
-    _performance_cache.clear()
+    _kept.clear()
 
 
-YEARS_CACHE_SECONDS = 300
+def keep_figures_ready(stop: threading.Event) -> None:
+    """Work out the figures the page opens with, now and every few minutes after."""
+    stop.wait(5)  # let the collector make its first reading and fill any gap
+    while not stop.is_set():
+        for work in (
+            years.fresh,
+            device_costs.fresh,
+            bills.fresh,
+            payback_figures.fresh,
+            lambda: monthly_summary.fresh(None),
+            lambda: system_performance.fresh("12m"),
+            lambda: compare.fresh("12m"),
+        ):
+            if stop.is_set():
+                return
+            try:
+                work()
+            except Exception:  # one failing must not stop the others
+                log.exception("Could not prepare figures in the background")
+            stop.wait(1)  # leave room for the page between the heavy jobs
+        stop.wait(KEEP_FRESH_SECONDS)
 
 
 @app.get("/api/years")
+@kept
 def years() -> dict:
     """Costs for every month and year since readings began, for comparing years."""
-    if (
-        _years_cache["value"] is not None
-        and time.monotonic() - _years_cache["at"] < YEARS_CACHE_SECONDS
-    ):
-        return _years_cache["value"]
-
     now = datetime.now(UTC)
     first = first_cost_reading()
     result: dict = {"years": []}
@@ -385,7 +467,6 @@ def years() -> dict:
                 )
             result["years"].append({"year": year, "cost": total, "months": months})
 
-    _years_cache.update(at=time.monotonic(), value=result)
     return result
 
 
@@ -511,6 +592,7 @@ def comparison_tariff(row: dict) -> Tariff:
 
 
 @app.get("/api/compare")
+@kept
 def compare(period: Annotated[str, Query(pattern="^(30d|90d|12m|all)$")] = "12m") -> dict:
     """What the same imports and exports would have cost on each saved tariff.
 
@@ -585,7 +667,7 @@ def save_comparison(body: ComparisonIn, id: int | None = None) -> dict:  # noqa:
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     saved = database().save_comparison_row(row, id)
-    _roi_cache["value"] = None  # it may be the tariff payback is measured against
+    clear_caches()  # the comparison, and payback if it is measured against this tariff
     if body.dynamic:
         price_refresh.set()
     return {"id": saved}
@@ -595,25 +677,18 @@ def save_comparison(body: ComparisonIn, id: int | None = None) -> dict:  # noqa:
 def delete_comparison(row_id: int) -> dict:
     if not database().delete_comparison_row(row_id):
         raise HTTPException(status_code=404, detail="That tariff is not in the list")
-    _roi_cache["value"] = None
+    clear_caches()
     return {"removed": row_id}
 
 
 # --- Running cost by device ----------------------------------------------------------------------
 
-DEVICES_CACHE_SECONDS = 300
-
 
 @app.get("/api/devices")
+@kept
 def device_costs() -> dict:
     """What the heat pump (or other smart load), the EV charger and the rest of the house
     cost to run: today, and for every month and year with readings."""
-    if (
-        _devices_cache["value"] is not None
-        and time.monotonic() - _devices_cache["at"] < DEVICES_CACHE_SECONDS
-    ):
-        return _devices_cache["value"]
-
     zone = local_timezone()
     now = datetime.now(UTC)
     result: dict = {"has_data": False, "smart_load_label": settings().smart_load_label}
@@ -634,7 +709,6 @@ def device_costs() -> dict:
                 "today": devices.total([days[today_local]]) if today_local in days else None,
                 **devices.by_month_and_year(days),
             }
-    _devices_cache.update(at=time.monotonic(), value=result)
     return result
 
 
@@ -642,14 +716,11 @@ def device_costs() -> dict:
 
 
 @app.get("/api/performance")
+@kept
 def system_performance(
     period: Annotated[str, Query(pattern="^(30d|90d|12m|all)$")] = "12m",
 ) -> dict:
     """Self-sufficiency, battery efficiency and what a bigger battery would have saved."""
-    cached = _performance_cache.get(period)
-    if cached and time.monotonic() - cached[0] < ROI_CACHE_SECONDS:
-        return cached[1]
-
     zone = local_timezone()
     now = datetime.now(UTC)
     first = first_cost_reading()
@@ -680,7 +751,6 @@ def system_performance(
                     days, measured / 100 if measured and 60 <= measured <= 100 else None
                 ),
             }
-    _performance_cache[period] = (time.monotonic(), result)
     return result
 
 
@@ -740,6 +810,7 @@ def month_figures(start: datetime, now: datetime) -> dict | None:
 
 
 @app.get("/api/summary")
+@kept
 def monthly_summary(
     month: Annotated[
         str | None,
@@ -796,6 +867,7 @@ def difference(billed: float | None, measured: float | None) -> dict | None:
 
 
 @app.get("/api/bills")
+@kept
 def bills() -> dict:
     """Bills entered by hand, each beside the tracker's own figures for the same dates."""
     zone = local_timezone()
@@ -846,6 +918,7 @@ def save_bill(body: BillIn, id: int | None = None) -> dict:  # noqa: A002
     if all(v is None for v in (body.import_kwh, body.charge_gbp, body.export_kwh, body.export_gbp)):
         raise HTTPException(status_code=422, detail="Enter at least one figure from the bill")
     database().save_bill(body.model_dump(), id)
+    clear_caches()
     return bills()
 
 
@@ -903,6 +976,7 @@ def check_bill_rates(body: RatesIn) -> dict:
 def delete_bill(row_id: int) -> dict:
     if not database().delete_bill(row_id):
         raise HTTPException(status_code=404, detail="That bill is not in the list")
+    clear_caches()
     return bills()
 
 
@@ -944,7 +1018,7 @@ def extra_income() -> dict:
 def save_income(body: IncomeIn, id: int | None = None) -> dict:  # noqa: A002
     """Add an entry, or correct the one with the given id."""
     database().save_income(body.day, body.description.strip(), body.amount_gbp, id)
-    _roi_cache["value"] = None
+    clear_caches()
     return extra_income()
 
 
@@ -952,7 +1026,7 @@ def save_income(body: IncomeIn, id: int | None = None) -> dict:  # noqa: A002
 def remove_income(row_id: int) -> dict:
     if not database().remove_income(row_id):
         raise HTTPException(status_code=404, detail="That entry is not in the list")
-    _roi_cache["value"] = None
+    clear_caches()
     return extra_income()
 
 
@@ -1028,7 +1102,6 @@ def export_csv(
 
 LOAD_COUNTER = "load_energy_total"
 SOLAR_COUNTER = "pv_energy_total"
-ROI_CACHE_SECONDS = 1800
 
 
 class CostIn(BaseModel):
@@ -1081,16 +1154,14 @@ def payback_settings() -> dict | None:
 @app.post("/api/roi/settings")
 def save_payback_settings(body: PaybackIn) -> dict:
     database().set_setting("payback", body.model_dump_json())
-    _roi_cache["value"] = None
+    clear_caches()
     return payback_figures()
 
 
 @app.get("/api/roi")
+@kept
 def payback_figures() -> dict:
     """Savings from the system so far and the estimated date it will have paid for itself."""
-    if _roi_cache["value"] is not None and time.monotonic() - _roi_cache["at"] < ROI_CACHE_SECONDS:
-        return _roi_cache["value"]
-
     settings_ = payback_settings()
     baselines = [{"id": "own", "name": "My own tariff, without solar or battery"}] + [
         {"id": str(row["id"]), "name": row["name"]} for row in database().comparison_rows()
@@ -1177,7 +1248,6 @@ def payback_figures() -> dict:
         None if carry_on else extra_by_day,
     )
 
-    _roi_cache.update(at=time.monotonic(), value=result)
     return result
 
 

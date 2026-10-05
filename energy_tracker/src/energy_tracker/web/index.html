@@ -1457,6 +1457,7 @@ function updateDownload(data) {
 
 let historyData = null;
 async function refreshHistory() {
+  if (!sectionOpen("history-heading")) return;  // fetched when the section is opened
   const period = document.getElementById("history-period").value;
   const chart = document.getElementById("history-chart");
   chart.style.opacity = 0.5;  // keep the old picture, dimmed, while the new one loads
@@ -1548,6 +1549,7 @@ function renderPerformance(data) {
 }
 
 async function refreshPerformance() {
+  if (!sectionOpen("performance-heading")) return;  // fetched when the section is opened
   try {
     renderPerformance(await getJson("api/performance?period=" + document.getElementById("performance-period").value));
   } catch (err) {
@@ -1642,6 +1644,7 @@ function renderSummary(data) {
 }
 
 async function refreshSummary() {
+  if (!sectionOpen("summary-heading")) return;  // fetched when the section is opened
   try {
     renderSummary(await getJson("api/summary" + (summaryMonth ? "?month=" + summaryMonth : "")));
   } catch (err) {
@@ -2033,6 +2036,7 @@ function showBillRates() {
 }
 
 async function refreshBills() {
+  if (!sectionOpen("bills-heading")) return;  // fetched when the section is opened
   try { renderBills(await getJson("api/bills")); } catch (err) { billsMessage("Could not load bills (" + err.message + ").", true); }
 }
 billsForm.addEventListener("submit", async event => {
@@ -2134,6 +2138,7 @@ function renderIncome(data) {
 }
 
 async function refreshIncome() {
+  if (!sectionOpen("income-heading")) return;  // fetched when the section is opened
   try { renderIncome(await getJson("api/income")); } catch (err) { /* shown on the next refresh */ }
 }
 
@@ -2233,6 +2238,7 @@ function renderDeviceCosts(data) {
     "that day's electricity each device used. Counted from " + dayText(data.from) + ". Click a year to show its months.";
 }
 async function refreshDeviceCosts() {
+  if (!sectionOpen("device-costs-heading")) return;  // fetched when the section is opened
   try { renderDeviceCosts(await getJson("api/devices")); }
   catch (err) { document.getElementById("device-costs-hint").textContent = "Could not work out device costs (" + err.message + ")."; }
 }
@@ -2430,6 +2436,7 @@ function renderPayback(data) {
 }
 
 async function refreshPayback() {
+  if (!sectionOpen("roi-heading")) return;  // fetched when the section is opened
   try {
     renderPayback(await getJson("api/roi"));
   } catch (err) {
@@ -2573,6 +2580,7 @@ function renderCompare(data) {
 }
 
 async function refreshCompare() {
+  if (!sectionOpen("compare-heading")) return;  // fetched when the section is opened
   try {
     const period = document.getElementById("compare-period").value;
     renderCompare(await getJson("api/compare?period=" + period));
@@ -2697,7 +2705,7 @@ async function importHistory(dryRun) {
       row.textContent = line;
       return row;
     }));
-    if (!dryRun) refresh();
+    if (!dryRun) refreshEverything();
   } catch (err) {
     message.textContent = err.message;
     message.className = "error";
@@ -2714,7 +2722,7 @@ async function removeTariff(effectiveFrom) {
   try {
     renderTariffs(await sendTariff("api/tariffs/" + effectiveFrom, { method: "DELETE" }));
     tariffMessage("Removed.");
-    refresh();
+    refreshEverything();
   } catch (err) {
     tariffMessage(err.message, true);
   }
@@ -2746,7 +2754,7 @@ async function powerSeries(params) {
   }
   return powerCache.raw;
 }
-document.getElementById("power-range").addEventListener("change", () => refresh());
+document.getElementById("power-range").addEventListener("change", () => refreshCharts());
 
 // The "right now" tiles follow Home Assistant between stored readings: the newest value of
 // each sensor is fetched every couple of seconds while the page is in view.
@@ -2801,6 +2809,8 @@ async function refreshLive() {
 // After rates change, everything worked out from them is fetched again.
 function refreshEverything() {
   refresh();
+  refreshCharts();
+  refreshRates();
   refreshCompare();
   refreshPayback();
   refreshPerformance();
@@ -2810,19 +2820,19 @@ function refreshEverything() {
   refreshDeviceCosts();
 }
 
+// The page is refreshed in three parts, each as often as it is worth: the tiles and today's
+// costs every ten seconds, the power charts every minute (each point on them is an average
+// over several minutes), and the rates and yearly tables every five minutes. A section that
+// is folded away is not fetched at all until it is opened.
+const sectionOpen = key => !folded.has(key);
+
 async function refresh() {
   const status = document.getElementById("status");
   try {
-    // Ask only for metrics this installation collects (the list can be customised).
-    knownMetrics ??= new Set((await getJson("api/metrics")).map(m => m.name));
-    const params = SERIES_METRICS.filter(m => knownMetrics.has(m)).map(m => "metric=" + m).join("&");
-    const [latest, rawSeries, today, month, tariffs, years, found] = await Promise.all([
+    const [latest, today, month, found] = await Promise.all([
       getJson("api/latest"),
-      powerSeries(params),
       getJson("api/today").catch(() => null),
       getJson("api/month" + (selectedMonth ? "?month=" + selectedMonth : "")).catch(() => null),
-      getJson("api/tariffs").catch(() => null),
-      getJson("api/years").catch(() => null),
       getJson("api/setup").catch(() => null),
     ]);
     if (found) { setup = found; applyCurrency(found.currency); }
@@ -2834,23 +2844,36 @@ async function refresh() {
     document.getElementById("devices-section").hidden = !anyDevice;
     document.getElementById("usage-section").hidden = !anyDevice;
 
-    const series = withDerived(rawSeries);
-
     stored = latest;
     showNow();
     renderTiles(document.getElementById("today"), TODAY_TILES, latest);
     renderToday(today, month);
-    if (tariffs) renderTariffs(tariffs);
-    if (years) renderYears(years);
-    lastPower = series;
-    renderFlows(series);
-    renderUsage(series);
-
     showStatus();
   } catch (err) {
     status.textContent = "Can't reach the server (" + err.message + ")";
     status.className = "stale";
   }
+}
+
+async function refreshCharts() {
+  if (!sectionOpen("flows-heading") && !sectionOpen("usage-heading")) return;
+  try {
+    // Ask only for metrics this installation collects (the list can be customised).
+    knownMetrics ??= new Set((await getJson("api/metrics")).map(m => m.name));
+    const params = SERIES_METRICS.filter(m => knownMetrics.has(m)).map(m => "metric=" + m).join("&");
+    lastPower = withDerived(await powerSeries(params));
+    renderFlows(lastPower);
+    renderUsage(lastPower);
+  } catch { /* the ten-second refresh reports a lost connection */ }
+}
+
+async function refreshRates() {
+  const [tariffs, years] = await Promise.all([
+    getJson("api/tariffs").catch(() => null),
+    sectionOpen("years-heading") ? getJson("api/years").catch(() => null) : null,
+  ]);
+  if (tariffs) renderTariffs(tariffs);
+  if (years) renderYears(years);
 }
 
 // --- Page layout: tidy labels, folding sections, and the section menu ---------------------
@@ -2886,12 +2909,23 @@ function sectionParts(h2) {
   const controls = row === h2 ? [] : [...row.children].filter(el => el !== h2);
   return [...controls, ...body];
 }
+// What to fetch when a section is opened, since nothing is fetched for it while folded.
+const SECTION_LOADERS = {
+  "flows-heading": () => refreshCharts(), "usage-heading": () => refreshCharts(),
+  "history-heading": () => refreshHistory(), "performance-heading": () => refreshPerformance(),
+  "summary-heading": () => refreshSummary(), "years-heading": () => refreshRates(),
+  "device-costs-heading": () => refreshDeviceCosts(), "roi-heading": () => refreshPayback(),
+  "income-heading": () => refreshIncome(), "bills-heading": () => refreshBills(),
+  "compare-heading": () => refreshCompare(),
+};
 function setFolded(h2, fold) {
+  const wasFolded = h2.getAttribute("aria-expanded") === "false";
   h2.setAttribute("aria-expanded", String(!fold));
   for (const el of sectionParts(h2)) el.classList.toggle("folded-away", fold);
   if (fold) folded.add(h2.dataset.key); else folded.delete(h2.dataset.key);
   try { localStorage.setItem(FOLD_KEY, JSON.stringify([...folded])); } catch { /* no storage */ }
   saveLayout();
+  if (wasFolded && !fold) SECTION_LOADERS[h2.dataset.key]?.();
 }
 let layoutReady = false, layoutTimer = null;
 function saveLayout() {
@@ -2961,27 +2995,40 @@ document.addEventListener("keydown", event => { if (event.key === "Escape") jump
 // Fetch the currency before anything is drawn, so no figure flashes up with the wrong symbol.
 async function start() {
   try { applyCurrency((await getJson("api/setup")).currency); } catch (err) { /* defaults stand */ }
-  refresh();
-  setInterval(refresh, 10000);
+  // Nothing is fetched while the page is in a background tab; it catches up on return.
+  const every = (ms, work) => setInterval(() => { if (!document.hidden) work(); }, ms);
+  const MINUTE = 60 * 1000;
+  // The tiles first, so the top of the page appears before the heavier sections are asked for.
+  await refresh();
+  every(10000, refresh);
   setInterval(refreshLive, 2000);
-  document.addEventListener("visibilitychange", refreshLive);
-  refreshDeviceCosts();
-  setInterval(refreshDeviceCosts, 10 * 60 * 1000);
-  // The comparison prices a long period several times over, so it is refreshed far less often.
-  refreshCompare();
-  setInterval(refreshCompare, 30 * 60 * 1000);
-  refreshPayback();
-  setInterval(refreshPayback, 30 * 60 * 1000);
-  refreshIncome();
-  setInterval(refreshIncome, 5 * 60 * 1000);
-  refreshPerformance();
-  setInterval(refreshPerformance, 30 * 60 * 1000);
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) return;
+    refresh();
+    refreshLive();
+    refreshCharts();
+  });
+  refreshCharts();
+  every(MINUTE, refreshCharts);
+  refreshRates();
+  every(5 * MINUTE, refreshRates);
   refreshHistory();
   // Keep the latest period current; a past period being browsed is left alone.
-  setInterval(() => { if (!historyDay) refreshHistory(); }, 5 * 60 * 1000);
+  every(5 * MINUTE, () => { if (!historyDay) refreshHistory(); });
+  refreshDeviceCosts();
+  every(10 * MINUTE, refreshDeviceCosts);
+  refreshPayback();
+  every(30 * MINUTE, refreshPayback);
+  refreshIncome();
+  every(5 * MINUTE, refreshIncome);
+  refreshPerformance();
+  every(30 * MINUTE, refreshPerformance);
   refreshSummary();
-  setInterval(() => { if (!summaryMonth) refreshSummary(); }, 60 * 60 * 1000);
+  every(60 * MINUTE, () => { if (!summaryMonth) refreshSummary(); });
   refreshBills();
+  // The comparison prices a long period several times over, so it comes last.
+  refreshCompare();
+  every(30 * MINUTE, refreshCompare);
 }
 start();
 </script>

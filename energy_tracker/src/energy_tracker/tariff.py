@@ -10,6 +10,7 @@ import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import date, datetime
+from functools import lru_cache
 from pathlib import Path
 
 MINUTES_PER_DAY = 24 * 60
@@ -19,6 +20,7 @@ SLOT_SECONDS = 30 * 60
 CHEAP_SLOTS = 8
 
 
+@lru_cache(maxsize=512)  # called for every half hour of every cost
 def _minutes(clock: str) -> int:
     """'06:30' -> 390. '24:00' is allowed and means the end of the day."""
     try:

@@ -12,6 +12,25 @@ heading to fold that section away, and again to bring it back; **Fold all sectio
 **Open all sections** are at the foot of the menu. What you fold is saved with the app, so
 it stays folded the next time you open it, on any device or browser.
 
+Folding sections you rarely look at also makes the page quicker to open: nothing is
+fetched for a folded section until you open it.
+
+## How often things update
+
+| Part of the page | Updates |
+|---|---|
+| Right now, Where it's going | Within a couple of seconds (live) |
+| Today's energy and costs, this month's cost | Every 10 seconds |
+| Power charts | Every minute |
+| History, extra income, rates, costs by year | Every 5 minutes |
+| Device costs | Every 10 minutes |
+| Payback, performance, comparison | Every 30 minutes |
+
+The long-range figures take a while to work out on a small machine, so the app prepares
+them in the background every ten minutes and keeps them ready. They can therefore be up to
+about twenty minutes behind; saving rates, a bill, a tariff or income works them out again
+at once. Nothing is fetched while the page is in a background tab.
+
 ## Charts
 
 - **Choosing what a chart shows**: each entry in a chart's legend is a switch. Click

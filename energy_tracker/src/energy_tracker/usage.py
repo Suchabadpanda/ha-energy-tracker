@@ -42,7 +42,7 @@ class Counter:
         self.gap = gap
         # Work in UTC throughout. Python subtracts two times that share a local time zone by
         # their clock readings, which goes wrong in the hour the clocks go back.
-        in_utc = [(t.astimezone(UTC), v) for t, v in samples]
+        in_utc = [(t if t.tzinfo is UTC else t.astimezone(UTC), v) for t, v in samples]
         cleaned = monotonic(sorted(in_utc))
         self.times = [t for t, _ in cleaned]
         self.values = [v for _, v in cleaned]
@@ -105,11 +105,13 @@ def uncovered(samples: list[Sample], start: datetime, end: datetime) -> timedelt
 def half_hour_slots(start: datetime, end: datetime) -> list[tuple[datetime, datetime]]:
     """Split a period into pieces that each sit inside one half-hour settlement slot."""
     slots: list[tuple[datetime, datetime]] = []
+    seconds = int(SLOT.total_seconds())
     cursor = start
     while cursor < end:
-        as_utc = cursor.astimezone(UTC)
-        slot_start = as_utc.replace(minute=0 if as_utc.minute < 30 else 30, second=0, microsecond=0)
-        piece_end = min(end, slot_start + SLOT)
+        # The next half-hour boundary, worked out on the clock in seconds: much quicker than
+        # converting between time zones for every piece.
+        boundary = (int(cursor.timestamp()) // seconds + 1) * seconds
+        piece_end = min(end, datetime.fromtimestamp(boundary, UTC))
         slots.append((cursor, piece_end))
         cursor = piece_end
     return slots

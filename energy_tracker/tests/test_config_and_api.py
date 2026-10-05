@@ -266,3 +266,38 @@ def test_monthly_summary_compares_with_other_months():
     assert current["next"] is None
     assert current["this"] is None or current["this"]["complete"] is False
     assert client.get("/api/summary", params={"month": "2099-01"}).status_code == 404
+
+
+def test_kept_results_are_reused_until_cleared_or_asked_for_fresh():
+    calls = []
+
+    @api.kept
+    def slow(period: str = "12m") -> dict:
+        calls.append(period)
+        return {"period": period, "n": len(calls)}
+
+    assert slow() == {"period": "12m", "n": 1}
+    assert slow("12m") == slow(period="12m") == {"period": "12m", "n": 1}  # one key, however called
+    assert slow("30d")["n"] == 2
+    assert slow.fresh()["n"] == 3 and slow()["n"] == 3
+    api.clear_caches()
+    assert slow()["n"] == 4
+
+
+def test_figures_change_as_soon_as_something_they_depend_on_is_saved():
+    house_with_payback_set_up()
+    before = client.get("/api/years").json()["years"][-1]["cost"]["net_gbp"]
+    rates = client.get("/api/tariffs").json()["periods"][0]
+    rates["import_bands"] = [{"start": "00:00", "end": "24:00", "p_per_kwh": 99.0}]
+    assert client.post("/api/tariffs", json=rates).status_code == 200
+    assert client.get("/api/years").json()["years"][-1]["cost"]["net_gbp"] > before
+
+    day = (datetime.now(api.local_timezone()) - timedelta(days=2)).date().isoformat()
+    assert client.get("/api/bills").json()["bills"] == []
+    saved = client.post("/api/bills", json={"first_day": day, "last_day": day, "import_kwh": 5})
+    assert len(saved.json()["bills"]) == 1 and len(client.get("/api/bills").json()["bills"]) == 1
+
+
+def test_large_responses_are_sent_compressed():
+    page = client.get("/", headers={"Accept-Encoding": "gzip"})
+    assert page.headers["content-encoding"] == "gzip" and "Energy Tracker" in page.text

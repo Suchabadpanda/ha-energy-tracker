@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.17.0
+
+Faster to open, and lighter while open.
+
+- The long-range figures (costs by year, payback, comparison, performance, device costs,
+  monthly summary, bill check) are worked out in the background and kept ready, so the
+  page no longer waits for them.
+- The tiles at the top appear first, before the heavier sections are asked for.
+- A folded section is not fetched until it is opened.
+- The power charts refresh every minute and the rates and yearly tables every five,
+  instead of every ten seconds. Nothing is fetched while the page is in a background tab.
+- The page and its data are sent compressed.
+
 ## 0.16.2
 
 - The power flows chart is now the Power Metrics Chart, in the colours of Sigenergy's app.
