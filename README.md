@@ -87,8 +87,6 @@ The figures shown are made-up example data.
   of what a bigger battery would save.
 - **Battery health**: usable capacity, efficiency and full cycles, month by month, to see
   ageing as it happens.
-- **Alerts**: a notification to your phone through Home Assistant when the
-  battery misses its cheap charge, or too much is bought at the dearer rate.
 - **Monthly summary**: a month on one page, against the month before and a year earlier.
 - **Yearly report**: a year on one page, beside the year before, ready to print.
 - **Backup and restore**: everything you have entered saved as one file, to keep or to move
@@ -148,8 +146,7 @@ Options, optional equipment and using different sensors are covered in
 - The dashboard opens through Home Assistant (ingress), so it is behind Home Assistant's
   login. The app publishes no network port and refuses connections from anywhere else.
 - It uses the access Home Assistant gives the app. There is no token or password to store.
-- It reads from Home Assistant and never changes a device or setting. The one thing it asks
-  Home Assistant to do is send a notification, and only once you turn alerts on.
+- It only reads from Home Assistant. It never changes a device or setting.
 - For access away from home, use whatever you use for Home Assistant itself (Tailscale or
   Home Assistant Cloud). Do not forward a router port to it.
 

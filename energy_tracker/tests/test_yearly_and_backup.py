@@ -68,7 +68,6 @@ def everything_entered():
     roi = {"install_date": "2025-10-29", "costs": [{"date": "2025-10-29", "amount": 12000}]}
     client.post("/api/roi/settings", json=roi)
     client.post("/api/layout", json={"folded": ["bills-heading"], "bill_years": [2025]})
-    client.post("/api/alerts/settings", json={"enabled": True, "dear_import_kwh": 8})
 
 
 def test_a_backup_holds_what_was_entered_and_restores_onto_a_changed_install():
@@ -78,7 +77,7 @@ def test_a_backup_holds_what_was_entered_and_restores_onto_a_changed_install():
     content = saved.json()
     assert content["app"] == "energy-tracker" and content["version"] == api.app.version
     assert len(content["tables"]["bills"]) == 1 and len(content["tables"]["extra_income"]) == 1
-    assert set(content["settings"]) == {"payback", "layout", "alerts"}
+    assert set(content["settings"]) == {"payback", "layout"}
     assert "readings" not in content["tables"]
 
     # Change everything, then put the backup back.
@@ -105,7 +104,7 @@ def test_a_backup_holds_what_was_entered_and_restores_onto_a_changed_install():
     assert client.get("/api/income").json()["total_gbp"] == 12.5
     assert client.get("/api/roi").json()["settings"]["install_date"] == "2025-10-29"
     assert client.get("/api/layout").json()["folded"] == ["bills-heading"]
-    assert client.get("/api/alerts").json()["settings"]["dear_import_kwh"] == 8
+    assert client.get("/api/alerts").status_code == 404  # alerts were removed in 0.22.1
     # A setting the backup did not have goes back to unset.
     assert client.get("/api/planner").json()["settings"] == {}
 

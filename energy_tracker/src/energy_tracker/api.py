@@ -27,7 +27,6 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 
 from . import (
-    alerts,
     billcheck,
     billreader,
     collector,
@@ -119,7 +118,7 @@ async def lifespan(_: FastAPI):
         await asyncio.to_thread(thread.join, 10)
 
 
-app = FastAPI(title="Energy Tracker", version="0.22.0", lifespan=lifespan)
+app = FastAPI(title="Energy Tracker", version="0.22.1", lifespan=lifespan)
 # The page and its chart data are mostly text: sent compressed, they are a quarter the size.
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
@@ -718,7 +717,7 @@ def delete_comparison(row_id: int) -> dict:
     return {"removed": row_id}
 
 
-# --- Battery health and alerts -------------------------------------------------------------------
+# --- Battery health -------------------------------------------------------------------------
 
 
 @app.get("/api/battery")
@@ -726,69 +725,6 @@ def delete_comparison(row_id: int) -> dict:
 def battery_health() -> dict:
     """Usable capacity and efficiency of the battery, month by month."""
     return collector.health(database(), settings(), datetime.now(UTC))
-
-
-class AlertsIn(BaseModel):
-    enabled: bool = False
-    services: list[Annotated[str, Field(pattern=r"^[a-z0-9_]{1,80}$")]] = Field(
-        default=[], max_length=10
-    )
-    battery_not_charged: bool = True
-    battery_expected_percent: int = Field(default=30, ge=5, le=100)
-    dear_import: bool = True
-    dear_import_kwh: float = Field(default=5.0, ge=0.5, le=500)
-
-
-def home_assistant() -> httpx.Client:
-    """A connection to Home Assistant, for the few things asked of it outside the collector."""
-    return httpx.Client(
-        base_url=settings().ha_url,
-        headers={"Authorization": f"Bearer {settings().ha_token}"},
-        timeout=15,
-    )
-
-
-@app.get("/api/alerts")
-def alert_settings() -> dict:
-    """What alerts are set to do, where they can be sent, and the ones sent lately."""
-    services: list[str] = []
-    problem = None
-    if settings().collecting:
-        try:
-            with home_assistant() as client:
-                services = alerts.phone_services(client)
-        except httpx.HTTPError as exc:
-            problem = f"Could not ask Home Assistant where alerts can be sent ({exc})"
-    else:
-        problem = "No Home Assistant connection is configured, so alerts cannot be sent"
-    return {
-        "settings": alerts.settings(database()),
-        "services": services,
-        "problem": problem,
-        "recent": alerts.history(database()),
-    }
-
-
-@app.post("/api/alerts/settings")
-def save_alert_settings(body: AlertsIn) -> dict:
-    database().set_setting("alerts", body.model_dump_json())
-    return alert_settings()
-
-
-@app.post("/api/alerts/test")
-def send_test_alert() -> dict:
-    """Send a test notification now, to the places alerts are set to go."""
-    if not settings().collecting:
-        raise HTTPException(status_code=409, detail="No Home Assistant connection is configured")
-    chosen = alerts.settings(database())["services"]
-    with home_assistant() as client:
-        problems = alerts.send(
-            client,
-            chosen,
-            "test",
-            "This is a test. Alerts from Energy Tracker will look like this.",
-        )
-    return {"sent": not problems, "problems": problems}
 
 
 # --- Planning a switch of tariff -----------------------------------------------------------------
@@ -1158,9 +1094,9 @@ def yearly_report(year: Annotated[int | None, Query(ge=2000, le=2200)] = None) -
 
 # --- Backing up and restoring settings -----------------------------------------------------------
 
-# Settings worth carrying to another install. Left out: what alerts have been sent, and
-# how far old readings have been thinned, which belong to this install's readings.
-BACKUP_SETTINGS = ("payback", "planner", "alerts", "layout", "axle_rate_p")
+# Settings worth carrying to another install. Left out: how far old readings have been
+# thinned, which belongs to this install's readings.
+BACKUP_SETTINGS = ("payback", "planner", "layout", "axle_rate_p")
 BACKUP_FORMAT = 1
 
 

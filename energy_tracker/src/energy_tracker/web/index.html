@@ -188,9 +188,6 @@
                          border-radius: 2px; margin-right: 6px; vertical-align: middle;
                          background: var(--c); }
   .empty { color: var(--muted); padding: 30px 0; text-align: center; }
-  .alert-row { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
-               font-size: 13px; color: var(--muted); }
-  .alert-row input[type=number] { width: 84px; height: 34px; box-sizing: border-box; }
   #reminders { display: grid; gap: 8px; margin: 14px 0 0; }
   #reminders div { border: 1px solid var(--warn); border-radius: 10px; padding: 10px 14px; font-size: 14px;
                    line-height: 1.5; background: var(--card); }
@@ -754,49 +751,10 @@
     </details>
   </div>
 
-  <h2 id="alerts-heading">Alerts</h2>
-  <div class="chart">
-    <div class="hint" style="margin-top: 0;">When something looks wrong, a notification is sent through Home
-      Assistant: to your phone (it needs the Home Assistant app) and into Home Assistant's own notifications.
-      Each problem is announced once a day at most. This is the only thing the tracker ever asks
-      Home Assistant to do.</div>
-    <form id="alerts-form">
-      <label class="wide"><input type="checkbox" name="enabled"> <strong>Send alerts</strong></label>
-      <div class="group-title">Send to</div>
-      <div class="wide" id="alerts-services" style="grid-column: 1 / -1; display: grid; gap: 6px; font-size: 13px; color: var(--muted);"></div>
-      <div class="group-title">Alert me when</div>
-      <div class="alert-row">
-        <label class="wide"><input type="checkbox" name="battery_not_charged">
-          The battery did not charge in the cheap period and is below</label>
-        <input type="number" name="battery_expected_percent" min="5" max="100" step="1" aria-label="Charge level, percent">
-        <span>% charged</span>
-      </div>
-      <div class="alert-row">
-        <label class="wide"><input type="checkbox" name="dear_import">
-          In one day, more is bought outside the cheap rate than</label>
-        <input type="number" name="dear_import_kwh" min="0.5" max="500" step="0.5" aria-label="Limit in kWh">
-        <span>kWh</span>
-      </div>
-      <div class="actions">
-        <button class="primary" type="submit">Save</button>
-        <button type="button" id="alerts-test">Send a test alert</button>
-      </div>
-      <div id="alerts-message" style="grid-column: 1 / -1; font-size: 13px; min-height: 18px; color: var(--muted);"></div>
-    </form>
-    <details id="alerts-recent-box" hidden>
-      <summary>Alerts sent lately</summary>
-      <div class="table-scroll">
-        <table><thead><tr><th>When</th><th>Alert</th><th>What it said</th></tr></thead>
-          <tbody id="alerts-recent"></tbody></table>
-      </div>
-    </details>
-  </div>
-
   <h2 id="backup-heading">Backup and restore</h2>
   <div class="chart">
     <div class="hint" style="margin-top: 0;">Save everything you have entered as one file: tariff rates, tariffs
-      to compare, bills, extra income, and the settings for return on investment, the planner, alerts and folded
-      sections. Restoring a file replaces all of those with what the file holds. Readings are not in the file:
+      to compare, bills, extra income, and the settings for return on investment, the planner and folded sections. Restoring a file replaces all of those with what the file holds. Readings are not in the file:
       they are kept by Home Assistant's own backups. The file contains your bill figures and costs, so keep it
       somewhere private.</div>
     <div class="actions" style="margin-top: 12px; flex-wrap: wrap; align-items: center;">
@@ -2042,81 +2000,6 @@ async function refreshBattery() {
   try { renderBattery(await getJson("api/battery")); }
   catch (err) { document.getElementById("battery-hint").textContent = "Could not work out battery health (" + err.message + ")."; }
 }
-
-// --- Alerts --------------------------------------------------------------------------------
-
-const alertsForm = document.getElementById("alerts-form");
-const ALERT_SWITCHES = ["enabled", "battery_not_charged", "dear_import"];
-const ALERT_NUMBERS = ["battery_expected_percent", "dear_import_kwh"];
-let alertsFilled = false;
-function alertsMessage(text, isError = false) {
-  const el = document.getElementById("alerts-message");
-  el.textContent = text;
-  el.style.color = isError ? "var(--danger)" : "";
-}
-function renderAlerts(data) {
-  const f = alertsForm.elements;
-  if (!alertsFilled) {
-    alertsFilled = true;
-    for (const name of ALERT_SWITCHES) f[name].checked = data.settings[name];
-    for (const name of ALERT_NUMBERS) f[name].value = data.settings[name];
-    // "mobile_app_johns_phone" reads better as "Johns phone".
-    const nice = name => { const text = name.replace(/^mobile_app_/, "").replaceAll("_", " "); return text[0].toUpperCase() + text.slice(1); };
-    const names = [...new Set([...data.services, ...data.settings.services])];
-    const box = document.getElementById("alerts-services");
-    box.replaceChildren(...names.map(name => {
-      const label = document.createElement("label");
-      label.className = "wide";
-      const tick = Object.assign(document.createElement("input"), { type: "checkbox", value: name,
-        checked: data.settings.services.includes(name) });
-      label.append(tick, " " + nice(name) + (name.startsWith("mobile_app_") ? "" : " (" + name + ")"));
-      return label;
-    }));
-    box.append(Object.assign(document.createElement("div"), { textContent: names.length
-      ? "Tick the ones to use. With none ticked, alerts go to every phone that has the Home Assistant app."
-      : (data.problem ?? "No phone with the Home Assistant app was found. Alerts will still appear inside Home " +
-         "Assistant. Install the Home Assistant app on your phone and sign in to receive them there.") }));
-  }
-  const recent = document.getElementById("alerts-recent-box");
-  recent.hidden = !data.recent.length;
-  const cell = text => Object.assign(document.createElement("td"), { textContent: text });
-  document.getElementById("alerts-recent").replaceChildren(...data.recent.map(a => {
-    const tr = document.createElement("tr");
-    tr.append(cell(new Date(a.time).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })), cell(a.title),
-              cell(a.message + (a.problems.length ? " (Not fully delivered: " + a.problems.join("; ") + ")" : "")));
-    return tr;
-  }));
-}
-async function refreshAlerts() {
-  if (!sectionOpen("alerts-heading")) return;  // fetched when the section is opened
-  try { renderAlerts(await getJson("api/alerts")); }
-  catch (err) { alertsMessage("Could not load the alert settings (" + err.message + ").", true); }
-}
-const saveAlerts = () => {
-  const f = alertsForm.elements;
-  const body = { services: [...document.querySelectorAll("#alerts-services input:checked")].map(i => i.value) };
-  for (const name of ALERT_SWITCHES) body[name] = f[name].checked;
-  for (const name of ALERT_NUMBERS) body[name] = Number(f[name].value);
-  return sendTariff("api/alerts/settings", { method: "POST", headers: { "Content-Type": "application/json" },
-                                             body: JSON.stringify(body) });
-};
-alertsForm.addEventListener("submit", async event => {
-  event.preventDefault();
-  try {
-    const data = await saveAlerts();
-    renderAlerts(data);
-    alertsMessage(data.settings.enabled ? "Saved. Alerts are on." : "Saved. Alerts are off: tick \"Send alerts\" to turn them on.");
-  } catch (err) { alertsMessage(err.message, true); }
-});
-document.getElementById("alerts-test").addEventListener("click", async () => {
-  try {
-    await saveAlerts();  // so the test goes where the form now says
-    alertsMessage("Sending...");
-    const result = await sendTariff("api/alerts/test", { method: "POST" });
-    alertsMessage(result.sent ? "Sent. Check your phone and Home Assistant's notifications."
-      : "Sent, with problems: " + result.problems.join("; ") + ".", !result.sent);
-  } catch (err) { alertsMessage(err.message, true); }
-});
 
 // --- Monthly summary -----------------------------------------------------------------------
 
@@ -3661,7 +3544,7 @@ const SECTION_LOADERS = {
   "device-costs-heading": () => refreshDeviceCosts(), "roi-heading": () => refreshPayback(),
   "income-heading": () => refreshIncome(), "bills-heading": () => refreshBills(),
   "compare-heading": () => refreshCompare(), "planner-heading": () => refreshPlanner(),
-  "battery-heading": () => refreshBattery(), "alerts-heading": () => refreshAlerts(),
+  "battery-heading": () => refreshBattery(),
   "yearly-heading": () => refreshYearly(),
 };
 function setFolded(h2, fold) {
@@ -3781,8 +3664,6 @@ async function start() {
   every(6 * 60 * MINUTE, refreshBattery);
   refreshYearly();
   every(60 * MINUTE, () => { if (!yearlyYear) refreshYearly(); });
-  refreshAlerts();
-  every(10 * MINUTE, refreshAlerts);
 }
 start();
 </script>

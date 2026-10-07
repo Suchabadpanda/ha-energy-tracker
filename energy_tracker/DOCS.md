@@ -416,26 +416,6 @@ efficiency and the number of full cycles, with a table by month.
 - Readings imported as older history have no charge level, so months before the app began
   collecting are not measured.
 
-## Alerts
-
-Under **Alerts**, tick **Send alerts** and save. When a check starts failing, a
-notification is sent through Home Assistant: to phones with the Home Assistant app, and
-into Home Assistant's own notifications. Each problem is announced once a day at
-most. **Send a test alert** shows what one looks like.
-
-| Alert | When |
-|---|---|
-| Battery did not charge | Within three hours of a cheap period ending, the battery took under 0.5 kWh in it and is below the charge level you set (30% unless changed). |
-| Dear-rate import | More than your limit (5 kWh unless changed) has been bought outside the cheap rate today. |
-
-- **Send to**: with nothing ticked, alerts go to every phone that has the Home Assistant
-  app signed in. Tick particular ones to limit it.
-- The battery and dear-rate alerts need a tariff with a cheap period; they do nothing on a
-  flat tariff or on half-hourly prices.
-- A battery deliberately left low before a sunny day can trigger the battery alert. Lower
-  the charge level, or untick it, if that happens often.
-- Checks run every five minutes. **Alerts sent lately** lists the last thirty.
-
 ## Tariff switch planner
 
 Choose a tariff saved under **Compare tariffs** to see the last twelve months on it, month
@@ -478,8 +458,8 @@ prices could not be fetched.
 ## Backup and restore
 
 **Download settings** saves everything you have entered as one file: tariff rates, tariffs
-to compare, bills, extra income, and the settings for return on investment, the planner,
-alerts and folded sections.
+to compare, bills, extra income, and the settings for return on investment, the planner
+and folded sections.
 
 To restore, choose the file and press **Check file**. The page lists what the file holds;
 nothing changes until you press **Replace my settings with this file** and confirm.
@@ -533,8 +513,7 @@ replaces what the earlier one brought in.
 - The dashboard opens through Home Assistant, behind its login. No network port is opened.
 - The only outside service contacted is Octopus Energy's public price list, and only when
   you use the tariff lookup.
-- The app reads from Home Assistant and never changes a device or setting. The one thing it
-  asks Home Assistant to do is send a notification, and only once you turn **Alerts** on.
+- The app only reads from Home Assistant. It never changes a device or setting.
 - Readings and rates are stored in the app's data folder and are included in Home
   Assistant backups. The app pauses for a few seconds while a backup is taken.
 

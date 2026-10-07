@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.22.1
+
+- Alerts have been removed. The app is back to only ever reading from Home Assistant.
+
 ## 0.22.0
 
 - The colours of Sigenergy's app are now used throughout: solar yellow, consumption purple,

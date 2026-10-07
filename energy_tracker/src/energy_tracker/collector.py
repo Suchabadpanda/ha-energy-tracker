@@ -12,7 +12,7 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 
-from . import alerts, backfill, battery, income, live, tariff_store
+from . import backfill, battery, income, live
 from .config import Metric, Settings
 from .db import Database
 from .normalise import normalise
@@ -117,7 +117,6 @@ def run(settings: Settings, db: Database, metrics: list[Metric], stop: threading
             log.debug("No Axle event history: %s", exc)
         last_stored = datetime.now(UTC)
         last_thinned: datetime | None = None
-        last_checked: datetime | None = None
 
         while not stop.is_set():
             try:
@@ -139,22 +138,6 @@ def run(settings: Settings, db: Database, metrics: list[Metric], stop: threading
                     log.info("Recorded an Axle export event")
                 if income.settle(db, now):
                     log.info("Worked out the estimated payment for a finished Axle event")
-
-                # Every few minutes, see whether anything needs an alert.
-                if last_checked is None or now - last_checked >= alerts.CHECK_EVERY:
-                    last_checked = now
-                    try:
-                        sent = alerts.run(
-                            db,
-                            client,
-                            tariff_store.load_schedule(db),
-                            now,
-                            settings.timezone,
-                        )
-                        if sent:
-                            log.info("Sent alerts: %s", ", ".join(sent))
-                    except (httpx.HTTPError, sqlite3.Error, ValueError) as exc:
-                        log.error("Alert checks failed: %s", exc)
 
                 # Once a day, thin old readings so the database stays small.
                 if last_thinned is None or now - last_thinned > THIN_EVERY:
