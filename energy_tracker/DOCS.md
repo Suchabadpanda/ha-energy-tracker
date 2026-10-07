@@ -209,6 +209,17 @@ sunniest and busiest days. It opens on last month; use the arrows for others.
 printer. It counts whole days up to yesterday, so the current month is a part month and is
 marked as such, as is any month the readings only partly cover.
 
+## Yearly report
+
+A calendar year on one page: what electricity cost, what the panels made, how much of what
+you used came from them, what the smart load and the EV charger used, extra income, how
+much of the system's cost had been saved by the end of the year, and the year's standout
+days. Below that, the year beside the one before, and a line for each month.
+
+Use the arrows to move between years and **Print** to print the report on its own. The
+current year is shown "so far". A change between two years is only worked out when both
+are complete, since part of a year against a whole one is not a fair comparison.
+
 ## Bill check
 
 **Bill check** compares a bill or statement with what the tracker measured over the same
@@ -455,6 +466,24 @@ guaranteed (**Price fixed until**). From 30 days before, a notice at the top of 
 says when it ends; after that date it says costs are still on the old rates. The notice
 goes once the rates that follow have been entered. A notice also appears when half-hourly
 prices could not be fetched.
+
+## Backup and restore
+
+**Download settings** saves everything you have entered as one file: tariff rates, tariffs
+to compare, bills, extra income, and the settings for return on investment, the planner,
+alerts and folded sections.
+
+To restore, choose the file and press **Check file**. The page lists what the file holds;
+nothing changes until you press **Replace my settings with this file** and confirm.
+Restoring replaces all of the above with the file's contents and removes anything not in
+it. It is all or nothing: a damaged file changes nothing.
+
+- Readings are not in the file. They are kept by Home Assistant's own backups, which also
+  include these settings, so this file is mainly for moving to another install or keeping
+  a copy before a big change.
+- The file contains your bill figures and costs. It is saved to the device you download it
+  on and sent nowhere else; keep it somewhere private.
+- A file saved by a newer version of the app cannot be restored into an older one.
 
 ## Older history
 

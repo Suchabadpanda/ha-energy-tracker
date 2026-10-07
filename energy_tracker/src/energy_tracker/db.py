@@ -320,6 +320,47 @@ class Database:
                 keep,
             ).rowcount
 
+    # --- backing up and restoring what the user has entered ---------------------------------
+
+    BACKED_UP = ("tariff_periods", "comparison_tariffs", "bills", "extra_income")
+
+    def dump(self) -> dict[str, list[dict]]:
+        """Every row of the tables holding what the user has entered, as stored."""
+        with closing(self._connect()) as conn:
+            conn.row_factory = sqlite3.Row
+            return {
+                table: [dict(row) for row in conn.execute(f"SELECT * FROM {table}")]  # noqa: S608
+                for table in self.BACKED_UP
+            }
+
+    def restore(
+        self, tables: dict[str, list[dict]], settings: dict[str, str], unset: list[str]
+    ) -> None:
+        """Replace those tables and the given settings with a backup's contents.
+
+        All or nothing: if any row cannot be stored, nothing is changed. Columns the backup
+        has that this version does not know are ignored. Settings named in `unset` are
+        removed, so they go back to their defaults.
+        """
+        with closing(self._connect()) as conn, conn:
+            conn.executemany("DELETE FROM meta WHERE key = ?", [(key,) for key in unset])
+            for table in self.BACKED_UP:
+                known = [row[1] for row in conn.execute(f"PRAGMA table_info({table})")]
+                conn.execute(f"DELETE FROM {table}")  # noqa: S608 - fixed table names
+                for row in tables.get(table, []):
+                    columns = [name for name in known if name in row]
+                    conn.execute(
+                        f"INSERT INTO {table} ({', '.join(columns)}) "  # noqa: S608
+                        f"VALUES ({', '.join('?' * len(columns))})",
+                        [row[name] for name in columns],
+                    )
+            for key, value in settings.items():
+                conn.execute(
+                    "INSERT INTO meta VALUES (?, ?) "
+                    "ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+                    (key, value),
+                )
+
     # --- small settings ---------------------------------------------------------------------
 
     def get_setting(self, key: str) -> str | None:

@@ -163,8 +163,9 @@
                 color: var(--muted); }
   td.sub { color: var(--muted); font-size: 13px; }
   @media print {
-    body.print-summary main > *:not(#summary-section), body.print-summary .nav { display: none !important; }
-    body.print-summary { background: #fff; }
+    /* Printing one section: everything else is left off the page. */
+    body.print-one main > *:not(.printing), body.print-one .nav { display: none !important; }
+    body.print-one { background: #fff; }
   }
   #roi-message { grid-column: 1 / -1; font-size: 13px; min-height: 18px; color: var(--muted); }
   #roi-message.error { color: var(--grid); }
@@ -399,6 +400,40 @@
         </table>
       </div>
       <div class="hint" id="summary-hint"></div>
+    </div>
+  </div>
+
+  <div id="yearly-section">
+    <div class="filters">
+      <h2 id="yearly-heading">Yearly report</h2>
+      <div class="nav">
+        <button type="button" id="yearly-prev" aria-label="Earlier year">&lsaquo;</button>
+        <button type="button" id="yearly-next" aria-label="Later year">&rsaquo;</button>
+        <button type="button" id="yearly-print">Print</button>
+      </div>
+      <span class="period-label" id="yearly-label"></span>
+    </div>
+    <div class="chart">
+      <div class="empty" id="yearly-empty" hidden>No readings for this year.</div>
+      <div id="yearly-body">
+        <ul id="yearly-points" style="margin: 0 0 12px; padding-left: 20px; line-height: 1.7; font-size: 14px;"></ul>
+        <div class="table-scroll">
+          <table>
+            <thead><tr><th></th><th class="num" id="yearly-col-this"></th><th class="num" id="yearly-col-before"></th>
+              <th class="num">Change</th></tr></thead>
+            <tbody id="yearly-rows"></tbody>
+          </table>
+        </div>
+        <div class="group-title" style="margin-top: 16px;">Month by month</div>
+        <div class="table-scroll">
+          <table>
+            <thead><tr><th>Month</th><th class="num">Net cost</th><th class="num">Solar</th><th class="num">Used</th>
+              <th class="num">Imported</th><th class="num">Exported</th><th class="num">Self-sufficiency</th></tr></thead>
+            <tbody id="yearly-months"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="hint" id="yearly-hint"></div>
     </div>
   </div>
 
@@ -752,6 +787,27 @@
           <tbody id="alerts-recent"></tbody></table>
       </div>
     </details>
+  </div>
+
+  <h2 id="backup-heading">Backup and restore</h2>
+  <div class="chart">
+    <div class="hint" style="margin-top: 0;">Save everything you have entered as one file: tariff rates, tariffs
+      to compare, bills, extra income, and the settings for return on investment, the planner, alerts and folded
+      sections. Restoring a file replaces all of those with what the file holds. Readings are not in the file:
+      they are kept by Home Assistant's own backups. The file contains your bill figures and costs, so keep it
+      somewhere private.</div>
+    <div class="actions" style="margin-top: 12px; flex-wrap: wrap; align-items: center;">
+      <a class="button" href="api/backup" download>Download settings</a>
+    </div>
+    <form id="restore-form">
+      <div class="lookup" style="border-bottom: none; padding-bottom: 0;">
+        <label>Restore from a settings file
+          <input type="file" id="restore-file" accept="application/json,.json"></label>
+        <button type="button" id="restore-check">Check file</button>
+      </div>
+      <div class="rate-fix" id="restore-found" hidden></div>
+      <div id="restore-message" style="grid-column: 1 / -1; font-size: 13px; min-height: 18px; color: var(--muted);"></div>
+    </form>
   </div>
 
   <h2>Older history</h2>
@@ -1795,6 +1851,150 @@ async function refreshPerformance() {
 }
 document.getElementById("performance-period").addEventListener("change", refreshPerformance);
 
+// --- Yearly report -------------------------------------------------------------------------
+
+let yearlyYear = null;   // null means this year
+let yearlyLinks = {};
+function renderYearly(data) {
+  yearlyLinks = { previous: data.previous, next: data.next };
+  document.getElementById("yearly-prev").disabled = !data.previous;
+  document.getElementById("yearly-next").disabled = !data.next;
+  const title = data.year + (data.is_current ? " so far" : "");
+  document.getElementById("yearly-label").textContent = title;
+  document.getElementById("yearly-col-this").textContent = title;
+  document.getElementById("yearly-col-before").textContent = data.year - 1;
+  const y = data.this, before = data.year_before;
+  document.getElementById("yearly-empty").hidden = !!y;
+  document.getElementById("yearly-body").hidden = !y;
+  if (!y) { document.getElementById("yearly-hint").textContent = ""; return; }
+  const c = y.cost, lines = [];
+  lines.push("Electricity cost " + money(c.net_gbp) + " in all: " + money(c.import_gbp) + " for " +
+    c.import_kwh.toFixed(0) + " kWh imported, plus " + money(c.standing_charge_gbp) + " standing charge, less " +
+    money(c.export_credit_gbp) + " for " + c.export_kwh.toFixed(0) + " kWh exported.");
+  if (before && before.complete && y.complete) lines.push("That is " + change(c.net_gbp, before.cost.net_gbp, money) +
+    " than " + (data.year - 1) + ".");
+  if (c.saved_gbp > 0) lines.push("Importing at cheaper times saved " + money(c.saved_gbp) +
+    " against paying the day rate for everything.");
+  if (y.solar_kwh !== null) lines.push("The panels made " + kwh(y.solar_kwh) + (y.solar_used_percent !== null
+    ? ", of which " + percent(y.solar_used_percent) + " was used at home." : "."));
+  if (y.self_sufficiency_percent !== null) lines.push(percent(y.self_sufficiency_percent) +
+    " of the " + kwh(y.consumption_kwh) + " used did not come from the grid.");
+  const d = data.devices;
+  if (d) {
+    const parts = [];
+    if (d.heat_pump_kwh !== undefined) parts.push("the " + data.smart_load_label.toLowerCase() + " used " +
+      kwh(d.heat_pump_kwh) + " (about " + money(d.heat_pump_gbp) + ")");
+    if (d.ev_charger_kwh !== undefined) parts.push("the EV charger " + kwh(d.ev_charger_kwh) +
+      " (about " + money(d.ev_charger_gbp) + ")");
+    if (parts.length) lines.push("Of the electricity used, " + parts.join(" and ") + ".");
+  }
+  if (y.extra_income_gbp > 0) lines.push("Extra income came to " + money(y.extra_income_gbp) + ".");
+  if (data.saved_by_year_end_gbp !== null && data.system_cost_gbp) {
+    lines.push((data.is_current ? "So far the system has saved " : "By the end of the year the system had saved ") +
+      pounds(data.saved_by_year_end_gbp) + " of its " + pounds(data.system_cost_gbp) + " cost (" +
+      (data.saved_by_year_end_gbp / data.system_cost_gbp * 100).toFixed(1) + "%).");
+  }
+  if (y.dearest_day) lines.push("The dearest day was " + dayName(y.dearest_day.day) + " at " + money(y.dearest_day.value) + ".");
+  if (y.sunniest_day && y.sunniest_day.value > 0) lines.push("The sunniest day was " + dayName(y.sunniest_day.day) +
+    " with " + kwh(y.sunniest_day.value) + " generated.");
+  if (y.busiest_day) lines.push("The most electricity was used on " + dayName(y.busiest_day.day) + ": " +
+    kwh(y.busiest_day.value) + ".");
+  document.getElementById("yearly-points").replaceChildren(
+    ...lines.map(text => Object.assign(document.createElement("li"), { textContent: text })));
+
+  const cell = (text, numeric = true) => Object.assign(document.createElement("td"), { textContent: text, className: numeric ? "num" : "" });
+  const cash = v => v === null || v === undefined ? "–" : money(v);
+  const rows = [
+    ["Net cost", x => x.cost.net_gbp, cash],
+    ["Import cost", x => x.cost.import_gbp, cash],
+    ["Export credit", x => x.cost.export_credit_gbp, cash],
+    ["Standing charge", x => x.cost.standing_charge_gbp, cash],
+    ["Extra income", x => x.extra_income_gbp, cash],
+    ["Solar generated", x => x.solar_kwh, kwh],
+    ["Used", x => x.consumption_kwh, kwh],
+    ["Imported", x => x.import_kwh, kwh],
+    ["Exported", x => x.export_kwh, kwh],
+    ["Self-sufficiency", x => x.self_sufficiency_percent, percent],
+    ["Dear-rate import", x => x.dear_import_kwh, kwh],
+    ["Days counted", x => x.days, String],
+  ];
+  document.getElementById("yearly-rows").replaceChildren(...rows.map(([label, pick, show]) => {
+    const tr = document.createElement("tr");
+    const now = pick(y), then = before ? pick(before) : null;
+    // Part of a year against a whole one is not a fair comparison, so no change is given.
+    const comparable = before && before.complete && y.complete;
+    const moved = !comparable || show === String || now === null || then === null || then === undefined ? ""
+      : change(now, then, v => show === percent ? v.toFixed(1) + " points" : show(v));
+    tr.append(cell(label, false), cell(show(now)), cell(before ? show(then) : "–"), cell(moved));
+    return tr;
+  }));
+  document.getElementById("yearly-months").replaceChildren(...y.months.map(m => {
+    const tr = document.createElement("tr");
+    tr.append(cell(new Date(m.month + "-01T00:00").toLocaleDateString([], { month: "long" }), false),
+              cell(cash(m.net_gbp)), cell(kwh(m.solar_kwh)), cell(kwh(m.consumption_kwh)), cell(kwh(m.import_kwh)),
+              cell(kwh(m.export_kwh)), cell(percent(m.self_sufficiency_percent)));
+    return tr;
+  }));
+  const partial = [[y, String(data.year)], [before, String(data.year - 1)]]
+    .filter(([x]) => x && !x.complete).map(([x, name]) => name + " covers " + x.days + " days");
+  document.getElementById("yearly-hint").textContent =
+    (partial.length ? partial.join("; ") + ", so no change is worked out between them. " : "") +
+    "Whole days up to yesterday. Costs are the tracker's estimate at your tariff rates. Device costs are each " +
+    "device's share of the import cost.";
+}
+async function refreshYearly() {
+  if (!sectionOpen("yearly-heading")) return;  // fetched when the section is opened
+  try { renderYearly(await getJson("api/yearly" + (yearlyYear ? "?year=" + yearlyYear : ""))); }
+  catch (err) { document.getElementById("yearly-hint").textContent = "Could not load the yearly report (" + err.message + ")."; }
+}
+document.getElementById("yearly-prev").addEventListener("click", () => { yearlyYear = yearlyLinks.previous; refreshYearly(); });
+document.getElementById("yearly-next").addEventListener("click", () => { yearlyYear = yearlyLinks.next; refreshYearly(); });
+document.getElementById("yearly-print").addEventListener("click", () => printSection("yearly-section"));
+
+// --- Backup and restore --------------------------------------------------------------------
+
+function restoreMessage(text, isError = false) {
+  const el = document.getElementById("restore-message");
+  el.textContent = text;
+  el.style.color = isError ? "var(--grid)" : "";
+}
+const sendBackup = (file, dryRun) => sendTariff("api/restore?dry_run=" + dryRun, {
+  method: "POST", headers: { "Content-Type": "application/json" }, body: file });
+document.getElementById("restore-check").addEventListener("click", async () => {
+  const file = document.getElementById("restore-file").files[0];
+  const box = document.getElementById("restore-found");
+  box.hidden = true;
+  if (!file) return restoreMessage("Choose a settings file first.", true);
+  try {
+    const { found } = await sendBackup(file, true);
+    const count = (n, one, many) => n + " " + (n === 1 ? one : many);
+    const el = (tag, text, props = {}) => Object.assign(document.createElement(tag), { textContent: text, ...props });
+    const go = el("button", "Replace my settings with this file", { type: "button", className: "primary" });
+    go.addEventListener("click", async () => {
+      if (!confirm("Replace everything you have entered with the contents of this file? This cannot be undone.")) return;
+      try {
+        await sendBackup(file, false);
+        box.hidden = true;
+        restoreMessage("Restored. The page is reloading with the restored settings...");
+        setTimeout(() => location.reload(), 1200);
+      } catch (err) { restoreMessage(err.message, true); }
+    });
+    const actions = el("div", "", { className: "actions" });
+    actions.append(go);
+    box.replaceChildren(
+      el("strong", "This file was saved " + (found.saved ? "on " + new Date(found.saved).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : "at an unknown time") +
+        (found.version ? " by version " + found.version : "") + ". It holds:"),
+      el("div", [count(found.tariff_periods, "set of tariff rates", "sets of tariff rates"),
+                 count(found.comparison_tariffs, "tariff to compare", "tariffs to compare"),
+                 count(found.bills, "bill", "bills"),
+                 count(found.extra_income, "extra income entry", "extra income entries")].join(", ") + "."),
+      el("div", "Restoring replaces what is here now with these, and removes anything not in the file. Readings are not touched."),
+      actions);
+    box.hidden = false;
+    restoreMessage("");
+  } catch (err) { restoreMessage(err.message, true); }
+});
+
 // --- Battery health ------------------------------------------------------------------------
 
 function renderBattery(data) {
@@ -2007,11 +2207,16 @@ async function refreshSummary() {
 document.getElementById("summary-prev").addEventListener("click", () => { summaryMonth = summaryLinks.previous; refreshSummary(); });
 document.getElementById("summary-next").addEventListener("click", () => { summaryMonth = summaryLinks.next; refreshSummary(); });
 document.getElementById("summary-last").addEventListener("click", () => { summaryMonth = null; refreshSummary(); });
-document.getElementById("summary-print").addEventListener("click", () => {
-  document.body.classList.add("print-summary");
+// Prints one section on its own.
+function printSection(id) {
+  const section = document.getElementById(id);
+  section.classList.add("printing");
+  document.body.classList.add("print-one");
   window.print();
-  document.body.classList.remove("print-summary");
-});
+  document.body.classList.remove("print-one");
+  section.classList.remove("printing");
+}
+document.getElementById("summary-print").addEventListener("click", () => printSection("summary-section"));
 
 // --- Bill check ----------------------------------------------------------------------------
 
@@ -3338,6 +3543,7 @@ async function refreshLive() {
 
 // After rates change, everything worked out from them is fetched again.
 function refreshEverything() {
+  refreshYearly();
   refreshPlanner();
   refresh();
   refreshCharts();
@@ -3449,6 +3655,7 @@ const SECTION_LOADERS = {
   "income-heading": () => refreshIncome(), "bills-heading": () => refreshBills(),
   "compare-heading": () => refreshCompare(), "planner-heading": () => refreshPlanner(),
   "battery-heading": () => refreshBattery(), "alerts-heading": () => refreshAlerts(),
+  "yearly-heading": () => refreshYearly(),
 };
 function setFolded(h2, fold) {
   const wasFolded = h2.getAttribute("aria-expanded") === "false";
@@ -3565,6 +3772,8 @@ async function start() {
   every(60 * MINUTE, refreshPlanner);
   refreshBattery();
   every(6 * 60 * MINUTE, refreshBattery);
+  refreshYearly();
+  every(60 * MINUTE, () => { if (!yearlyYear) refreshYearly(); });
   refreshAlerts();
   every(10 * MINUTE, refreshAlerts);
 }

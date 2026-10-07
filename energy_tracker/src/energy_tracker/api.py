@@ -119,7 +119,7 @@ async def lifespan(_: FastAPI):
         await asyncio.to_thread(thread.join, 10)
 
 
-app = FastAPI(title="Energy Tracker", version="0.20.2", lifespan=lifespan)
+app = FastAPI(title="Energy Tracker", version="0.21.0", lifespan=lifespan)
 # The page and its chart data are mostly text: sent compressed, they are a quarter the size.
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
@@ -1013,10 +1013,14 @@ def system_performance(
 # --- Monthly summary ---------------------------------------------------------------------------
 
 
-def month_figures(start: datetime, now: datetime) -> dict | None:
-    """Everything the summary says about one calendar month, or None if it has no readings."""
+def month_figures(
+    start: datetime, now: datetime, finish: datetime | None = None, by_month: bool = False
+) -> dict | None:
+    """Everything a summary says about one calendar month (or any period from `start` to
+    `finish`), or None if it has no readings. `by_month` adds a line for each month in it."""
     zone = local_timezone()
-    end = min(following_month(start), local_midnight(now, zone))  # whole days only
+    finish = finish or following_month(start)
+    end = min(finish, local_midnight(now, zone))  # whole days only
     first = first_cost_reading()
     if first is None or start >= end or first >= end:
         return None
@@ -1050,11 +1054,22 @@ def month_figures(start: datetime, now: datetime) -> dict | None:
         day = (max if highest else min)(usable, key=usable.get)
         return {"day": day, "value": round(usable[day], 2)}
 
+    months = None
+    if by_month:
+        net: dict[str, float] = {}
+        for day, value in net_by_day.items():
+            net[f"{day:%Y-%m}"] = net.get(f"{day:%Y-%m}", 0.0) + value
+        months = [
+            {**row, "net_gbp": round(net.get(row["month"], 0.0), 2)}
+            for row in performance.monthly(days)
+        ]
+
     return {
+        "months": months,
         "from": begin.date(),
         "to": last_day,
         "days": len(days),
-        "complete": begin == start and end == following_month(start),
+        "complete": begin == start and end == finish,
         "cost": cost,
         "extra_income_gbp": round(extra, 2),
         **performance.figures(list(days.values())),
@@ -1098,6 +1113,159 @@ def monthly_summary(
         "month_before": month_figures(previous_month(start), now),
         "year_before": month_figures(month_start(start.year - 1, start.month), now),
     }
+
+
+# --- Yearly report -------------------------------------------------------------------------------
+
+
+@app.get("/api/yearly")
+@kept
+def yearly_report(year: Annotated[int | None, Query(ge=2000, le=2200)] = None) -> dict:
+    """A calendar year on one page, beside the year before."""
+    zone = local_timezone()
+    now = datetime.now(UTC)
+    this_year = now.astimezone(zone).year
+    first = first_cost_reading()
+    first_year = first.astimezone(zone).year if first else this_year
+    chosen = year or this_year
+    if not first_year <= chosen <= this_year:
+        raise HTTPException(status_code=404, detail="There are no readings for that year")
+
+    def figures(which: int, by_month: bool = False) -> dict | None:
+        return month_figures(month_start(which, 1), now, month_start(which + 1, 1), by_month)
+
+    device_years = {row["year"]: row for row in device_costs().get("years", [])}
+    payback = payback_figures().get("payback") or {}
+    saved = None
+    if payback.get("has_data"):
+        # Savings to date as they stood at the end of the year (the chart's weekly points).
+        upto = [value for day, value in payback["series"] if str(day) <= f"{chosen}-12-31"]
+        saved = upto[-1] if upto else None
+    cost = payback_figures().get("total_cost_gbp")
+    return {
+        "year": chosen,
+        "previous": chosen - 1 if chosen > first_year else None,
+        "next": chosen + 1 if chosen < this_year else None,
+        "is_current": chosen == this_year,
+        "this": figures(chosen, by_month=True),
+        "year_before": figures(chosen - 1) if chosen > first_year else None,
+        "devices": device_years.get(str(chosen)),
+        "smart_load_label": settings().smart_load_label,
+        "saved_by_year_end_gbp": saved,
+        "system_cost_gbp": cost,
+    }
+
+
+# --- Backing up and restoring settings -----------------------------------------------------------
+
+# Settings worth carrying to another install. Left out: what alerts have been sent, and
+# how far old readings have been thinned, which belong to this install's readings.
+BACKUP_SETTINGS = ("payback", "planner", "alerts", "layout", "axle_rate_p")
+BACKUP_FORMAT = 1
+
+
+@app.get("/api/backup")
+def download_backup() -> Response:
+    """Everything the user has entered, as one file. Readings are not included: they are
+    covered by Home Assistant's own backups."""
+    tariff_store.load_periods(database())  # so the starting rates are in the file too
+    content = {
+        "app": "energy-tracker",
+        "format": BACKUP_FORMAT,
+        "version": app.version,
+        "saved": datetime.now(UTC).isoformat(timespec="seconds"),
+        "tables": database().dump(),
+        "settings": {
+            key: value
+            for key in BACKUP_SETTINGS
+            if (value := database().get_setting(key)) is not None
+        },
+    }
+    name = f"energy-tracker-settings-{datetime.now(local_timezone()):%Y-%m-%d}.json"
+    return Response(
+        json.dumps(content, indent=1),
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="{name}"'},
+    )
+
+
+def checked_backup(body: bytes) -> tuple[dict[str, list[dict]], dict[str, str]]:
+    """Read a backup file and make sure every part of it can be used, before anything is
+    replaced. Raises ValueError with a message fit to show."""
+    try:
+        content = json.loads(body)
+    except ValueError:
+        raise ValueError("That is not a settings file saved by Energy Tracker") from None
+    if not isinstance(content, dict) or content.get("app") != "energy-tracker":
+        raise ValueError("That is not a settings file saved by Energy Tracker")
+    if content.get("format") != BACKUP_FORMAT:
+        raise ValueError("That file was saved by a newer version: update Energy Tracker first")
+    tables, stored = content.get("tables"), content.get("settings", {})
+    if not isinstance(tables, dict) or not isinstance(stored, dict):
+        raise ValueError("That settings file is damaged")
+    for table in Database.BACKED_UP:
+        rows = tables.get(table, [])
+        if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
+            raise ValueError("That settings file is damaged")
+    if not tables.get("tariff_periods"):
+        raise ValueError("That file has no tariff rates in it")
+    try:
+        for row in [*tables["tariff_periods"], *tables.get("comparison_tariffs", [])]:
+            bands = json.loads(row["import_bands"])
+            build_tariff(**{**row, "import_bands": bands})
+            if "effective_from" in row:
+                date.fromisoformat(row["effective_from"])
+        for row in tables.get("bills", []):
+            date.fromisoformat(row["first_day"]), date.fromisoformat(row["last_day"])
+        for row in tables.get("extra_income", []):
+            date.fromisoformat(row["day"])
+            str(row["description"])
+        settings_ = {}
+        for key in BACKUP_SETTINGS:
+            if key in stored:
+                if key != "axle_rate_p":
+                    json.loads(stored[key])
+                settings_[key] = str(stored[key])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(f"That settings file is damaged ({exc})") from None
+    return {table: tables.get(table, []) for table in Database.BACKED_UP}, settings_
+
+
+@app.post("/api/restore")
+async def restore_backup(request: Request, dry_run: bool = True) -> dict:
+    """Replace everything the user has entered with a settings file's contents.
+
+    With `dry_run` (the default) the file is only checked, and what it holds is reported.
+    """
+    body = await request.body()
+    if len(body) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="That file is too large (20 MB at most)")
+    try:
+        tables, stored = checked_backup(body)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    found = {
+        "tariff_periods": len(tables["tariff_periods"]),
+        "comparison_tariffs": len(tables["comparison_tariffs"]),
+        "bills": len(tables["bills"]),
+        "extra_income": len(tables["extra_income"]),
+        "settings": sorted(stored),
+        "saved": json.loads(body).get("saved"),
+        "version": json.loads(body).get("version"),
+    }
+    if not dry_run:
+        try:
+            database().restore(
+                tables, stored, [key for key in BACKUP_SETTINGS if key not in stored]
+            )
+        except sqlite3.Error as exc:
+            raise HTTPException(
+                status_code=422, detail=f"That settings file could not be stored ({exc})"
+            ) from exc
+        prices.forget()
+        clear_caches()
+        price_refresh.set()
+    return {"restored": not dry_run, "found": found}
 
 
 # --- Checking a bill ---------------------------------------------------------------------------

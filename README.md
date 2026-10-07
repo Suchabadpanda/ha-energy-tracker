@@ -90,6 +90,9 @@ The figures shown are made-up example data.
 - **Alerts**: a notification to your phone through Home Assistant when the
   battery misses its cheap charge, or too much is bought at the dearer rate.
 - **Monthly summary**: a month on one page, against the month before and a year earlier.
+- **Yearly report**: a year on one page, beside the year before, ready to print.
+- **Backup and restore**: everything you have entered saved as one file, to keep or to move
+  to another install.
 - **Bill check**: your bill's figures beside what the tracker measured for the same dates.
   It can read them from an E.ON Next or Octopus Energy bill PDF, without the file leaving
   your device. Bills are grouped by year, with totals for each year and overall. If a bill's

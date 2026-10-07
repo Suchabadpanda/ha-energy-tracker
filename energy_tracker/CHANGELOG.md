@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.21.0
+
+- Yearly report: a calendar year on one page, beside the year before, with a line for each
+  month and a print button.
+- Backup and restore: download everything you have entered as one file, and restore it
+  here or on another install.
+
 ## 0.20.2
 
 - Alerts: removed the "no readings for an hour" alert.
