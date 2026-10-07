@@ -119,7 +119,7 @@ async def lifespan(_: FastAPI):
         await asyncio.to_thread(thread.join, 10)
 
 
-app = FastAPI(title="Energy Tracker", version="0.20.1", lifespan=lifespan)
+app = FastAPI(title="Energy Tracker", version="0.20.2", lifespan=lifespan)
 # The page and its chart data are mostly text: sent compressed, they are a quarter the size.
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
@@ -733,7 +733,6 @@ class AlertsIn(BaseModel):
     services: list[Annotated[str, Field(pattern=r"^[a-z0-9_]{1,80}$")]] = Field(
         default=[], max_length=10
     )
-    no_readings: bool = True
     battery_not_charged: bool = True
     battery_expected_percent: int = Field(default=30, ge=5, le=100)
     dear_import: bool = True

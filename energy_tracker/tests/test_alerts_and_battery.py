@@ -65,17 +65,8 @@ def failing(now, **options):
 
 def test_nothing_is_wrong_on_an_ordinary_day():
     now = DAY + timedelta(hours=13)
-    store(steady("pv_power", DAY, now, 0, 2.0))
     store(steady("import_energy_total", DAY, DAY + timedelta(hours=6), 3.0))  # cheap hours only
     assert failing(now) == {}
-
-
-def test_silence_from_the_sensors_is_noticed_after_an_hour():
-    store(steady("pv_power", DAY, DAY + timedelta(hours=8), 0, 2.0))
-    assert "no_readings" not in failing(DAY + timedelta(hours=8, minutes=50))
-    found = failing(DAY + timedelta(hours=9, minutes=30))
-    assert found["no_readings"][0] == "on" and "08:00 on 01 Jun" in found["no_readings"][1]
-    assert "no_readings" not in failing(DAY + timedelta(hours=9, minutes=30), no_readings=False)
 
 
 def test_a_battery_left_empty_after_the_cheap_period_is_reported_once_the_period_ends():
@@ -150,17 +141,6 @@ def test_nothing_is_sent_while_alerts_are_switched_off():
     assert ha.calls == []
 
 
-def test_silence_is_announced_again_after_readings_come_back():
-    db, ha = api.database(), HomeAssistant()
-    db.set_setting("alerts", json.dumps({"enabled": True}))
-    store(steady("pv_power", DAY, DAY + timedelta(hours=8), 0, 2.0))
-    with ha.client() as http:
-        assert alerts.run(db, http, RATES, DAY + timedelta(hours=10), LONDON) == ["no_readings"]
-        store(steady("pv_power", DAY + timedelta(hours=11), DAY + timedelta(hours=12), 0, 2.0))
-        assert alerts.run(db, http, RATES, DAY + timedelta(hours=12), LONDON) == []
-        assert alerts.run(db, http, RATES, DAY + timedelta(hours=14), LONDON) == ["no_readings"]
-
-
 def test_alert_settings_can_be_saved_and_are_checked():
     data = client.get("/api/alerts").json()
     assert data["settings"]["enabled"] is False and data["services"] == []
@@ -168,8 +148,8 @@ def test_alert_settings_can_be_saved_and_are_checked():
     body = {"enabled": True, "services": ["mobile_app_phone"], "dear_import_kwh": 8}
     saved = client.post("/api/alerts/settings", json=body).json()["settings"]
     assert saved["enabled"] and saved["services"] == ["mobile_app_phone"]
-    assert saved["dear_import_kwh"] == 8 and saved["no_readings"] is True
-    assert "no_solar" not in saved and "battery_fading" not in saved  # removed in 0.20.1
+    assert saved["dear_import_kwh"] == 8 and saved["dear_import"] is True
+    assert not {"no_solar", "battery_fading", "no_readings"} & set(saved)  # removed
     bad = {"enabled": True, "services": ["notify/../../x"]}
     assert client.post("/api/alerts/settings", json=bad).status_code == 422
     assert client.post("/api/alerts/test").status_code == 409  # nothing to send through here

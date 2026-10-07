@@ -401,12 +401,11 @@ efficiency and the number of full cycles, with a table by month.
 
 Under **Alerts**, tick **Send alerts** and save. When a check starts failing, a
 notification is sent through Home Assistant: to phones with the Home Assistant app, and
-into Home Assistant's own notifications. Each problem is announced once and not repeated
-while it lasts. **Send a test alert** shows what one looks like.
+into Home Assistant's own notifications. Each problem is announced once a day at
+most. **Send a test alert** shows what one looks like.
 
 | Alert | When |
 |---|---|
-| No readings | Nothing has been read from the solar system for an hour. |
 | Battery did not charge | Within three hours of a cheap period ending, the battery took under 0.5 kWh in it and is below the charge level you set (30% unless changed). |
 | Dear-rate import | More than your limit (5 kWh unless changed) has been bought outside the cheap rate today. |
 

@@ -87,7 +87,7 @@ The figures shown are made-up example data.
   of what a bigger battery would save.
 - **Battery health**: usable capacity, efficiency and full cycles, month by month, to see
   ageing as it happens.
-- **Alerts**: a notification to your phone through Home Assistant when readings stop, the
+- **Alerts**: a notification to your phone through Home Assistant when the
   battery misses its cheap charge, or too much is bought at the dearer rate.
 - **Monthly summary**: a month on one page, against the month before and a year earlier.
 - **Bill check**: your bill's figures beside what the tracker measured for the same dates.

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.20.2
+
+- Alerts: removed the "no readings for an hour" alert.
+
 ## 0.20.1
 
 - Alerts: removed the "no solar by midday" and "battery capacity dropped" alerts. Battery
@@ -8,7 +12,7 @@
 ## 0.20.0
 
 - Alerts: a notification through Home Assistant, to your phone and into Home Assistant's
-  own notifications, when no readings arrive, the battery does not charge in the cheap
+  own notifications, when the battery does not charge in the cheap
   period, or too much is bought at the dearer rate. Off until you turn it on.
 - Battery health: usable capacity, efficiency and full cycles, with the trend month by
   month.

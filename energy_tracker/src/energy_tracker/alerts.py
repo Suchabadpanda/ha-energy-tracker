@@ -2,8 +2,7 @@
 
 Checks run every few minutes alongside the collector. When one starts failing, a
 notification is sent once: to the phones chosen (Home Assistant's mobile app) and as a
-notification inside Home Assistant. It is not sent again until the problem has cleared and
-come back, or (for the daily checks) until another day.
+notification inside Home Assistant. It is not sent again that day.
 
 This is the one place the app asks Home Assistant to do something, and all it asks for is
 a notification. It never changes a device or a setting.
@@ -28,21 +27,18 @@ log = logging.getLogger("alerts")
 
 CHECK_EVERY = timedelta(minutes=5)
 LOG_LENGTH = 30
-SILENT_AFTER = timedelta(minutes=60)  # no readings for this long is a problem
 
 DEFAULTS = {
     "enabled": False,
     # Home Assistant notify services to use, such as "mobile_app_my_phone". Empty means
     # every phone with the Home Assistant app.
     "services": [],
-    "no_readings": True,
     "battery_not_charged": True,
     "battery_expected_percent": 30,
     "dear_import": True,
     "dear_import_kwh": 5.0,
 }
 TITLES = {
-    "no_readings": "No readings from the solar system",
     "battery_not_charged": "Battery did not charge in the cheap period",
     "dear_import": "Buying a lot at the dearer rate today",
     "test": "Energy Tracker test alert",
@@ -127,17 +123,6 @@ def evaluate(
     midnight = datetime.combine(today, clock(0), timezone)
     tariff = schedule.on(today)
 
-    if options["no_readings"]:
-        newest = db.latest(["pv_power", "load_power", "grid_power"], now - timedelta(days=2))
-        if newest:  # nothing at all means the app has only just been installed
-            last = max(when for when, _ in newest.values())
-            if now - last > SILENT_AFTER:
-                failing["no_readings"] = (
-                    "on",
-                    f"Nothing has been read since {last.astimezone(timezone):%H:%M on %d %b}. "
-                    "Check the Sigenergy integration in Home Assistant.",
-                )
-
     if options["battery_not_charged"] and not tariff.dynamic:
         for window in planner.cheap_times(tariff):
             ends = clock.fromisoformat("00:00" if window["end"] == "24:00" else window["end"])
@@ -218,8 +203,5 @@ def run(
             },
         )
         db.set_setting("alerts_log", json.dumps(entries[:LOG_LENGTH]))
-    # A check that has cleared may be announced again next time it fails.
-    for check in [name for name in state if name not in failing and name == "no_readings"]:
-        del state[check]
     db.set_setting("alerts_state", json.dumps(state))
     return announced
