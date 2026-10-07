@@ -12,10 +12,11 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 
-from . import backfill, income, live
+from . import alerts, backfill, battery, income, live, tariff_store
 from .config import Metric, Settings
 from .db import Database
 from .normalise import normalise
+from .usage import Counter
 
 log = logging.getLogger("collector")
 
@@ -62,6 +63,34 @@ def build_rows(states: dict[str, dict], metrics: list[Metric], now: datetime) ->
     return rows
 
 
+_health: dict = {"day": None, "value": None}
+
+
+def battery_health(db: Database, settings: Settings, now: datetime) -> dict | None:
+    """The battery's capacity trend, worked out once a day (it changes over months)."""
+    if not alerts.settings(db)["enabled"]:
+        return None
+    today = now.astimezone(settings.timezone).date()
+    if _health["day"] != today:
+        _health.update(day=today, value=health(db, settings, now))
+    return _health["value"]
+
+
+def health(db: Database, settings: Settings, now: datetime) -> dict:
+    """Battery capacity and efficiency by month, from everything stored."""
+    beginning = datetime(2000, 1, 1, tzinfo=UTC)
+    names = ["battery_charge_energy_total", "battery_discharge_energy_total"]
+    samples = db.last_in_buckets([*names, "battery_soc"], beginning, now, 1800)
+    gap = timedelta(minutes=75)
+    months = battery.by_month(
+        samples["battery_soc"],
+        Counter(samples[names[0]], gap),
+        Counter(samples[names[1]], gap),
+        settings.timezone,
+    )
+    return battery.summary(months)
+
+
 def run(settings: Settings, db: Database, metrics: list[Metric], stop: threading.Event) -> None:
     """Collect until `stop` is set. A failed cycle is logged and tried again next time."""
     log.info(
@@ -101,6 +130,7 @@ def run(settings: Settings, db: Database, metrics: list[Metric], stop: threading
             log.debug("No Axle event history: %s", exc)
         last_stored = datetime.now(UTC)
         last_thinned: datetime | None = None
+        last_checked: datetime | None = None
 
         while not stop.is_set():
             try:
@@ -122,6 +152,23 @@ def run(settings: Settings, db: Database, metrics: list[Metric], stop: threading
                     log.info("Recorded an Axle export event")
                 if income.settle(db, now):
                     log.info("Worked out the estimated payment for a finished Axle event")
+
+                # Every few minutes, see whether anything needs an alert.
+                if last_checked is None or now - last_checked >= alerts.CHECK_EVERY:
+                    last_checked = now
+                    try:
+                        sent = alerts.run(
+                            db,
+                            client,
+                            tariff_store.load_schedule(db),
+                            now,
+                            settings.timezone,
+                            battery_health(db, settings, now),
+                        )
+                        if sent:
+                            log.info("Sent alerts: %s", ", ".join(sent))
+                    except (httpx.HTTPError, sqlite3.Error, ValueError) as exc:
+                        log.error("Alert checks failed: %s", exc)
 
                 # Once a day, thin old readings so the database stays small.
                 if last_thinned is None or now - last_thinned > THIN_EVERY:

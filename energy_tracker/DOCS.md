@@ -384,6 +384,42 @@ Things to know:
 - The price list is only contacted when you open the form or press **Fill in prices**. A
   region letter and tariff code are sent; nothing else.
 
+## Battery health
+
+Shown once the battery's charge level has been collected for a while. It gives the usable
+capacity now, the capacity when first measured, the change between them, round-trip
+efficiency and the number of full cycles, with a table by month.
+
+- Capacity is worked out from how the battery charges: the energy put in, divided by how
+  much of the battery it filled.
+- One month's figure can be a few percent out. "Now" is the average of the last three
+  months measured, and a change is only shown after six months.
+- Readings imported as older history have no charge level, so months before the app began
+  collecting are not measured.
+
+## Alerts
+
+Under **Alerts**, tick **Send alerts** and save. When a check starts failing, a
+notification is sent through Home Assistant: to phones with the Home Assistant app, and
+into Home Assistant's own notifications. Each problem is announced once and not repeated
+while it lasts. **Send a test alert** shows what one looks like.
+
+| Alert | When |
+|---|---|
+| No readings | Nothing has been read from the solar system for an hour. |
+| Battery did not charge | Within three hours of a cheap period ending, the battery took under 0.5 kWh in it and is below the charge level you set (30% unless changed). |
+| Dear-rate import | More than your limit (5 kWh unless changed) has been bought outside the cheap rate today. |
+| No solar | The panels have generated nothing by midday. |
+| Battery capacity | Usable capacity is a tenth below what was first measured. |
+
+- **Send to**: with nothing ticked, alerts go to every phone that has the Home Assistant
+  app signed in. Tick particular ones to limit it.
+- The battery and dear-rate alerts need a tariff with a cheap period; they do nothing on a
+  flat tariff or on half-hourly prices.
+- A battery deliberately left low before a sunny day can trigger the battery alert. Lower
+  the charge level, or untick it, if that happens often.
+- Checks run every five minutes. **Alerts sent lately** lists the last thirty.
+
 ## Tariff switch planner
 
 Choose a tariff saved under **Compare tariffs** to see the last twelve months on it, month
@@ -463,7 +499,8 @@ replaces what the earlier one brought in.
 - The dashboard opens through Home Assistant, behind its login. No network port is opened.
 - The only outside service contacted is Octopus Energy's public price list, and only when
   you use the tariff lookup.
-- The app only reads from Home Assistant. It never changes a device or setting.
+- The app reads from Home Assistant and never changes a device or setting. The one thing it
+  asks Home Assistant to do is send a notification, and only once you turn **Alerts** on.
 - Readings and rates are stored in the app's data folder and are included in Home
   Assistant backups. The app pauses for a few seconds while a backup is taken.
 

@@ -27,6 +27,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 
 from . import (
+    alerts,
     billcheck,
     billreader,
     collector,
@@ -118,7 +119,7 @@ async def lifespan(_: FastAPI):
         await asyncio.to_thread(thread.join, 10)
 
 
-app = FastAPI(title="Energy Tracker", version="0.19.0", lifespan=lifespan)
+app = FastAPI(title="Energy Tracker", version="0.20.0", lifespan=lifespan)
 # The page and its chart data are mostly text: sent compressed, they are a quarter the size.
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
@@ -430,6 +431,7 @@ def keep_figures_ready(stop: threading.Event) -> None:
             lambda: system_performance.fresh("12m"),
             lambda: compare.fresh("12m"),
             lambda: switch_planner.fresh(None),
+            battery_health.fresh,
         ):
             if stop.is_set():
                 return
@@ -714,6 +716,82 @@ def delete_comparison(row_id: int) -> dict:
         raise HTTPException(status_code=404, detail="That tariff is not in the list")
     clear_caches()
     return {"removed": row_id}
+
+
+# --- Battery health and alerts -------------------------------------------------------------------
+
+
+@app.get("/api/battery")
+@kept
+def battery_health() -> dict:
+    """Usable capacity and efficiency of the battery, month by month."""
+    return collector.health(database(), settings(), datetime.now(UTC))
+
+
+class AlertsIn(BaseModel):
+    enabled: bool = False
+    services: list[Annotated[str, Field(pattern=r"^[a-z0-9_]{1,80}$")]] = Field(
+        default=[], max_length=10
+    )
+    no_readings: bool = True
+    battery_not_charged: bool = True
+    battery_expected_percent: int = Field(default=30, ge=5, le=100)
+    dear_import: bool = True
+    dear_import_kwh: float = Field(default=5.0, ge=0.5, le=500)
+    no_solar: bool = True
+    battery_fading: bool = True
+
+
+def home_assistant() -> httpx.Client:
+    """A connection to Home Assistant, for the few things asked of it outside the collector."""
+    return httpx.Client(
+        base_url=settings().ha_url,
+        headers={"Authorization": f"Bearer {settings().ha_token}"},
+        timeout=15,
+    )
+
+
+@app.get("/api/alerts")
+def alert_settings() -> dict:
+    """What alerts are set to do, where they can be sent, and the ones sent lately."""
+    services: list[str] = []
+    problem = None
+    if settings().collecting:
+        try:
+            with home_assistant() as client:
+                services = alerts.phone_services(client)
+        except httpx.HTTPError as exc:
+            problem = f"Could not ask Home Assistant where alerts can be sent ({exc})"
+    else:
+        problem = "No Home Assistant connection is configured, so alerts cannot be sent"
+    return {
+        "settings": alerts.settings(database()),
+        "services": services,
+        "problem": problem,
+        "recent": alerts.history(database()),
+    }
+
+
+@app.post("/api/alerts/settings")
+def save_alert_settings(body: AlertsIn) -> dict:
+    database().set_setting("alerts", body.model_dump_json())
+    return alert_settings()
+
+
+@app.post("/api/alerts/test")
+def send_test_alert() -> dict:
+    """Send a test notification now, to the places alerts are set to go."""
+    if not settings().collecting:
+        raise HTTPException(status_code=409, detail="No Home Assistant connection is configured")
+    chosen = alerts.settings(database())["services"]
+    with home_assistant() as client:
+        problems = alerts.send(
+            client,
+            chosen,
+            "test",
+            "This is a test. Alerts from Energy Tracker will look like this.",
+        )
+    return {"sent": not problems, "problems": problems}
 
 
 # --- Planning a switch of tariff -----------------------------------------------------------------

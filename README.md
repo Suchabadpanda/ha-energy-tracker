@@ -85,6 +85,11 @@ The figures shown are made-up example data.
 - **History**: any past day, week, month or year as a chart and table, with a CSV download.
 - **Performance**: self-sufficiency, battery efficiency and dear-rate import, with an estimate
   of what a bigger battery would save.
+- **Battery health**: usable capacity, efficiency and full cycles, month by month, to see
+  ageing as it happens.
+- **Alerts**: a notification to your phone through Home Assistant when readings stop, the
+  battery misses its cheap charge, too much is bought at the dearer rate, or the panels
+  generate nothing.
 - **Monthly summary**: a month on one page, against the month before and a year earlier.
 - **Bill check**: your bill's figures beside what the tracker measured for the same dates.
   It can read them from an E.ON Next or Octopus Energy bill PDF, without the file leaving
@@ -141,7 +146,8 @@ Options, optional equipment and using different sensors are covered in
 - The dashboard opens through Home Assistant (ingress), so it is behind Home Assistant's
   login. The app publishes no network port and refuses connections from anywhere else.
 - It uses the access Home Assistant gives the app. There is no token or password to store.
-- It only reads from Home Assistant. It never changes a device or setting.
+- It reads from Home Assistant and never changes a device or setting. The one thing it asks
+  Home Assistant to do is send a notification, and only once you turn alerts on.
 - For access away from home, use whatever you use for Home Assistant itself (Tailscale or
   Home Assistant Cloud). Do not forward a router port to it.
 

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.20.0
+
+- Alerts: a notification through Home Assistant, to your phone and into Home Assistant's
+  own notifications, when no readings arrive, the battery does not charge in the cheap
+  period, too much is bought at the dearer rate, the panels generate nothing by midday, or
+  the battery's capacity has dropped. Off until you turn it on.
+- Battery health: usable capacity, efficiency and full cycles, with the trend month by
+  month.
+
 ## 0.19.0
 
 - Tariff switch planner: the last twelve months on another tariff, month by month, beside
