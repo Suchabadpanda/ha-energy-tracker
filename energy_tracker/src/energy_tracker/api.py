@@ -119,7 +119,7 @@ async def lifespan(_: FastAPI):
         await asyncio.to_thread(thread.join, 10)
 
 
-app = FastAPI(title="Energy Tracker", version="0.20.0", lifespan=lifespan)
+app = FastAPI(title="Energy Tracker", version="0.20.1", lifespan=lifespan)
 # The page and its chart data are mostly text: sent compressed, they are a quarter the size.
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
@@ -738,8 +738,6 @@ class AlertsIn(BaseModel):
     battery_expected_percent: int = Field(default=30, ge=5, le=100)
     dear_import: bool = True
     dear_import_kwh: float = Field(default=5.0, ge=0.5, le=500)
-    no_solar: bool = True
-    battery_fading: bool = True
 
 
 def home_assistant() -> httpx.Client:

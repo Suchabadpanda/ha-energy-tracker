@@ -66,7 +66,6 @@ def failing(now, **options):
 def test_nothing_is_wrong_on_an_ordinary_day():
     now = DAY + timedelta(hours=13)
     store(steady("pv_power", DAY, now, 0, 2.0))
-    store(steady("pv_energy_total", DAY, now, 1.0))
     store(steady("import_energy_total", DAY, DAY + timedelta(hours=6), 3.0))  # cheap hours only
     assert failing(now) == {}
 
@@ -107,37 +106,6 @@ def test_import_outside_the_cheap_rate_is_reported_past_the_limit():
     assert "dear_import" not in failing(now, dear_import_kwh=9)
     flat = Schedule([build_tariff("Flat", [{**BANDS[0], "end": "24:00"}], 0, 0)])
     assert alerts.evaluate(api.database(), flat, now, LONDON, ON) == {}  # no cheap rate to miss
-
-
-def test_no_generation_by_midday_is_reported():
-    now = DAY + timedelta(hours=12, minutes=30)
-    store(steady("pv_energy_total", DAY, now, 0.0))
-    assert "no_solar" in failing(now)
-    assert "no_solar" not in failing(DAY + timedelta(hours=9))  # too early to say
-
-
-def test_any_generation_by_midday_is_enough():
-    now = DAY + timedelta(hours=12, minutes=30)
-    store(steady("pv_energy_total", DAY, now, 0.5))
-    assert "no_solar" not in failing(now)
-
-
-def test_fading_capacity_is_reported_from_the_health_figures():
-    health = {
-        "change_percent": -12.0,
-        "latest_month": "2027-06",
-        "latest_kwh": 8.8,
-        "first_kwh": 10.0,
-    }
-    found = alerts.evaluate(api.database(), RATES, DAY, LONDON, ON, health)["battery_fading"]
-    assert found == (
-        "2027-06",
-        "Usable capacity is about 8.8 kWh, 12% below the 10.0 kWh first measured.",
-    )
-    assert (
-        alerts.evaluate(api.database(), RATES, DAY, LONDON, ON, {**health, "change_percent": -4})
-        == {}
-    )
 
 
 def test_an_alert_goes_to_every_phone_and_into_home_assistant_once():
@@ -200,7 +168,8 @@ def test_alert_settings_can_be_saved_and_are_checked():
     body = {"enabled": True, "services": ["mobile_app_phone"], "dear_import_kwh": 8}
     saved = client.post("/api/alerts/settings", json=body).json()["settings"]
     assert saved["enabled"] and saved["services"] == ["mobile_app_phone"]
-    assert saved["dear_import_kwh"] == 8 and saved["no_solar"] is True
+    assert saved["dear_import_kwh"] == 8 and saved["no_readings"] is True
+    assert "no_solar" not in saved and "battery_fading" not in saved  # removed in 0.20.1
     bad = {"enabled": True, "services": ["notify/../../x"]}
     assert client.post("/api/alerts/settings", json=bad).status_code == 422
     assert client.post("/api/alerts/test").status_code == 409  # nothing to send through here

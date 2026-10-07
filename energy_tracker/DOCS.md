@@ -409,8 +409,6 @@ while it lasts. **Send a test alert** shows what one looks like.
 | No readings | Nothing has been read from the solar system for an hour. |
 | Battery did not charge | Within three hours of a cheap period ending, the battery took under 0.5 kWh in it and is below the charge level you set (30% unless changed). |
 | Dear-rate import | More than your limit (5 kWh unless changed) has been bought outside the cheap rate today. |
-| No solar | The panels have generated nothing by midday. |
-| Battery capacity | Usable capacity is a tenth below what was first measured. |
 
 - **Send to**: with nothing ticked, alerts go to every phone that has the Home Assistant
   app signed in. Tick particular ones to limit it.

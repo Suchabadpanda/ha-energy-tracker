@@ -63,19 +63,6 @@ def build_rows(states: dict[str, dict], metrics: list[Metric], now: datetime) ->
     return rows
 
 
-_health: dict = {"day": None, "value": None}
-
-
-def battery_health(db: Database, settings: Settings, now: datetime) -> dict | None:
-    """The battery's capacity trend, worked out once a day (it changes over months)."""
-    if not alerts.settings(db)["enabled"]:
-        return None
-    today = now.astimezone(settings.timezone).date()
-    if _health["day"] != today:
-        _health.update(day=today, value=health(db, settings, now))
-    return _health["value"]
-
-
 def health(db: Database, settings: Settings, now: datetime) -> dict:
     """Battery capacity and efficiency by month, from everything stored."""
     beginning = datetime(2000, 1, 1, tzinfo=UTC)
@@ -163,7 +150,6 @@ def run(settings: Settings, db: Database, metrics: list[Metric], stop: threading
                             tariff_store.load_schedule(db),
                             now,
                             settings.timezone,
-                            battery_health(db, settings, now),
                         )
                         if sent:
                             log.info("Sent alerts: %s", ", ".join(sent))

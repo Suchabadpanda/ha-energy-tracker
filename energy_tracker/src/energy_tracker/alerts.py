@@ -29,7 +29,6 @@ log = logging.getLogger("alerts")
 CHECK_EVERY = timedelta(minutes=5)
 LOG_LENGTH = 30
 SILENT_AFTER = timedelta(minutes=60)  # no readings for this long is a problem
-MIDDAY = clock(12)
 
 DEFAULTS = {
     "enabled": False,
@@ -41,15 +40,11 @@ DEFAULTS = {
     "battery_expected_percent": 30,
     "dear_import": True,
     "dear_import_kwh": 5.0,
-    "no_solar": True,
-    "battery_fading": True,
 }
 TITLES = {
     "no_readings": "No readings from the solar system",
     "battery_not_charged": "Battery did not charge in the cheap period",
     "dear_import": "Buying a lot at the dearer rate today",
-    "no_solar": "No solar generation today",
-    "battery_fading": "Battery capacity has dropped",
     "test": "Energy Tracker test alert",
 }
 
@@ -121,7 +116,6 @@ def evaluate(
     now: datetime,
     timezone: ZoneInfo,
     options: dict,
-    battery_health: dict | None = None,
 ) -> dict[str, tuple[str, str]]:
     """The checks failing now, as check -> (key, message).
 
@@ -184,26 +178,6 @@ def evaluate(
                     f"(your limit is {options['dear_import_kwh']:g} kWh).",
                 )
 
-    if options["no_solar"] and MIDDAY <= local.time() <= clock(15):
-        solar = _counter(db, "pv_energy_total", midnight, now)
-        # Only judged once a full morning of readings is in hand.
-        if solar and solar.first_time <= midnight + timedelta(hours=1):
-            made = solar.between(midnight, now)
-            if made < 0.05:
-                failing["no_solar"] = (
-                    str(today),
-                    f"The panels have generated {made:.2f} kWh by {local:%H:%M}. On even a dull "
-                    "day there is usually something by now.",
-                )
-
-    if options["battery_fading"] and battery_health and battery_health.get("change_percent"):
-        if battery_health["change_percent"] <= -10:
-            failing["battery_fading"] = (
-                battery_health["latest_month"],
-                f"Usable capacity is about {battery_health['latest_kwh']} kWh, "
-                f"{-battery_health['change_percent']:.0f}% below the "
-                f"{battery_health['first_kwh']} kWh first measured.",
-            )
     return failing
 
 
@@ -213,7 +187,6 @@ def run(
     schedule: Schedule,
     now: datetime,
     timezone: ZoneInfo,
-    battery_health: dict | None = None,
 ) -> list[str]:
     """Run the checks and send a notification for each that has newly started failing.
 
@@ -222,7 +195,7 @@ def run(
     options = settings(db)
     if not options["enabled"]:
         return []
-    failing = evaluate(db, schedule, now, timezone, options, battery_health)
+    failing = evaluate(db, schedule, now, timezone, options)
     state = _state(db)
     announced: list[str] = []
     for check, (key, message) in failing.items():

@@ -740,8 +740,6 @@
         <input type="number" name="dear_import_kwh" min="0.5" max="500" step="0.5" aria-label="Limit in kWh">
         <span>kWh</span>
       </div>
-      <label class="wide"><input type="checkbox" name="no_solar"> The panels have generated nothing by midday</label>
-      <label class="wide"><input type="checkbox" name="battery_fading"> The battery's usable capacity has dropped by a tenth</label>
       <div class="actions">
         <button class="primary" type="submit">Save</button>
         <button type="button" id="alerts-test">Send a test alert</button>
@@ -1842,7 +1840,7 @@ async function refreshBattery() {
 // --- Alerts --------------------------------------------------------------------------------
 
 const alertsForm = document.getElementById("alerts-form");
-const ALERT_SWITCHES = ["enabled", "no_readings", "battery_not_charged", "dear_import", "no_solar", "battery_fading"];
+const ALERT_SWITCHES = ["enabled", "no_readings", "battery_not_charged", "dear_import"];
 const ALERT_NUMBERS = ["battery_expected_percent", "dear_import_kwh"];
 let alertsFilled = false;
 function alertsMessage(text, isError = false) {
