@@ -360,24 +360,6 @@
     </div>
   </div>
 
-  <div id="battery-section" hidden>
-    <h2 id="battery-heading">Battery health</h2>
-    <div class="tiles" id="battery-tiles"></div>
-    <div class="chart" style="margin-top: 12px;">
-      <div class="hint" id="battery-hint" style="margin-top: 0;"></div>
-      <details id="battery-months">
-        <summary>Month by month</summary>
-        <div class="table-scroll">
-          <table>
-            <thead><tr><th>Month</th><th class="num">Usable capacity</th><th class="num">Efficiency</th>
-              <th class="num">Charged</th><th class="num">Discharged</th></tr></thead>
-            <tbody id="battery-rows"></tbody>
-          </table>
-        </div>
-      </details>
-    </div>
-  </div>
-
   <div id="summary-section">
     <div class="filters">
       <h2 id="summary-heading">Monthly summary</h2>
@@ -1960,47 +1942,6 @@ document.getElementById("restore-check").addEventListener("click", async () => {
   } catch (err) { restoreMessage(err.message, true); }
 });
 
-// --- Battery health ------------------------------------------------------------------------
-
-function renderBattery(data) {
-  document.getElementById("battery-section").hidden = !data.has_data;
-  if (!data.has_data) return;
-  const change = data.change_percent;
-  renderTiles(document.getElementById("battery-tiles"), [
-    { metric: "now", label: "Usable capacity now", unit: "kWh", digits: 1 },
-    { metric: "first", label: "When first measured", unit: "kWh", digits: 1 },
-    { metric: "change", label: "Change", unit: "%", digits: 1 },
-    { metric: "efficiency", label: "Round-trip efficiency", unit: "%", digits: 0 },
-    { metric: "cycles", label: "Full cycles so far", digits: 0 },
-  ], Object.fromEntries(Object.entries({
-    now: [data.latest_kwh, "Average of the last three months measured"],
-    first: [data.first_kwh, monthLabel(data.first_month)],
-    change: [change, change === null ? "" : change <= -10 ? "Worth checking against the warranty" : "Within normal variation"],
-    efficiency: [data.efficiency_percent, "Energy out for every 100 in"],
-    cycles: [data.cycles, "Energy discharged, in whole batteries"],
-  }).filter(([, [v]]) => typeof v === "number").map(([k, [v, note]]) => [k, { value: v, note }])));
-  const cell = (text, className) => Object.assign(document.createElement("td"), { textContent: text, className: className ?? "" });
-  document.getElementById("battery-rows").replaceChildren(...[...data.months].reverse().map(m => {
-    const tr = document.createElement("tr");
-    tr.append(cell(monthLabel(m.month)), cell(m.capacity_kwh ? m.capacity_kwh.toFixed(1) + " kWh" : "–", "num"),
-              cell(m.efficiency_percent ? m.efficiency_percent.toFixed(0) + "%" : "–", "num"),
-              cell(m.charged_kwh.toFixed(0) + " kWh", "num"), cell(m.discharged_kwh.toFixed(0) + " kWh", "num"));
-    return tr;
-  }));
-  document.getElementById("battery-hint").textContent =
-    "Capacity is worked out from how the battery charges: the energy put in, divided by how much of the battery it " +
-    "filled. One month's figure can be a few percent out, so judge by the trend. " +
-    (change === null ? "A change is shown once six months have been measured (" + data.measured_months + " so far). " : "") +
-    "Batteries usually lose a couple of percent a year; a warranty typically promises 70% after ten years. " +
-    "A dash means too little went through the battery that month to measure it.";
-}
-const monthLabel = key => new Date(key + "-01T00:00").toLocaleDateString([], { month: "long", year: "numeric" });
-async function refreshBattery() {
-  if (!sectionOpen("battery-heading")) return;  // fetched when the section is opened
-  try { renderBattery(await getJson("api/battery")); }
-  catch (err) { document.getElementById("battery-hint").textContent = "Could not work out battery health (" + err.message + ")."; }
-}
-
 // --- Monthly summary -----------------------------------------------------------------------
 
 let summaryMonth = null;   // null means last month
@@ -3544,7 +3485,7 @@ const SECTION_LOADERS = {
   "device-costs-heading": () => refreshDeviceCosts(), "roi-heading": () => refreshPayback(),
   "income-heading": () => refreshIncome(), "bills-heading": () => refreshBills(),
   "compare-heading": () => refreshCompare(), "planner-heading": () => refreshPlanner(),
-  "battery-heading": () => refreshBattery(),
+
   "yearly-heading": () => refreshYearly(),
 };
 function setFolded(h2, fold) {
@@ -3660,8 +3601,6 @@ async function start() {
   every(30 * MINUTE, refreshCompare);
   refreshPlanner();
   every(60 * MINUTE, refreshPlanner);
-  refreshBattery();
-  every(6 * 60 * MINUTE, refreshBattery);
   refreshYearly();
   every(60 * MINUTE, () => { if (!yearlyYear) refreshYearly(); });
 }

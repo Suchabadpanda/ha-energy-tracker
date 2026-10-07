@@ -403,19 +403,6 @@ Things to know:
 - The price list is only contacted when you open the form or press **Fill in prices**. A
   region letter and tariff code are sent; nothing else.
 
-## Battery health
-
-Shown once the battery's charge level has been collected for a while. It gives the usable
-capacity now, the capacity when first measured, the change between them, round-trip
-efficiency and the number of full cycles, with a table by month.
-
-- Capacity is worked out from how the battery charges: the energy put in, divided by how
-  much of the battery it filled.
-- One month's figure can be a few percent out. "Now" is the average of the last three
-  months measured, and a change is only shown after six months.
-- Readings imported as older history have no charge level, so months before the app began
-  collecting are not measured.
-
 ## Tariff switch planner
 
 Choose a tariff saved under **Compare tariffs** to see the last twelve months on it, month

@@ -85,8 +85,6 @@ The figures shown are made-up example data.
 - **History**: any past day, week, month or year as a chart and table, with a CSV download.
 - **Performance**: self-sufficiency, battery efficiency and dear-rate import, with an estimate
   of what a bigger battery would save.
-- **Battery health**: usable capacity, efficiency and full cycles, month by month, to see
-  ageing as it happens.
 - **Monthly summary**: a month on one page, against the month before and a year earlier.
 - **Yearly report**: a year on one page, beside the year before, ready to print.
 - **Backup and restore**: everything you have entered saved as one file, to keep or to move

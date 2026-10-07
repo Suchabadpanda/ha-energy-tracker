@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.22.2
+
+- The Battery health section has been removed.
+
 ## 0.22.1
 
 - Alerts have been removed. The app is back to only ever reading from Home Assistant.

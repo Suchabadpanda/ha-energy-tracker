@@ -12,11 +12,10 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 
-from . import backfill, battery, income, live
+from . import backfill, income, live
 from .config import Metric, Settings
 from .db import Database
 from .normalise import normalise
-from .usage import Counter
 
 log = logging.getLogger("collector")
 
@@ -61,21 +60,6 @@ def build_rows(states: dict[str, dict], metrics: list[Metric], now: datetime) ->
         rows.append((now, metric.name, value * metric.scale))
     polled = True
     return rows
-
-
-def health(db: Database, settings: Settings, now: datetime) -> dict:
-    """Battery capacity and efficiency by month, from everything stored."""
-    beginning = datetime(2000, 1, 1, tzinfo=UTC)
-    names = ["battery_charge_energy_total", "battery_discharge_energy_total"]
-    samples = db.last_in_buckets([*names, "battery_soc"], beginning, now, 1800)
-    gap = timedelta(minutes=75)
-    months = battery.by_month(
-        samples["battery_soc"],
-        Counter(samples[names[0]], gap),
-        Counter(samples[names[1]], gap),
-        settings.timezone,
-    )
-    return battery.summary(months)
 
 
 def run(settings: Settings, db: Database, metrics: list[Metric], stop: threading.Event) -> None:

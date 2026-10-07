@@ -118,7 +118,7 @@ async def lifespan(_: FastAPI):
         await asyncio.to_thread(thread.join, 10)
 
 
-app = FastAPI(title="Energy Tracker", version="0.22.1", lifespan=lifespan)
+app = FastAPI(title="Energy Tracker", version="0.22.2", lifespan=lifespan)
 # The page and its chart data are mostly text: sent compressed, they are a quarter the size.
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
@@ -430,7 +430,6 @@ def keep_figures_ready(stop: threading.Event) -> None:
             lambda: system_performance.fresh("12m"),
             lambda: compare.fresh("12m"),
             lambda: switch_planner.fresh(None),
-            battery_health.fresh,
         ):
             if stop.is_set():
                 return
@@ -715,16 +714,6 @@ def delete_comparison(row_id: int) -> dict:
         raise HTTPException(status_code=404, detail="That tariff is not in the list")
     clear_caches()
     return {"removed": row_id}
-
-
-# --- Battery health -------------------------------------------------------------------------
-
-
-@app.get("/api/battery")
-@kept
-def battery_health() -> dict:
-    """Usable capacity and efficiency of the battery, month by month."""
-    return collector.health(database(), settings(), datetime.now(UTC))
 
 
 # --- Planning a switch of tariff -----------------------------------------------------------------
