@@ -7,17 +7,19 @@
 <style>
   :root {
     --bg: #f5f6f4; --card: #ffffff; --text: #1c2321; --muted: #66706c; --line: #dfe3e0;
-    --solar: #c98a00; --load: #3b6fb6; --grid: #b0483c; --battery: #2f8f6b;
-    /* The power metrics chart uses the colours of Sigenergy's own app. */
-    --flow-solar: #c9a800; --flow-load: #9a3fe6; --flow-grid: #6c6cf0; --flow-battery: #10b3ac;
-    --heatpump: #b8592a; --ev: #7a52b3; --house: #3b6fb6;
+    /* Energy colours follow Sigenergy's own app: solar yellow, consumption purple, grid
+       lilac-blue, battery cyan (a little deeper here, to show on a light background). */
+    --solar: #c9a800; --load: #9a3fe6; --grid: #6c6cf0; --battery: #10b3ac;
+    --export: #2f8f6b; --heatpump: #b8592a; --ev: #2f7fc1; --house: #9a3fe6;
+    /* Colours with a meaning of their own, apart from any energy flow. */
+    --accent: #3b6fb6; --danger: #b0483c; --good: #2f8f6b; --warn: #c98a00;
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #151917; --card: #1e2421; --text: #e8ece9; --muted: #98a39e; --line: #2e3632;
-      --solar: #f0b429; --load: #7aa7e6; --grid: #e5796c; --battery: #5cc79e;
-      --flow-solar: #f2e24a; --flow-load: #b266f5; --flow-grid: #8f8ffb; --flow-battery: #4ee6e0;
-      --heatpump: #e8956a; --ev: #b79be8; --house: #7aa7e6;
+      --solar: #f2e24a; --load: #b266f5; --grid: #8f8ffb; --battery: #4ee6e0;
+      --export: #5cc79e; --heatpump: #e8956a; --ev: #6db3ea; --house: #b266f5;
+      --accent: #7aa7e6; --danger: #e5796c; --good: #5cc79e; --warn: #f0b429;
     }
   }
   * { box-sizing: border-box; }
@@ -49,17 +51,18 @@
   h2[aria-expanded] { cursor: pointer; user-select: none; scroll-margin-top: 76px; }
   h2[aria-expanded]::before { content: "\25BE"; display: inline-block; width: 1.1em; }
   h2[aria-expanded="false"]::before { content: "\25B8"; }
-  h2[aria-expanded]:focus-visible { outline: 2px solid var(--load); outline-offset: 3px; border-radius: 3px; }
+  h2[aria-expanded]:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 3px; }
   .folded-away { display: none !important; }
   .label-text { display: block; }
   h1 { font-size: 22px; margin: 0; }
   h2 { font-size: 14px; font-weight: 600; color: var(--muted); margin: 28px 0 10px;
        text-transform: uppercase; letter-spacing: .05em; }
   #status { color: var(--muted); font-size: 14px; }
-  #status.stale { color: var(--grid); }
+  #status.stale { color: var(--danger); }
   .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
   .tile { background: var(--card); border: 1px solid var(--line); border-radius: 10px;
           padding: 14px 16px; }
+  .tile.tinted { border-top: 3px solid var(--c); padding-top: 12px; }
   .tile .label { color: var(--muted); font-size: 13px; }
   .tile .value { font-size: 26px; font-weight: 600; font-variant-numeric: tabular-nums;
                  margin-top: 2px; }
@@ -83,7 +86,7 @@
            vertical-align: top; }
   th { color: var(--muted); font-weight: 500; font-size: 13px; }
   .table-scroll { overflow-x: auto; }
-  .tag { font-size: 12px; color: var(--battery); border: 1px solid currentColor;
+  .tag { font-size: 12px; color: var(--good); border: 1px solid currentColor;
          border-radius: 4px; padding: 1px 6px; margin-left: 6px; white-space: nowrap; }
   details { margin-top: 14px; }
   summary { cursor: pointer; font-weight: 600; font-size: 14px; }
@@ -104,11 +107,11 @@
                           border: 1px solid var(--line); border-radius: 6px; padding: 7px 9px; }
   input[type=checkbox] { width: 16px; height: 16px; padding: 0; }
   button { cursor: pointer; background: var(--card); }
-  button.primary { background: var(--load); border-color: var(--load); color: #fff;
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff;
                    font-weight: 600; justify-self: start; }
-  button.link { border: none; background: none; padding: 0; color: var(--grid); font-size: 13px; }
+  button.link { border: none; background: none; padding: 0; color: var(--danger); font-size: 13px; }
   #tariff-message { grid-column: 1 / -1; font-size: 13px; min-height: 18px; color: var(--muted); }
-  #tariff-message.error, #import-message.error { color: var(--grid); }
+  #tariff-message.error, #import-message.error { color: var(--danger); }
   .windows { grid-column: 1 / -1; display: grid; gap: 8px; }
   .window { display: flex; flex-wrap: wrap; gap: 12px 16px; align-items: flex-end; }
   .window label { flex: 1 1 130px; }
@@ -127,7 +130,7 @@
                          background: var(--c); margin-right: 6px; flex: none; }
   .legend .key.dashed::before { background: repeating-linear-gradient(90deg, var(--c) 0 5px, transparent 5px 8px); }
   .legend .key:hover { background: var(--bg); }
-  .legend .key:focus-visible { outline: 2px solid var(--load); }
+  .legend .key:focus-visible { outline: 2px solid var(--accent); }
   .legend .key[aria-pressed="false"] { color: var(--muted); text-decoration: line-through; }
   .legend .key[aria-pressed="false"]::before { background: var(--line); }
   tr.year-row td { background: var(--bg); font-weight: 600; cursor: pointer; user-select: none; }
@@ -139,7 +142,7 @@
   #roi-progress { margin-top: 12px; background: var(--card); border: 1px solid var(--line); border-radius: 12px;
                   padding: 14px 16px; }
   .progress { height: 14px; border-radius: 7px; background: var(--bg); border: 1px solid var(--line); overflow: hidden; }
-  .progress .bar { height: 100%; width: 0; background: var(--battery); border-radius: 7px 0 0 7px;
+  .progress .bar { height: 100%; width: 0; background: var(--good); border-radius: 7px 0 0 7px;
                    transition: width .4s ease; }
   .progress-labels { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 4px 16px; margin-top: 8px;
                      font-size: 14px; }
@@ -168,12 +171,12 @@
     body.print-one { background: #fff; }
   }
   #roi-message { grid-column: 1 / -1; font-size: 13px; min-height: 18px; color: var(--muted); }
-  #roi-message.error { color: var(--grid); }
+  #roi-message.error { color: var(--danger); }
   .legend span.dashed::before { background: repeating-linear-gradient(90deg, var(--c) 0 5px, transparent 5px 8px); }
   #compare-message { grid-column: 1 / -1; font-size: 13px; min-height: 18px; color: var(--muted); }
-  #compare-message.error { color: var(--grid); }
-  td.better { color: var(--battery); font-weight: 600; }
-  td.worse { color: var(--grid); }
+  #compare-message.error { color: var(--danger); }
+  td.better { color: var(--good); font-weight: 600; }
+  td.worse { color: var(--danger); }
   #import-message { grid-column: 1 / -1; font-size: 13px; line-height: 1.6; color: var(--muted); }
   .actions { grid-column: 1 / -1; display: flex; gap: 10px; }
   .axis { fill: var(--muted); font-size: 11px; }
@@ -189,9 +192,9 @@
                font-size: 13px; color: var(--muted); }
   .alert-row input[type=number] { width: 84px; height: 34px; box-sizing: border-box; }
   #reminders { display: grid; gap: 8px; margin: 14px 0 0; }
-  #reminders div { border: 1px solid var(--solar); border-radius: 10px; padding: 10px 14px; font-size: 14px;
+  #reminders div { border: 1px solid var(--warn); border-radius: 10px; padding: 10px 14px; font-size: 14px;
                    line-height: 1.5; background: var(--card); }
-  #notice { border: 1px solid var(--grid); border-radius: 10px; padding: 12px 14px;
+  #notice { border: 1px solid var(--danger); border-radius: 10px; padding: 12px 14px;
             margin: 14px 0 0; font-size: 14px; line-height: 1.5; }
   footer { color: var(--muted); font-size: 12px; margin: 26px 2px 8px; text-align: center; }
 </style>
@@ -879,29 +882,29 @@ const installed = items => items.filter(item =>
   : true).map(item => item.needs === "smart_load" ? { ...item, label: setup.smart_load_label } : item);
 
 const NOW_TILES = [
-  { metric: "pv_power", label: "Solar", unit: "kW" },
-  { metric: "grid_power", label: "Grid", unit: "kW", abs: true,
+  { metric: "pv_power", label: "Solar", unit: "kW", color: "var(--solar)" },
+  { metric: "grid_power", label: "Grid", unit: "kW", abs: true, color: "var(--grid)",
     note: v => Math.abs(v) < 0.02 ? "Idle" : v > 0 ? "Importing" : "Exporting" },
-  { metric: "battery_power", label: "Battery", unit: "kW", abs: true,
+  { metric: "battery_power", label: "Battery", unit: "kW", abs: true, color: "var(--battery)",
     note: v => Math.abs(v) < 0.02 ? "Idle" : v > 0 ? "Charging" : "Discharging" },
-  { metric: "battery_soc", label: "Battery charge", unit: "%", digits: 0 },
+  { metric: "battery_soc", label: "Battery charge", unit: "%", digits: 0, color: "var(--battery)" },
 ];
 const USAGE_TILES = [
-  { metric: "load_power", label: "Total consumption", unit: "kW" },
-  { metric: "rest_power", label: "Rest of house", unit: "kW", needs: "any" },
-  { metric: "heat_pump_power", label: "Heat pump", unit: "kW", needs: "smart_load" },
-  { metric: "ev_charger_power", label: "EV charger", unit: "kW", needs: "ev_charger" },
+  { metric: "load_power", label: "Total consumption", unit: "kW", color: "var(--load)" },
+  { metric: "rest_power", label: "Rest of house", unit: "kW", needs: "any", color: "var(--house)" },
+  { metric: "heat_pump_power", label: "Heat pump", unit: "kW", needs: "smart_load", color: "var(--heatpump)" },
+  { metric: "ev_charger_power", label: "EV charger", unit: "kW", needs: "ev_charger", color: "var(--ev)" },
 ];
 const TODAY_TILES = [
-  { metric: "pv_energy_today", label: "Solar generated", unit: "kWh", digits: 1 },
-  { metric: "load_energy_today", label: "Used (total)", unit: "kWh", digits: 1 },
-  { metric: "import_energy_today", label: "Imported", unit: "kWh", digits: 1 },
-  { metric: "export_energy_today", label: "Exported", unit: "kWh", digits: 1 },
+  { metric: "pv_energy_today", label: "Solar generated", unit: "kWh", digits: 1, color: "var(--solar)" },
+  { metric: "load_energy_today", label: "Used (total)", unit: "kWh", digits: 1, color: "var(--load)" },
+  { metric: "import_energy_today", label: "Imported", unit: "kWh", digits: 1, color: "var(--grid)" },
+  { metric: "export_energy_today", label: "Exported", unit: "kWh", digits: 1, color: "var(--export)" },
 ];
 const DEVICE_TILES = [
-  { metric: "heat_pump_kwh", label: "Heat pump", unit: "kWh", digits: 1, needs: "smart_load" },
-  { metric: "ev_charger_kwh", label: "EV charger", unit: "kWh", digits: 1, needs: "ev_charger" },
-  { metric: "rest_kwh", label: "Rest of house", unit: "kWh", digits: 1 },
+  { metric: "heat_pump_kwh", label: "Heat pump", unit: "kWh", digits: 1, needs: "smart_load", color: "var(--heatpump)" },
+  { metric: "ev_charger_kwh", label: "EV charger", unit: "kWh", digits: 1, needs: "ev_charger", color: "var(--ev)" },
+  { metric: "rest_kwh", label: "Rest of house", unit: "kWh", digits: 1, color: "var(--house)" },
 ];
 const COST_TILES = [
   { metric: "net_gbp", label: "Net cost so far", prefix: "£" },
@@ -911,10 +914,10 @@ const COST_TILES = [
   { metric: "saved_gbp", label: "Saved by off-peak", prefix: "£" },
 ];
 const FLOW_LINES = [
-  { metric: "pv_power", color: "var(--flow-solar)", label: "Solar" },
-  { metric: "load_power", color: "var(--flow-load)", label: "Consumption" },
-  { metric: "grid_power", color: "var(--flow-grid)", label: "Grid (above zero = import, below = export)" },
-  { metric: "battery_power", color: "var(--flow-battery)", label: "Battery (above zero = discharging, below = charging)", flip: true },
+  { metric: "pv_power", color: "var(--solar)", label: "Solar" },
+  { metric: "load_power", color: "var(--load)", label: "Consumption" },
+  { metric: "grid_power", color: "var(--grid)", label: "Grid (above zero = import, below = export)" },
+  { metric: "battery_power", color: "var(--battery)", label: "Battery (above zero = discharging, below = charging)", flip: true },
 ];
 
 // --- Choosing what a chart shows ------------------------------------------------------------
@@ -961,6 +964,10 @@ function renderTiles(el, tiles, latest) {
     const reading = latest[t.metric];
     const tile = document.createElement("div");
     tile.className = "tile";
+    if (t.color) {  // a stripe in the colour its line has on the charts
+      tile.classList.add("tinted");
+      tile.style.setProperty("--c", t.color);
+    }
     const label = document.createElement("div");
     label.className = "label";
     label.textContent = t.label;
@@ -1593,7 +1600,7 @@ const HISTORY_SERIES = [
   { key: "solar_kwh", label: "Solar generated", color: "var(--solar)" },
   { key: "consumption_kwh", label: "Used", color: "var(--load)" },
   { key: "import_kwh", label: "Imported", color: "var(--grid)" },
-  { key: "export_kwh", label: "Exported", color: "var(--battery)" },
+  { key: "export_kwh", label: "Exported", color: "var(--export)" },
 ];
 let historyDay = null;      // any date inside the period being viewed; null means the latest
 let historyLinks = {};
@@ -1956,7 +1963,7 @@ document.getElementById("yearly-print").addEventListener("click", () => printSec
 function restoreMessage(text, isError = false) {
   const el = document.getElementById("restore-message");
   el.textContent = text;
-  el.style.color = isError ? "var(--grid)" : "";
+  el.style.color = isError ? "var(--danger)" : "";
 }
 const sendBackup = (file, dryRun) => sendTariff("api/restore?dry_run=" + dryRun, {
   method: "POST", headers: { "Content-Type": "application/json" }, body: file });
@@ -2045,7 +2052,7 @@ let alertsFilled = false;
 function alertsMessage(text, isError = false) {
   const el = document.getElementById("alerts-message");
   el.textContent = text;
-  el.style.color = isError ? "var(--grid)" : "";
+  el.style.color = isError ? "var(--danger)" : "";
 }
 function renderAlerts(data) {
   const f = alertsForm.elements;
@@ -2235,7 +2242,7 @@ document.getElementById("bills-sort").addEventListener("click", () => {
 function billsMessage(text, isError = false) {
   const el = document.getElementById("bills-message");
   el.textContent = text;
-  el.style.color = isError ? "var(--grid)" : "";
+  el.style.color = isError ? "var(--danger)" : "";
 }
 
 function renderBills(data) {
@@ -2626,7 +2633,7 @@ let editingIncome = null;
 function incomeMessage(text, isError = false) {
   const el = document.getElementById("income-message");
   el.textContent = text;
-  el.style.color = isError ? "var(--grid)" : "";
+  el.style.color = isError ? "var(--danger)" : "";
 }
 
 function renderIncome(data) {
@@ -3033,35 +3040,35 @@ function drawPayback(p, totalCost) {
       clip.firstChild.setAttribute(k, v);
     }
     add("path", { d: path(line) + `L${x(line[line.length - 1][0]).toFixed(1)},${y(totalCost)}L${x(line[0][0]).toFixed(1)},${y(totalCost)}Z`,
-                  fill: "var(--battery)", "fill-opacity": 0.16, "clip-path": "url(#roi-profit)" });
+                  fill: "var(--good)", "fill-opacity": 0.16, "clip-path": "url(#roi-profit)" });
     const reachedAt = p.break_even ? x(time(p.break_even)) : L;
     if (W - R - reachedAt > 70) {
       add("text", { x: W - R - 6, y: y(totalCost) - 8, "text-anchor": "end", class: "axis",
-                    style: "fill: var(--battery); font-weight: 600;" }, "Profit");
+                    style: "fill: var(--good); font-weight: 600;" }, "Profit");
     }
   }
   if (totalCost > 0 && on("cost")) {
-    add("line", { x1: L, x2: W - R, y1: y(totalCost), y2: y(totalCost), stroke: "var(--grid)",
+    add("line", { x1: L, x2: W - R, y1: y(totalCost), y2: y(totalCost), stroke: "var(--danger)",
                   "stroke-width": 1.5 });
   }
   if (on("saved")) {
-    add("path", { d: path(actual), fill: "none", stroke: "var(--battery)", "stroke-width": 2.5,
+    add("path", { d: path(actual), fill: "none", stroke: "var(--good)", "stroke-width": 2.5,
                   "stroke-linejoin": "round" });
   }
   if (projected.length > 1) {
-    add("path", { d: path(projected), fill: "none", stroke: "var(--battery)", "stroke-width": 2,
+    add("path", { d: path(projected), fill: "none", stroke: "var(--good)", "stroke-width": 2,
                   "stroke-dasharray": "6 5" });
   }
   if (adjusted.length > 1) {
-    add("path", { d: path(adjusted), fill: "none", stroke: "var(--solar)", "stroke-width": 2,
+    add("path", { d: path(adjusted), fill: "none", stroke: "var(--warn)", "stroke-width": 2,
                   "stroke-dasharray": "6 5" });
     if (p.adjusted.break_even && !p.already_reached) {
-      add("circle", { cx: x(time(p.adjusted.break_even)), cy: y(totalCost), r: 5, fill: "var(--solar)" });
+      add("circle", { cx: x(time(p.adjusted.break_even)), cy: y(totalCost), r: 5, fill: "var(--warn)" });
     }
   }
   if (p.break_even && (p.already_reached ? on("saved") : on("projected"))) {
     const t = time(p.break_even);
-    add("circle", { cx: x(t), cy: y(totalCost), r: 5, fill: "var(--battery)" });
+    add("circle", { cx: x(t), cy: y(totalCost), r: 5, fill: "var(--good)" });
   }
 }
 
@@ -3132,10 +3139,10 @@ function renderPayback(data) {
       : "Paid for itself. " + pounds(-p.remaining_gbp) + " profit so far";
   }
   seriesLegend(document.getElementById("roi-legend"), "payback", [
-    { key: "saved", label: "Saved so far", color: "var(--battery)" },
-    { key: "projected", label: "Projected", color: "var(--battery)", dashed: true },
-    ...(p.adjusted ? [{ key: "adjusted", label: "With your yearly assumptions", color: "var(--solar)", dashed: true }] : []),
-    { key: "cost", label: "System cost", color: "var(--grid)" },
+    { key: "saved", label: "Saved so far", color: "var(--good)" },
+    { key: "projected", label: "Projected", color: "var(--good)", dashed: true },
+    ...(p.adjusted ? [{ key: "adjusted", label: "With your yearly assumptions", color: "var(--warn)", dashed: true }] : []),
+    { key: "cost", label: "System cost", color: "var(--danger)" },
   ], () => lastRoi && renderPayback(lastRoi));
   drawPayback(p, cost);
   const notes = ["Measured against " + data.baseline_name + ", from " +
@@ -3288,7 +3295,7 @@ function renderCompare(data) {
       const note = document.createElement("div");
       note.className = Math.abs(gap) < 0.005 ? "hint" : gap < 0 ? "better" : "worse";
       note.style.cssText = "margin: 2px 0 0; font-size: 13px;" +
-        (Math.abs(gap) < 0.005 ? "" : gap < 0 ? "color: var(--battery); font-weight: 600;" : "color: var(--grid);");
+        (Math.abs(gap) < 0.005 ? "" : gap < 0 ? "color: var(--good); font-weight: 600;" : "color: var(--danger);");
       note.textContent = Math.abs(gap) < 0.005 ? "Same as yours"
         : money(Math.abs(gap)) + (gap < 0 ? " cheaper" : " dearer");
       shifted.append(note);

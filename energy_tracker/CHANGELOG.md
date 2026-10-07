@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.22.0
+
+- The colours of Sigenergy's app are now used throughout: solar yellow, consumption purple,
+  grid lilac-blue and battery cyan, on the tiles, the history chart and the consumption
+  breakdown as well as the Power Metrics Chart.
+- Each tile has a stripe in the colour its figure has on the charts.
+
 ## 0.21.0
 
 - Yearly report: a calendar year on one page, beside the year before, with a line for each

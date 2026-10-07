@@ -31,6 +31,14 @@ them in the background every ten minutes and keeps them ready. They can therefor
 about twenty minutes behind; saving rates, a bill, a tariff or income works them out again
 at once. Nothing is fetched while the page is in a background tab.
 
+## Colours
+
+Energy colours follow Sigenergy's own app and mean the same everywhere on the page: yellow
+for solar, purple for consumption (and the rest of the house), lilac-blue for the grid and
+import, cyan for the battery, green for export, orange for the heat pump and blue for the
+EV charger. Each tile has a stripe in the colour of what it measures. Green and red on
+their own mean cheaper or better, and dearer or a problem.
+
 ## Charts
 
 - **Choosing what a chart shows**: each entry in a chart's legend is a switch. Click
