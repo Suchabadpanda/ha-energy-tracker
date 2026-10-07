@@ -101,6 +101,10 @@ class Database:
                 columns = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
                 if "dynamic" not in columns:
                     conn.execute(f"ALTER TABLE {table} ADD COLUMN dynamic TEXT NOT NULL DEFAULT ''")
+            # Added in 0.19: the day a fixed-price deal ends.
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(tariff_periods)")}
+            if "fixed_until" not in columns:
+                conn.execute("ALTER TABLE tariff_periods ADD COLUMN fixed_until TEXT")
             conn.commit()
 
     def _connect(self) -> sqlite3.Connection:
@@ -260,8 +264,8 @@ class Database:
         with closing(self._connect()) as conn, conn:
             conn.execute(
                 "INSERT OR REPLACE INTO tariff_periods (effective_from, name, export_p_per_kwh, "
-                "standing_charge_p_per_day, vat_percent, import_bands, dynamic) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "standing_charge_p_per_day, vat_percent, import_bands, dynamic, fixed_until) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     row["effective_from"].isoformat(),
                     row["name"],
@@ -270,6 +274,7 @@ class Database:
                     row["vat_percent"],
                     json.dumps(row["import_bands"]),
                     row.get("dynamic") or "",
+                    row["fixed_until"].isoformat() if row.get("fixed_until") else None,
                 ),
             )
 

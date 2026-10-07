@@ -46,6 +46,7 @@ def check(
         "vat_percent": tariff.vat_percent,
         "import_bands": bands,
         "dynamic": tariff.dynamic,
+        "fixed_until": tariff.fixed_until,
     }
 
     def note(what: str, held: float, billed: float, unit: str) -> None:

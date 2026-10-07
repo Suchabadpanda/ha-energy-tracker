@@ -62,6 +62,10 @@ The figures shown are made-up example data.
 
 ![Table comparing what the same usage would cost on other tariffs, as it happened and with charging moved](docs/images/compare.png)
 
+**Tariff switch planner: a year on another tariff, with a charging plan**
+
+![Month-by-month costs on another tariff and a plan for when to charge the battery and car](docs/images/planner.png)
+
 ## What it shows
 
 - **Right now**: solar, house load, grid, battery power and battery charge level, following
@@ -93,9 +97,12 @@ The figures shown are made-up example data.
 - **Compare tariffs**: replay your real usage on other tariffs, typed in or looked up from
   Octopus Energy's published prices, or test a price change on your own tariff. A second
   figure shows each tariff with battery and car charging moved to its cheapest times.
+- **Tariff switch planner**: the last twelve months on another tariff, month by month, with
+  a charging plan showing whether the battery would last between its cheap times.
 - **Tariff rates**: editable on the page. Each set of rates has a start date, so a price
   change only affects days from that date onward. A day can have several time windows with
-  their own prices, or follow Octopus Agile's half-hourly prices.
+  their own prices, or follow Octopus Agile's half-hourly prices. A fixed-price deal can
+  have its end date, with a reminder a month before.
 - **Older history**: imports hourly history from Home Assistant, plus an export from the
   mySigen app for the time before Home Assistant has any. See
   [how to get an hourly export from Sigen AI](energy_tracker/DOCS.md#getting-an-hourly-export-from-sigen-ai).

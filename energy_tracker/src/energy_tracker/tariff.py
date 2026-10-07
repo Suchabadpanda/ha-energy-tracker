@@ -60,6 +60,8 @@ class Tariff:
     # For a tariff whose price changes every half hour: where its prices are published, as
     # "PRODUCT/REGION" (Octopus Energy). The bands above are then only a fallback.
     dynamic: str = ""
+    # The last day the prices are guaranteed, if it is a fixed-price deal.
+    fixed_until: date | None = None
     # Published prices in pence per kWh including VAT, by the start of each half hour
     # (seconds since 1970).
     slot_prices: Mapping[int, float] | None = field(default=None, compare=False, repr=False)
@@ -127,6 +129,7 @@ def build_tariff(
     vat_percent: float = 0.0,
     dynamic: str = "",
     slot_prices: Mapping[int, float] | None = None,
+    fixed_until: date | str | None = None,
     **_: object,
 ) -> Tariff:
     """Create a Tariff, checking that the import bands cover the whole day exactly once."""
@@ -157,6 +160,9 @@ def build_tariff(
         vat_percent=float(vat_percent),
         dynamic=dynamic or "",
         slot_prices=slot_prices if dynamic else None,
+        fixed_until=date.fromisoformat(fixed_until)
+        if isinstance(fixed_until, str)
+        else fixed_until,
     )
 
 

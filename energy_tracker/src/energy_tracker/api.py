@@ -37,6 +37,7 @@ from . import (
     live,
     lookup,
     performance,
+    planner,
     prices,
     roi,
     shift,
@@ -117,7 +118,7 @@ async def lifespan(_: FastAPI):
         await asyncio.to_thread(thread.join, 10)
 
 
-app = FastAPI(title="Energy Tracker", version="0.18.0", lifespan=lifespan)
+app = FastAPI(title="Energy Tracker", version="0.19.0", lifespan=lifespan)
 # The page and its chart data are mostly text: sent compressed, they are a quarter the size.
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
@@ -428,6 +429,7 @@ def keep_figures_ready(stop: threading.Event) -> None:
             lambda: monthly_summary.fresh(None),
             lambda: system_performance.fresh("12m"),
             lambda: compare.fresh("12m"),
+            lambda: switch_planner.fresh(None),
         ):
             if stop.is_set():
                 return
@@ -491,6 +493,7 @@ class TariffIn(BaseModel):
     vat_percent: float = Field(default=0, ge=0, le=100)
     import_bands: list[BandIn] = Field(min_length=1, max_length=48)
     dynamic: str = DYNAMIC
+    fixed_until: date | None = None
 
 
 def published_prices(source: str) -> dict | None:
@@ -506,6 +509,7 @@ def tariff_json(tariff: Tariff) -> dict:
     return {
         "dynamic": tariff.dynamic,
         "published": published_prices(tariff.dynamic),
+        "fixed_until": tariff.fixed_until,
         "effective_from": tariff.effective_from,
         "name": tariff.name,
         "export_p_per_kwh": tariff.export_p_per_kwh,
@@ -525,7 +529,37 @@ def list_tariffs() -> dict:
     return {
         "current_from": current.on(today_local).effective_from,
         "periods": [tariff_json(p) for p in current.periods],
+        "reminders": reminders(current, today_local),
     }
+
+
+REMIND_DAYS = 30
+
+
+def reminders(current: Schedule, today_local: date) -> list[dict]:
+    """Things about the rates that need attention soon."""
+    found: list[dict] = []
+    in_use = current.on(today_local)
+    later = [p for p in current.periods if p.effective_from > today_local]
+    ends = in_use.fixed_until
+    # Nothing to say once the rates that follow have been entered.
+    if ends and (ends - today_local).days <= REMIND_DAYS:
+        follow_on = [p for p in later if p.effective_from <= ends + timedelta(days=1)]
+        if not follow_on and not (later and ends < today_local):
+            days = (ends - today_local).days
+            found.append(
+                {
+                    "kind": "fixed_ended" if days < 0 else "fixed_ending",
+                    "date": ends,
+                    "days": days,
+                    "tariff": in_use.name,
+                }
+            )
+    for period in current.periods:
+        state = prices.status.get(period.dynamic, {}) if period.dynamic else {}
+        if state.get("error"):
+            found.append({"kind": "prices_failed", "tariff": period.name, "error": state["error"]})
+    return found
 
 
 @app.post("/api/tariffs")
@@ -540,6 +574,7 @@ def save_tariff(body: TariffIn) -> dict:
             effective_from=body.effective_from,
             vat_percent=body.vat_percent,
             dynamic=body.dynamic,
+            fixed_until=body.fixed_until,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -679,6 +714,152 @@ def delete_comparison(row_id: int) -> dict:
         raise HTTPException(status_code=404, detail="That tariff is not in the list")
     clear_caches()
     return {"removed": row_id}
+
+
+# --- Planning a switch of tariff -----------------------------------------------------------------
+
+PLAN_COUNTERS = {
+    "load": "load_energy_total",
+    "solar": "pv_energy_total",
+    "ev": "ev_charger_energy_total",
+    "charge": "battery_charge_energy_total",
+    "discharge": "battery_discharge_energy_total",
+}
+
+
+class PlannerIn(BaseModel):
+    """The battery the plan is worked out for. Empty means: work it out from the readings."""
+
+    battery_kwh: float | None = Field(default=None, ge=1, le=500)
+    charge_kw: float | None = Field(default=None, ge=0.5, le=100)
+
+
+@app.post("/api/planner/settings")
+def save_planner_settings(body: PlannerIn) -> dict:
+    database().set_setting("planner", body.model_dump_json())
+    clear_caches()
+    return {"saved": True}
+
+
+@app.get("/api/planner")
+@kept
+def switch_planner(tariff: Annotated[int | None, Query(ge=1)] = None) -> dict:
+    """The last twelve months on another tariff, month by month, with a charging plan.
+
+    `tariff` is the id of a tariff saved under Compare tariffs (the first one if left out).
+    """
+    zone = local_timezone()
+    now = datetime.now(UTC)
+    rows = database().comparison_rows()
+    stored = json.loads(database().get_setting("planner") or "{}")
+    result: dict = {
+        "has_data": False,
+        "tariffs": [{"id": row["id"], "name": row["name"]} for row in rows],
+        "settings": stored,
+    }
+    chosen = next((row for row in rows if row["id"] == tariff), rows[0] if rows else None)
+    first = first_cost_reading()
+    load_first = database().first_time(PLAN_COUNTERS["load"])
+    end = local_midnight(now, zone)
+    if chosen is None or first is None or load_first is None:
+        return result
+    start = max(end - timedelta(days=365), first, load_first).astimezone(zone)
+    if start.time() != clock(0):  # begin on the first whole day
+        start = datetime.combine(start.date() + timedelta(days=1), clock(0), zone)
+    if start >= end:
+        return result
+
+    names = [*COST_COUNTERS, *PLAN_COUNTERS.values()]
+    samples = counter_samples(names, start - timedelta(days=1), HALF_HOURLY, end)
+    counters = {name: Counter(series, HALF_HOURLY_GAP) for name, series in samples.items()}
+    plan = {key: counters[name] for key, name in PLAN_COUNTERS.items()}
+    own, other = schedule(), Schedule([comparison_tariff(chosen)])
+
+    # The battery: as entered, or else as worked out from how it has been charging.
+    levels = database().last_in_buckets(["battery_soc"], end - timedelta(days=90), end, 1800)
+    capacity, speed = planner.estimate_battery(
+        levels["battery_soc"], plan["charge"], plan["discharge"]
+    )
+    charged = plan["charge"].between(start, end) if plan["charge"] else 0.0
+    given = plan["discharge"].between(start, end) if plan["discharge"] else 0.0
+    measured = given / charged if charged >= 50 else None
+    efficiency = measured if measured and 0.6 <= measured <= 1 else planner.DEFAULT_EFFICIENCY
+    battery = None
+    if (stored.get("battery_kwh") or capacity) and (stored.get("charge_kw") or speed):
+        battery = planner.Battery(
+            stored.get("battery_kwh") or capacity, stored.get("charge_kw") or speed, efficiency
+        )
+    result["battery"] = {
+        "estimated_kwh": capacity,
+        "estimated_kw": speed,
+        "used_kwh": battery.capacity_kwh if battery else None,
+        "used_kw": battery.charge_kw if battery else None,
+        "efficiency_percent": round(efficiency * 100),
+    }
+
+    modelled = modelled_own = None
+    if battery:
+        modelled = planner.simulate(plan, start, end, zone, other, battery)
+        modelled_own = planner.simulate(plan, start, end, zone, own, battery)
+
+    def in_month(days: dict | None, key: str) -> float | None:
+        if days is None:
+            return None
+        return round(sum(row["gbp"] for day, row in days.items() if f"{day:%Y-%m}" == key), 2)
+
+    months = []
+    cursor = start
+    while cursor < end:
+        month_end = min(following_month(cursor.replace(day=1)), end)
+        paid = cost_since(samples, cursor, month_end, zone, own, gap=HALF_HOURLY_GAP)
+        replayed = cost_since(samples, cursor, month_end, zone, other, gap=HALF_HOURLY_GAP)
+        moved = None
+        if replayed:
+            shifted = shift.shifted_import(
+                counters[COST_COUNTERS[0]],
+                [plan["charge"], plan["ev"]],
+                replayed["since"],
+                month_end,
+                zone,
+                other,
+            )
+            if shifted:
+                moved = round(
+                    replayed["net_gbp"] - replayed["import_gbp"] + shifted["import_gbp"], 2
+                )
+        key = month_key(cursor)
+        months.append(
+            {
+                "month": key,
+                "days": (month_end - cursor).days,
+                "paid_gbp": paid["net_gbp"] if paid else None,
+                "replayed_gbp": replayed["net_gbp"] if replayed else None,
+                "moved_gbp": moved,
+                "planned_gbp": in_month(modelled, key),
+                "planned_own_gbp": in_month(modelled_own, key),
+            }
+        )
+        cursor = month_end
+
+    def total(key: str) -> float | None:
+        values = [month[key] for month in months]
+        return None if any(v is None for v in values) else round(sum(values), 2)
+
+    result.update(
+        has_data=True,
+        tariff={"id": chosen["id"], "name": chosen["name"], "dynamic": bool(chosen.get("dynamic"))},
+        own_name=own.on(end.date() - timedelta(days=1)).name,
+        first_day=start.date(),
+        last_day=(end - timedelta(days=1)).date(),
+        days=(end - start).days,
+        months=months,
+        totals={key: total(key) for key in months[0] if key.endswith("_gbp")},
+        cheap_times=planner.cheap_times(other.periods[0]),
+        own_cheap_times=planner.cheap_times(own.on(end.date() - timedelta(days=1))),
+        shortfall=planner.shortfall(modelled) if modelled else None,
+        own_shortfall=planner.shortfall(modelled_own) if modelled_own else None,
+    )
+    return result
 
 
 # --- Running cost by device ----------------------------------------------------------------------

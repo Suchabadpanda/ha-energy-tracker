@@ -18,6 +18,7 @@ def _row(tariff: Tariff) -> dict:
         "standing_charge_p_per_day": tariff.standing_charge_p_per_day,
         "vat_percent": tariff.vat_percent,
         "dynamic": tariff.dynamic,
+        "fixed_until": tariff.fixed_until,
         "import_bands": [
             {"start": b.start, "end": b.end, "p_per_kwh": b.p_per_kwh} for b in tariff.import_bands
         ],

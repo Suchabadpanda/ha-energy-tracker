@@ -525,3 +525,187 @@ def test_live_connection_signs_in_subscribes_and_takes_changes():
     assert seen[1]["trigger"] == {"platform": "state", "entity_id": ["sensor.pv", "sensor.soc"]}
     assert seen[2] == {"id": 2, "type": "subscribe_events", "event_type": "state_changed"}
     assert live.snapshot()["pv_power"][1] == 1.75
+
+
+# --- Tariff switch planner and reminders -------------------------------------------------------
+
+from energy_tracker import planner  # noqa: E402
+
+
+def test_cheap_times_join_a_window_that_runs_past_midnight():
+    overnight = build_tariff(
+        "Night",
+        [
+            {"start": "00:00", "end": "05:30", "p_per_kwh": 7.0},
+            {"start": "05:30", "end": "23:30", "p_per_kwh": 28.0},
+            {"start": "23:30", "end": "24:00", "p_per_kwh": 7.0},
+        ],
+        0,
+        0,
+    )
+    assert planner.cheap_times(overnight) == [{"start": "23:30", "end": "05:30", "p_per_kwh": 7.0}]
+    assert planner.cheap_times(build_tariff("Flat", [BANDS[0] | {"end": "24:00"}], 0, 0)) == []
+    assert planner.cheap_times(build_tariff("Two", BANDS, 0, 0)) == [BANDS[0]]
+
+
+def test_battery_size_is_worked_out_from_how_it_charges():
+    start = datetime(2026, 6, 1, tzinfo=UTC)
+    soc, charged, total = [], [], 0.0
+    for n in range(48 * 4):
+        when = start + timedelta(minutes=30 * n)
+        filling = n % 48 < 8  # four hours a night at 2.5 kW into a 10 kWh battery
+        soc.append((when, 10.0 + 90.0 * min(n % 48, 8) / 8))
+        charged.append((when, total))
+        total += 1.25 / 0.9**0.5 if filling else 0.0
+    capacity, speed = planner.estimate_battery(soc, Counter(charged, GAP), Counter([]))
+    assert capacity == pytest.approx(11.1, abs=0.1)  # 10 kWh between 10% and 100%
+    assert speed == pytest.approx(2.6, abs=0.1)
+    assert planner.estimate_battery([], Counter([]), Counter([])) == (None, None)
+
+
+def plan_counters(end, house_kw=1.0, solar=None, ev=None):
+    return {
+        "load": Counter(ramp(DAY, end, lambda t: house_kw + (ev(t) if ev else 0.0)), GAP),
+        "solar": Counter(ramp(DAY, end, solar), GAP) if solar else Counter([]),
+        "ev": Counter(ramp(DAY, end, ev), GAP) if ev else Counter([]),
+    }
+
+
+def test_battery_charged_in_the_cheap_window_runs_the_house_until_it_is_empty():
+    end = DAY + timedelta(days=2)
+    rates = Schedule([build_tariff("Night", BANDS, 0, 0)])  # 10p until 06:00, then 30p
+    # A lossless 9 kWh battery: 9 hours of a 1 kW house. Cheap hours run from the grid.
+    days = planner.simulate(plan_counters(end), DAY, end, LONDON, rates, planner.Battery(9, 5, 1))
+    second = days[date(2026, 6, 2)]
+    # Six cheap hours for the house plus 9 kWh into the battery, then nine dear hours short.
+    assert second["import_kwh"] == pytest.approx(6 + 9 + 9)
+    assert second["dear_kwh"] == pytest.approx(9.0) and second["empty_slots"] == 18
+    assert second["gbp"] == pytest.approx((15 * 10 + 9 * 30) / 100)
+
+    big = planner.simulate(plan_counters(end), DAY, end, LONDON, rates, planner.Battery(30, 5, 1))
+    assert big[date(2026, 6, 2)]["dear_kwh"] == 0 and big[date(2026, 6, 2)]["empty_slots"] == 0
+    assert planner.shortfall(days)["short_days"] == 2 and planner.shortfall(big)["short_days"] == 0
+    assert planner.shortfall(days)["hours_empty_on_short_days"] > 8
+
+
+def test_the_car_is_moved_to_the_cheap_hours_and_spare_solar_is_stored_then_exported():
+    end = DAY + timedelta(days=1)
+    rates = Schedule([build_tariff("Night", BANDS, 15.0, 0)])
+    evening_car = lambda t: 7.0 if 18 <= t.hour < 20 else 0.0  # noqa: E731
+    midday_sun = lambda t: 6.0 if 10 <= t.hour < 14 else 0.0  # noqa: E731
+    counters = plan_counters(end, 0.0, midday_sun, evening_car)
+    day = planner.simulate(counters, DAY, end, LONDON, rates, planner.Battery(10, 5, 1))[
+        date(2026, 6, 1)
+    ]
+    # 14 kWh for the car bought at 10p, not 30p. The battery starts half full, takes 5 kWh
+    # from the grid overnight, so all 24 kWh of solar is exported.
+    assert day["dear_kwh"] == 0
+    assert day["import_kwh"] == pytest.approx(14 + 5)
+    assert day["export_kwh"] == pytest.approx(24.0)
+    assert day["gbp"] == pytest.approx((19 * 10 - 24 * 15) / 100)
+
+
+def test_planner_endpoint_gives_months_totals_and_a_charging_plan():
+    assert client.get("/api/planner").json() == {"has_data": False, "tariffs": [], "settings": {}}
+    now = datetime.now(UTC).replace(minute=0, second=0, microsecond=0)
+    rows, imported, used, charged, given, level = [], 70000.0, 90000.0, 50000.0, 40000.0, 50.0
+    for hours in range(24 * 40, -1, -1):
+        when = now - timedelta(hours=hours)
+        local_hour = when.astimezone(LONDON).hour
+        charging = 2.5 if local_hour < 4 else 0.0
+        discharging = 0.0 if local_hour < 6 else 0.5
+        for name, value in (
+            ("import_energy_total", imported),
+            ("export_energy_total", 60000.0),
+            ("load_energy_total", used),
+            ("battery_charge_energy_total", charged),
+            ("battery_discharge_energy_total", given),
+            ("battery_soc", level),
+        ):
+            rows.append((when, name, value))
+        imported += 1.0 - discharging + charging
+        used += 1.0
+        charged += charging
+        given += discharging
+        level = min(100.0, max(0.0, level + (charging * 0.95 - discharging / 0.95) * 10))
+    api.database().insert_readings(rows)
+    body = {
+        "name": "Cheap afternoons",
+        "export_p_per_kwh": 15,
+        "standing_charge_p_per_day": 50,
+        "vat_percent": 0,
+        "import_bands": [
+            {"start": "00:00", "end": "13:00", "p_per_kwh": 30.0},
+            {"start": "13:00", "end": "16:00", "p_per_kwh": 5.0},
+            {"start": "16:00", "end": "24:00", "p_per_kwh": 30.0},
+        ],
+    }
+    saved = client.post("/api/compare/tariffs", json=body).json()["id"]
+    data = client.get("/api/planner").json()
+    assert data["has_data"] and data["tariff"] == {
+        "id": saved,
+        "name": "Cheap afternoons",
+        "dynamic": False,
+    }
+    assert data["days"] == 39 and sum(m["days"] for m in data["months"]) == 39
+    assert data["cheap_times"] == [{"start": "13:00", "end": "16:00", "p_per_kwh": 5.0}]
+    assert 9 < data["battery"]["estimated_kwh"] < 11 and data["battery"]["estimated_kw"] == 2.5
+    totals = data["totals"]
+    assert totals["replayed_gbp"] > totals["moved_gbp"] and totals["planned_gbp"] is not None
+    # A three-hour window at 2.5 kW cannot carry a 1 kW house for the other 21 hours.
+    assert data["shortfall"]["short_days"] == 39 and data["shortfall"]["dear_kwh"] > 0
+
+    # A bigger, faster battery entered by hand lasts, and the plan gets cheaper.
+    assert client.post("/api/planner/settings", json={"battery_kwh": 30, "charge_kw": 10}).json()
+    bigger = client.get(f"/api/planner?tariff={saved}").json()
+    assert bigger["battery"]["used_kwh"] == 30 and bigger["shortfall"]["short_days"] <= 1
+    assert bigger["totals"]["planned_gbp"] < totals["planned_gbp"]
+    assert client.post("/api/planner/settings", json={"battery_kwh": 0.1}).status_code == 422
+
+
+def test_a_fixed_price_about_to_end_raises_a_reminder_until_new_rates_are_entered():
+    today = datetime.now(api.local_timezone()).date()
+    body = {
+        "name": "Fixed deal",
+        "effective_from": "2026-01-01",
+        "export_p_per_kwh": 15,
+        "standing_charge_p_per_day": 50,
+        "vat_percent": 5,
+        "import_bands": BANDS,
+        "fixed_until": (today + timedelta(days=45)).isoformat(),
+    }
+    saved = client.post("/api/tariffs", json=body).json()
+    assert saved["reminders"] == []  # more than 30 days away
+    assert next(p for p in saved["periods"] if p["name"] == "Fixed deal")["fixed_until"]
+
+    ends = today + timedelta(days=12)
+    soon = client.post("/api/tariffs", json={**body, "fixed_until": ends.isoformat()}).json()
+    assert soon["reminders"] == [
+        {"kind": "fixed_ending", "date": ends.isoformat(), "days": 12, "tariff": "Fixed deal"}
+    ]
+    past = (today - timedelta(days=3)).isoformat()
+    over = client.post("/api/tariffs", json={**body, "fixed_until": past}).json()
+    assert over["reminders"][0]["kind"] == "fixed_ended" and over["reminders"][0]["days"] == -3
+
+    # Entering the rates that follow settles it.
+    client.post("/api/tariffs", json={**body, "fixed_until": ends.isoformat()})
+    follow = {**body, "name": "Next", "fixed_until": None}
+    follow["effective_from"] = (ends + timedelta(days=1)).isoformat()
+    assert client.post("/api/tariffs", json=follow).json()["reminders"] == []
+
+
+def test_a_failed_price_fetch_raises_a_reminder():
+    body = {
+        "name": "Agile",
+        "effective_from": "2026-01-01",
+        "export_p_per_kwh": 15,
+        "standing_charge_p_per_day": 50,
+        "import_bands": BANDS,
+        "dynamic": "AGILE-24-10-01/H",
+    }
+    client.post("/api/tariffs", json=body)
+    prices.status["AGILE-24-10-01/H"] = {"error": "Could not reach the price list"}
+    found = client.get("/api/tariffs").json()["reminders"]
+    assert found == [
+        {"kind": "prices_failed", "tariff": "Agile", "error": "Could not reach the price list"}
+    ]

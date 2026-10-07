@@ -121,7 +121,16 @@ def test_missing_prices_are_reported_not_guessed():
         lookup.bands_from_rates(GO_RATES["results"], date(2026, 10, 20), LONDON)
 
 
-def test_lookup_fills_the_form_and_can_be_saved_for_comparison(octopus):
+class DayOfTheSamplePrices(datetime):
+    """The sample prices above cover 3 to 5 October 2026: look them up as if on the 5th."""
+
+    @classmethod
+    def now(cls, tz=None):
+        return cls(2026, 10, 5, 12, tzinfo=tz)
+
+
+def test_lookup_fills_the_form_and_can_be_saved_for_comparison(octopus, monkeypatch):
+    monkeypatch.setattr(api, "datetime", DayOfTheSamplePrices)
     found = client.get(
         "/api/lookup/octopus/tariff", params={"product": "GO-VAR-22-10-14", "region": "H"}
     )

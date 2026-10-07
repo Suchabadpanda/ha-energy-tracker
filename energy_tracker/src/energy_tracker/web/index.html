@@ -184,6 +184,9 @@
                          border-radius: 2px; margin-right: 6px; vertical-align: middle;
                          background: var(--c); }
   .empty { color: var(--muted); padding: 30px 0; text-align: center; }
+  #reminders { display: grid; gap: 8px; margin: 14px 0 0; }
+  #reminders div { border: 1px solid var(--solar); border-radius: 10px; padding: 10px 14px; font-size: 14px;
+                   line-height: 1.5; background: var(--card); }
   #notice { border: 1px solid var(--grid); border-radius: 10px; padding: 12px 14px;
             margin: 14px 0 0; font-size: 14px; line-height: 1.5; }
   footer { color: var(--muted); font-size: 12px; margin: 26px 2px 8px; text-align: center; }
@@ -209,6 +212,7 @@
     system, check that its integration is set up. For other systems, or sensors with different
     names, see "Using different sensors" in the documentation.
   </div>
+  <div id="reminders" role="status" hidden></div>
 
   <h2>Right now</h2>
   <div class="tiles" id="now"></div>
@@ -609,6 +613,39 @@
     </details>
   </div>
 
+  <div class="nav" style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+    <h2 id="planner-heading">Tariff switch planner</h2>
+    <select id="planner-tariff" aria-label="Tariff to plan a switch to"></select>
+  </div>
+  <div class="chart">
+    <div class="empty" id="planner-empty">Add a tariff under Compare tariffs to plan a switch to it.</div>
+    <div id="planner-body" hidden>
+      <div class="rate-fix" id="planner-advice"></div>
+      <div class="table-scroll" style="margin-top: 12px;">
+        <table>
+          <thead><tr><th>Month</th><th class="num">You paid</th><th class="num">As it happened</th>
+            <th class="num">Charging moved</th><th class="num">Planned charging</th>
+            <th class="num">Planned, against yours</th></tr></thead>
+          <tbody id="planner-rows"></tbody>
+          <tbody id="planner-totals" style="border-top: 2px solid var(--line);"></tbody>
+        </table>
+      </div>
+      <div class="hint" id="planner-hint"></div>
+      <details id="planner-editor">
+        <summary>Battery used for the plan</summary>
+        <div class="hint">The plan needs to know how much the battery holds and how fast it charges.
+          Both are worked out from your readings; enter your own figures here if they look wrong,
+          or to try a bigger battery. Leave a box empty to go back to the worked-out figure.</div>
+        <form id="planner-form">
+          <label>Usable capacity (kWh) <input type="number" name="battery_kwh" min="1" max="500" step="0.1"></label>
+          <label>Fastest charging (kW) <input type="number" name="charge_kw" min="0.5" max="100" step="0.1"></label>
+          <div class="actions"><button class="primary" type="submit">Save</button></div>
+          <div id="planner-message" style="grid-column: 1 / -1; font-size: 13px; min-height: 18px; color: var(--muted);"></div>
+        </form>
+      </details>
+    </div>
+  </div>
+
   <h2>Tariff rates</h2>
   <div class="chart">
     <div class="table-scroll">
@@ -628,7 +665,8 @@
         rate: one for a single cheap period, or several. For a tariff whose price changes every
         half hour (Octopus Agile), choose it under half-hourly prices: each half hour is then
         charged at the price published for it, which already includes VAT, and the rates typed
-        here are only used where no price has been published.</div>
+        here are only used where no price has been published. On a fixed-price deal, enter the
+        last day the price is guaranteed and the page will remind you a month before it ends.</div>
       <form id="tariff-form">
         <label>Rates start on <input type="date" name="effective_from" required></label>
         <label>Tariff name <input type="text" name="name" maxlength="80" required></label>
@@ -638,6 +676,7 @@
           <input type="number" name="standing" min="0" step="0.001" required></label>
         <label>VAT to add (%)
           <input type="number" name="vat" min="0" max="100" step="0.1" required></label>
+        <label>Price fixed until (optional) <input type="date" name="fixed_until"></label>
         <label>Standard rate (<span class="minor">p</span> per kWh)
           <input type="number" name="other_rate" min="0" step="0.0001" required></label>
         <div class="windows" id="tariff-windows"></div>
@@ -1316,13 +1355,33 @@ function fillForm(period, startDate) {
   form.elements.export.value = period.export_p_per_kwh;
   form.elements.standing.value = period.standing_charge_p_per_day;
   form.elements.vat.value = period.vat_percent ?? 0;
+  form.elements.fixed_until.value = period.fixed_until ?? "";
   fillWindows(tariffWindows, form.elements.other_rate, period.import_bands);
   setDynamic(form.elements.dynamic_product, form.elements.dynamic_region, period.dynamic);
 }
 
 let formFilled = false;
 let currentRates = null;  // the tariff period in force today
+// Things about the rates that need attention, shown at the top of the page.
+function renderReminders(found) {
+  const box = document.getElementById("reminders");
+  box.replaceChildren(...(found ?? []).map(r => {
+    const text = r.kind === "fixed_ending"
+      ? "The fixed price on " + r.tariff + " ends on " + dayText(r.date) + " (" +
+        (r.days === 0 ? "today" : r.days === 1 ? "tomorrow" : "in " + r.days + " days") +
+        "). Enter the rates that follow under Tariff rates, or use the Tariff switch planner to weigh up a move."
+      : r.kind === "fixed_ended"
+      ? "The fixed price on " + r.tariff + " ended on " + dayText(r.date) + ". Costs are still being worked out at " +
+        "the old rates: enter the new ones under Tariff rates, starting the day after."
+      : "Half-hourly prices for " + r.tariff + " could not be fetched (" + r.error + "). Costs use the typed-in " +
+        "rates for any half hour without a published price, and are corrected once prices arrive.";
+    return Object.assign(document.createElement("div"), { textContent: text });
+  }));
+  box.hidden = !box.children.length;
+}
+
 function renderTariffs(data) {
+  renderReminders(data.reminders);
   currentRates = data.periods.find(p => p.effective_from === data.current_from) ?? null;
   const cell = text => { const td = document.createElement("td"); td.textContent = text; return td; };
   const rows = data.periods.map((period, index) => {
@@ -1352,7 +1411,14 @@ function renderTariffs(data) {
       form.scrollIntoView({ block: "nearest" });
     });
     if (data.periods.length > 1) action("Remove", () => removeTariff(period.effective_from));
-    tr.append(from, cell(period.name),
+    const name = cell(period.name);
+    if (period.fixed_until) {
+      const until = Object.assign(document.createElement("div"), { className: "hint",
+        textContent: "Price fixed until " + dayText(period.fixed_until) });
+      until.style.margin = "2px 0 0";
+      name.append(until);
+    }
+    tr.append(from, name,
       cell(publishedNote(period.published) + ratesText(period.import_bands)
            + (period.vat_percent ? " (+" + period.vat_percent + "% VAT)" : "")),
       cell(period.export_p_per_kwh + MINOR), cell(period.standing_charge_p_per_day + MINOR + " a day"), actions);
@@ -1395,6 +1461,7 @@ form.addEventListener("submit", async event => {
         standing_charge_p_per_day: Number(f.standing.value),
         vat_percent: Number(f.vat.value), import_bands,
         dynamic: getDynamic(f.dynamic_product, f.dynamic_region),
+        fixed_until: f.fixed_until.value || null,
       }),
     });
     renderTariffs(data);
@@ -2286,6 +2353,129 @@ axleForm.addEventListener("submit", async event => {
   }
 });
 
+// --- Tariff switch planner -----------------------------------------------------------------
+
+const plannerForm = document.getElementById("planner-form");
+let plannerFormFilled = false;
+function renderPlanner(data) {
+  const select = document.getElementById("planner-tariff");
+  const chosen = data.tariff?.id ?? select.value;
+  select.replaceChildren(...data.tariffs.map(t => new Option(t.name, t.id)));
+  if (data.tariffs.length) select.value = chosen;
+  select.hidden = !data.tariffs.length;
+  document.getElementById("planner-empty").hidden = data.has_data;
+  document.getElementById("planner-empty").textContent = data.tariffs.length
+    ? "No full day of readings to plan with yet." : "Add a tariff under Compare tariffs to plan a switch to it.";
+  document.getElementById("planner-body").hidden = !data.has_data;
+  if (!data.has_data) return;
+
+  const cell = (text, className) => Object.assign(document.createElement("td"), { textContent: text, className: className ?? "" });
+  const cash = v => v === null || v === undefined ? "–" : money(v);
+  const gap = row => {
+    if (row.planned_gbp === null || row.planned_own_gbp === null) return cell("–", "num");
+    const d = row.planned_gbp - row.planned_own_gbp;
+    return Math.abs(d) < 0.005 ? cell("Same", "num")
+      : cell(money(Math.abs(d)) + (d < 0 ? " cheaper" : " dearer"), "num " + (d < 0 ? "better" : "worse"));
+  };
+  const line = (label, row, bold) => {
+    const tr = document.createElement("tr");
+    tr.append(cell(label), cell(cash(row.paid_gbp), "num"), cell(cash(row.replayed_gbp), "num"),
+              cell(cash(row.moved_gbp), "num"), cell(cash(row.planned_gbp), "num"), gap(row));
+    if (bold) tr.style.fontWeight = "600";
+    return tr;
+  };
+  const monthName = key => new Date(key + "-01T00:00").toLocaleDateString([], { month: "long", year: "numeric" });
+  document.getElementById("planner-rows").replaceChildren(...data.months.map(m => {
+    const whole = new Date(m.month.slice(0, 4), Number(m.month.slice(5)), 0).getDate() === m.days;
+    return line(monthName(m.month) + (whole ? "" : " (" + m.days + " days)"), m);
+  }));
+  document.getElementById("planner-totals").replaceChildren(line("Total, " + data.days + " days", data.totals, true));
+
+  // The charging plan, in words.
+  const el = (tag, text) => Object.assign(document.createElement(tag), { textContent: text });
+  const windows = times => times.map(t => t.start + " to " + (t.end === "24:00" ? "midnight" : t.end) +
+    " (" + t.p_per_kwh + MINOR + ")").join(" and ");
+  const advice = [el("strong", "Charging plan for " + data.tariff.name)];
+  if (data.tariff.dynamic) {
+    advice.push(el("div", "Its prices change every half hour, so the cheap times move from day to day. The plan charges " +
+      "the battery and the car in each day's cheapest half hours; in practice that means following the prices " +
+      "published each afternoon for the day ahead."));
+  } else if (data.cheap_times.length) {
+    advice.push(el("div", "Charge the battery and the car from " + windows(data.cheap_times) + "." +
+      (data.own_cheap_times.length ? " At the moment they charge from " + windows(data.own_cheap_times) + "." : "")));
+  } else {
+    advice.push(el("div", "It has one price all day, so there is no cheap time to charge in: the battery would only " +
+      "store spare solar."));
+  }
+  const b = data.battery, short = data.shortfall;
+  if (!short) {
+    advice.push(el("div", "The battery's size could not be worked out from the readings. Enter it under " +
+      "\"Battery used for the plan\" below to see whether it would last between cheap times."));
+  } else {
+    const battery = "With a " + b.used_kwh + " kWh battery charging at up to " + b.used_kw + " kW";
+    const timed = data.tariff.dynamic || data.cheap_times.length > 0;
+    advice.push(el("div", short.short_days === 0
+      ? battery + ", it would " + (timed ? "last from one cheap time to the next" : "never run empty") +
+        " on every one of the " + short.days + " days."
+      : battery + ", it would " + (timed ? "run out before the next cheap time" : "be empty for part of the day") +
+        " on " + short.short_days + " of " + short.days +
+        " days (" + short.short_percent + "%), for about " + short.hours_empty_on_short_days +
+        " hours on those days. Over the period " + short.dear_kwh + " kWh would be bought " +
+        (timed ? "outside the cheap times." : "from the grid.") +
+        (short.worst_month ? " The hardest month is " + monthName(short.worst_month) + " (" +
+          short.worst_month_short_days + " days short)." : "")));
+    if (data.own_shortfall) {
+      advice.push(el("div", "For comparison, the same plan on your current tariff runs out on " +
+        data.own_shortfall.short_days + " of " + data.own_shortfall.days + " days."));
+    }
+  }
+  document.getElementById("planner-advice").replaceChildren(...advice);
+
+  const t = data.totals;
+  const check = t.planned_own_gbp !== null && t.paid_gbp !== null
+    ? " Run on your own tariff, the same model comes to " + money(t.planned_own_gbp) + " against the " +
+      money(t.paid_gbp) + " you actually paid. A model never matches real life exactly, so the last column compares " +
+      "the model with itself, which is the fair comparison: read it as the likely difference, not an exact bill." : "";
+  document.getElementById("planner-hint").textContent =
+    dayText(data.first_day) + " to " + dayText(data.last_day) + ", net of export income and including the standing " +
+    "charge. \"As it happened\" replays your usage unchanged. \"Charging moved\" shifts battery and car charging to " +
+    "the cheapest half hours without checking the battery would last: a best case. \"Planned charging\" runs the " +
+    "household again on this tariff: the battery and car charge in its cheap times and the battery then runs the " +
+    "house until it is empty." + check + " The plan does not hold back charging before a sunny day, so it exports a " +
+    "little more than a smart system would.";
+
+  if (!plannerFormFilled) {
+    plannerFormFilled = true;
+    plannerForm.elements.battery_kwh.value = data.settings.battery_kwh ?? "";
+    plannerForm.elements.charge_kw.value = data.settings.charge_kw ?? "";
+  }
+  plannerForm.elements.battery_kwh.placeholder = b.estimated_kwh ? "Worked out: " + b.estimated_kwh : "Not known";
+  plannerForm.elements.charge_kw.placeholder = b.estimated_kw ? "Worked out: " + b.estimated_kw : "Not known";
+}
+async function refreshPlanner() {
+  if (!sectionOpen("planner-heading")) return;  // fetched when the section is opened
+  try {
+    const chosen = document.getElementById("planner-tariff").value;
+    renderPlanner(await getJson("api/planner" + (chosen ? "?tariff=" + chosen : "")));
+  } catch (err) {
+    document.getElementById("planner-empty").hidden = false;
+    document.getElementById("planner-empty").textContent = "Could not work out the plan (" + err.message + ").";
+  }
+}
+document.getElementById("planner-tariff").addEventListener("change", refreshPlanner);
+plannerForm.addEventListener("submit", async event => {
+  event.preventDefault();
+  const message = document.getElementById("planner-message");
+  try {
+    const number = name => plannerForm.elements[name].value === "" ? null : Number(plannerForm.elements[name].value);
+    await sendTariff("api/planner/settings", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ battery_kwh: number("battery_kwh"), charge_kw: number("charge_kw") }) });
+    message.textContent = "Saved.";
+    refreshPlanner();
+  } catch (err) { message.textContent = err.message; }
+});
+
 // --- Running costs by device ---------------------------------------------------------------
 
 const deviceYearsOpen = new Set([String(new Date().getFullYear())]);
@@ -2706,6 +2896,7 @@ function renderCompare(data) {
       try {
         await sendTariff("api/compare/tariffs/" + candidate.id, { method: "DELETE" });
         refreshCompare();
+        refreshPlanner();
         refreshPayback();
       } catch (err) { compareMessage(err.message, true); }
     });
@@ -2777,6 +2968,7 @@ compareForm.addEventListener("submit", async event => {
     editingComparison = null;
     compareMessage("Saved.");
     refreshCompare();
+    refreshPlanner();
     refreshPayback();
   } catch (err) {
     compareMessage(err.message, true);
@@ -2971,6 +3163,7 @@ async function refreshLive() {
 
 // After rates change, everything worked out from them is fetched again.
 function refreshEverything() {
+  refreshPlanner();
   refresh();
   refreshCharts();
   refreshRates();
@@ -3079,7 +3272,7 @@ const SECTION_LOADERS = {
   "summary-heading": () => refreshSummary(), "years-heading": () => refreshRates(),
   "device-costs-heading": () => refreshDeviceCosts(), "roi-heading": () => refreshPayback(),
   "income-heading": () => refreshIncome(), "bills-heading": () => refreshBills(),
-  "compare-heading": () => refreshCompare(),
+  "compare-heading": () => refreshCompare(), "planner-heading": () => refreshPlanner(),
 };
 function setFolded(h2, fold) {
   const wasFolded = h2.getAttribute("aria-expanded") === "false";
@@ -3192,6 +3385,8 @@ async function start() {
   // The comparison prices a long period several times over, so it comes last.
   refreshCompare();
   every(30 * MINUTE, refreshCompare);
+  refreshPlanner();
+  every(60 * MINUTE, refreshPlanner);
 }
 start();
 </script>

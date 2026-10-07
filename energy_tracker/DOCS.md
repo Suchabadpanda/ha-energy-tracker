@@ -384,6 +384,45 @@ Things to know:
 - The price list is only contacted when you open the form or press **Fill in prices**. A
   region letter and tariff code are sent; nothing else.
 
+## Tariff switch planner
+
+Choose a tariff saved under **Compare tariffs** to see the last twelve months on it, month
+by month, beside what you paid. Each month has three figures for the other tariff:
+
+- **As it happened** replays your usage unchanged.
+- **Charging moved** shifts battery and car charging to the cheapest half hours, without
+  checking the battery would last. It is a best case.
+- **Planned charging** runs the household again on that tariff. The house and the panels
+  behave exactly as recorded; the battery and the car charge from the grid in the tariff's
+  cheap times, and the battery then runs the house until it is empty. This is the realistic
+  figure.
+
+**Planned, against yours** compares planned charging with the same model run on your own
+tariff. A model never matches real life exactly (the note under the table shows how far it
+is from what you paid), so comparing the model with itself is the fair test. Read it as the
+likely difference, not an exact bill.
+
+### The charging plan
+
+Above the table, the plan says when the battery and the car would charge on the new tariff,
+how often the battery would run out before its next cheap time, for how long, how much
+would be bought at dearer rates as a result, and which month is hardest.
+
+- A time counts as cheap when its price is in the bottom quarter of that day's range.
+- The plan does not hold back charging before a sunny day, so it exports a little more
+  than a smart system would.
+- **Battery used for the plan**: the usable capacity and fastest charging rate are worked
+  out from your readings. Enter your own if they look wrong, or to see what a bigger
+  battery would do on that tariff.
+
+## Rate reminders
+
+Under **Tariff rates**, a fixed-price deal can be given the last day its price is
+guaranteed (**Price fixed until**). From 30 days before, a notice at the top of the page
+says when it ends; after that date it says costs are still on the old rates. The notice
+goes once the rates that follow have been entered. A notice also appears when half-hourly
+prices could not be fetched.
+
 ## Older history
 
 **Import older history** fetches hourly history for the energy counters from Home

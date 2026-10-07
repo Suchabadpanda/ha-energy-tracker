@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.19.0
+
+- Tariff switch planner: the last twelve months on another tariff, month by month, beside
+  what you paid.
+- Charging plan: when the battery and the car would charge on that tariff, and how often
+  the battery would run out before its next cheap time.
+- Rate reminders: give a fixed-price deal its end date and the page reminds you a month
+  before; it also says when half-hourly prices could not be fetched.
+
 ## 0.18.0
 
 - Payback is now called Return on investment.
