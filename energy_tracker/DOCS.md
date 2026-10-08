@@ -126,11 +126,12 @@ period of the day with a different price: one for a single cheap period, or up t
 tariffs with several. A window may run past midnight (23:30 until 05:30). With no windows,
 the standard rate applies all day.
 
-### Half-hourly prices (Octopus Agile)
+### Following Octopus's published prices
 
-For a tariff whose price changes every half hour, choose your region and the tariff under
-**Half-hourly prices**. Each half hour is then charged at the price Octopus Energy
-published for it.
+For an Octopus tariff whose price changes every half hour (Agile) or from time to time (a
+variable tariff such as Flexible Octopus), choose your region and the tariff under
+**Published prices to follow**. Each half hour is then charged at the price Octopus Energy
+published for it, so past price changes are included.
 
 - Published prices already include VAT, so VAT is not added to them. The standing charge
   is still what you type in.
@@ -192,6 +193,21 @@ or everything stored, in whole days up to yesterday.
 - **Dear-rate import**: everything bought outside your cheapest rate, with its cost.
 
 **Month by month** gives the same figures for each month.
+
+### Would more panels, or a bigger inverter, pay?
+
+Below the battery estimate, a table shows what 1 to 4 kWp more panels would add each year:
+the extra generation, how much would be lost to the inverter's limit, and the saving.
+Enter your system under **Your solar system**: the panels' size, the inverter's limit for
+solar, optionally a bigger inverter to compare, and optionally a price per kWp to see how
+long each option takes to pay back.
+
+The household is run again on your own tariff with the panels' output scaled up, half
+hour by half hour, and the battery working as in the tariff switch planner. Extra solar
+covers the house first, then fills the battery, then is exported. Panels facing a
+different way would produce at different times of day, so treat the figures as a guide.
+The panel size is estimated from the readings until you enter it, and tends to come out
+a little low.
 
 ### Would a bigger battery pay?
 

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.26.0
+
+- Performance: "Would more panels, or a bigger inverter, pay?" estimates the yearly gain
+  from 1 to 4 kWp more panels, what the inverter limit would cost, and the payback time.
+
 ## 0.25.0
 
 - Return on investment: "Also compare with" draws a second savings line, with its own

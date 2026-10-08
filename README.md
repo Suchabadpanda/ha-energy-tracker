@@ -83,8 +83,8 @@ The figures shown are made-up example data.
   7 days or the last 30 days. Click a legend entry on any chart to show or hide that
   series. Breaks in the data are shown as breaks, not joined up.
 - **History**: any past day, week, month or year as a chart and table, with a CSV download.
-- **Performance**: self-sufficiency, battery efficiency and dear-rate import, with an estimate
-  of what a bigger battery would save.
+- **Performance**: self-sufficiency, battery efficiency and dear-rate import, with estimates
+  of what a bigger battery, more panels or a bigger inverter would save.
 - **Monthly summary**: a month on one page, against the month before and a year earlier.
 - **Yearly report**: a year on one page, beside the year before, ready to print, with a
   costs-hidden version for sharing.

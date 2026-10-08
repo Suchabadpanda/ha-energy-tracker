@@ -361,6 +361,32 @@
       </div>
       <div class="hint" id="sizing-hint"></div>
     </div>
+    <div id="panels-box">
+      <div class="group-title" style="margin-top: 16px;">Would more panels, or a bigger inverter, pay?</div>
+      <div class="hint" id="panels-summary"></div>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Extra panels</th><th class="num">More generation a year</th>
+            <th class="num">Lost to the inverter limit</th><th class="num">Saving a year</th>
+            <th class="num" id="panels-bigger-head">With the bigger inverter</th>
+            <th class="num">Cost</th><th class="num">Pays back in</th></tr></thead>
+          <tbody id="panels-rows"></tbody>
+        </table>
+      </div>
+      <div class="hint" id="panels-hint"></div>
+      <details id="panels-editor">
+        <summary>Your solar system</summary>
+        <form id="panels-form">
+          <label>Panels now (kWp) <input type="number" name="kwp" min="0.1" max="100" step="0.01"></label>
+          <label>Inverter limit for solar (kW) <input type="number" name="inverter_kw" min="0.1" max="100" step="0.1"></label>
+          <label>A bigger inverter (kW, optional) <input type="number" name="new_inverter_kw" min="0.1" max="100" step="0.1"></label>
+          <label>Cost of more panels (<span class="major">£</span> per kWp, optional)
+            <input type="number" name="cost_per_kwp" min="0" max="10000" step="10"></label>
+          <div class="actions"><button class="primary" type="submit">Save</button></div>
+          <div id="panels-message" style="grid-column: 1 / -1; font-size: 13px; min-height: 18px; color: var(--muted);"></div>
+        </form>
+      </details>
+    </div>
   </div>
 
   <div id="summary-section">
@@ -1824,7 +1850,70 @@ function renderPerformance(data) {
     "the extra battery by the yearly saving for the years it would take to pay back.";
 }
 
+// --- More panels or a bigger inverter --------------------------------------------------------
+
+const panelsForm = document.getElementById("panels-form");
+let panelsFilled = false;
+function renderPanels(data) {
+  const box = document.getElementById("panels-box");
+  box.hidden = !data.has_data && !data.estimated_kwp;
+  if (!panelsFilled) {
+    panelsFilled = true;
+    for (const name of ["kwp", "inverter_kw", "new_inverter_kw", "cost_per_kwp"]) {
+      panelsForm.elements[name].value = data.settings[name] ?? "";
+    }
+  }
+  panelsForm.elements.kwp.placeholder = data.estimated_kwp ? "Worked out: " + data.estimated_kwp : "";
+  if (!data.has_data) {
+    document.getElementById("panels-summary").textContent = "Needs at least two weeks of solar readings.";
+    document.getElementById("panels-rows").replaceChildren();
+    return;
+  }
+  const bigger = data.settings.new_inverter_kw;
+  document.getElementById("panels-bigger-head").hidden = !bigger;
+  const cell = (text, className = "num") => Object.assign(document.createElement("td"), { textContent: text, className });
+  document.getElementById("panels-rows").replaceChildren(...data.options.map(o => {
+    const tr = document.createElement("tr");
+    tr.append(cell("+" + o.extra_kwp + " kWp", ""), cell(o.extra_kwh_year + " kWh"),
+      cell(o.clipped_kwh_year === null ? "–" : o.clipped_kwh_year + " kWh"),
+      cell(pounds(o.saved_gbp_year)));
+    if (bigger) tr.append(cell(pounds(o.saved_bigger_inverter_gbp_year)));
+    tr.append(cell(o.cost_gbp === null ? "–" : pounds(o.cost_gbp)),
+      cell(o.payback_years === null ? "–" : o.payback_years + " years"));
+    return tr;
+  }));
+  const inverter = data.settings.inverter_kw;
+  document.getElementById("panels-summary").textContent =
+    "Worked out for " + data.used_kwp + " kWp of panels" + (data.settings.kwp ? "" : " (estimated from the readings: enter yours below)") +
+    ", which made about " + data.generated_kwh_year + " kWh a year" +
+    (inverter ? ", with a " + inverter + " kW inverter limit" + (data.clipped_now_kwh_year ? " that already costs about " +
+      data.clipped_now_kwh_year + " kWh a year" : "") : "") + ".";
+  document.getElementById("panels-hint").textContent =
+    "Your household is run again on your own tariff with each panel's output scaled up, half hour by half hour, " +
+    "and the battery working as in the tariff switch planner. Extra solar first covers the house, then fills the " +
+    "battery, then is exported at your export rate. " +
+    (inverter ? "Solar above the inverter limit is lost. " : "Enter the inverter limit below to see what it would cost in lost generation. ") +
+    "Panels facing a different way would produce at different times, so treat these as a guide." +
+    (data.rough ? " Rough: based on fewer than twelve months, so the seasons are not fully counted." : "");
+}
+async function refreshPanels() {
+  if (!sectionOpen("performance-heading")) return;
+  try { renderPanels(await getJson("api/panels")); }
+  catch (err) { document.getElementById("panels-summary").textContent = "Could not work out the estimate (" + err.message + ")."; }
+}
+panelsForm.addEventListener("submit", async event => {
+  event.preventDefault();
+  try {
+    const number = name => panelsForm.elements[name].value === "" ? null : Number(panelsForm.elements[name].value);
+    renderPanels(await sendTariff("api/panels/settings", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ kwp: number("kwp"), inverter_kw: number("inverter_kw"),
+                             new_inverter_kw: number("new_inverter_kw"), cost_per_kwp: number("cost_per_kwp") }) }));
+    document.getElementById("panels-message").textContent = "Saved.";
+  } catch (err) { document.getElementById("panels-message").textContent = err.message; }
+});
+
 async function refreshPerformance() {
+  refreshPanels();
   if (!sectionOpen("performance-heading")) return;  // fetched when the section is opened
   try {
     renderPerformance(await getJson("api/performance?period=" + document.getElementById("performance-period").value));

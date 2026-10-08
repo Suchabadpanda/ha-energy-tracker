@@ -36,6 +36,7 @@ from . import (
     income,
     live,
     lookup,
+    panels,
     performance,
     planner,
     prices,
@@ -118,7 +119,7 @@ async def lifespan(_: FastAPI):
         await asyncio.to_thread(thread.join, 10)
 
 
-app = FastAPI(title="Energy Tracker", version="0.25.0", lifespan=lifespan)
+app = FastAPI(title="Energy Tracker", version="0.26.0", lifespan=lifespan)
 # The page and its chart data are mostly text: sent compressed, they are a quarter the size.
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
@@ -859,6 +860,84 @@ def switch_planner(tariff: Annotated[int | None, Query(ge=1)] = None) -> dict:
         shortfall=planner.shortfall(modelled) if modelled else None,
         own_shortfall=planner.shortfall(modelled_own) if modelled_own else None,
     )
+    return result
+
+
+# --- More panels or a bigger inverter -----------------------------------------------------------
+
+
+class PanelsIn(BaseModel):
+    """The solar system as it is, for working out what more of it would add."""
+
+    kwp: float | None = Field(default=None, gt=0, le=100)
+    inverter_kw: float | None = Field(default=None, gt=0, le=100)
+    new_inverter_kw: float | None = Field(default=None, gt=0, le=100)
+    cost_per_kwp: float | None = Field(default=None, ge=0, le=10_000)
+
+
+@app.post("/api/panels/settings")
+def save_panel_settings(body: PanelsIn) -> dict:
+    database().set_setting("panels", body.model_dump_json())
+    clear_caches()
+    return more_panels()
+
+
+@app.get("/api/panels")
+@kept
+def more_panels() -> dict:
+    """What extra panels, with today's inverter or a bigger one, would have saved in a year."""
+    zone = local_timezone()
+    now = datetime.now(UTC)
+    stored = json.loads(database().get_setting("panels") or "{}")
+    result: dict = {"has_data": False, "settings": stored}
+    end = local_midnight(now, zone)
+    firsts = [database().first_time(PLAN_COUNTERS[key]) for key in ("load", "solar")]
+    if not all(firsts):
+        return result
+    start = max(end - timedelta(days=365), *firsts).astimezone(zone)
+    if start.time() != clock(0):
+        start = datetime.combine(start.date() + timedelta(days=1), clock(0), zone)
+    if end - start < timedelta(days=14):
+        return result
+    names = list(PLAN_COUNTERS.values())
+    samples = counter_samples(names, start - timedelta(days=1), HALF_HOURLY, end)
+    counters = {key: Counter(samples[name], HALF_HOURLY_GAP) for key, name in PLAN_COUNTERS.items()}
+    estimate = panels.estimate_kwp(counters["solar"], start, end)
+    kwp = stored.get("kwp") or estimate
+    result.update(estimated_kwp=estimate, used_kwp=kwp)
+    if not kwp:
+        return result
+
+    # The same battery the planner uses, so the two agree.
+    levels = database().last_in_buckets(["battery_soc"], end - timedelta(days=90), end, 1800)
+    capacity, speed = planner.estimate_battery(
+        levels["battery_soc"], counters["charge"], counters["discharge"]
+    )
+    plan_settings = json.loads(database().get_setting("planner") or "{}")
+    battery = planner.Battery(
+        plan_settings.get("battery_kwh") or capacity or 0.01,
+        plan_settings.get("charge_kw") or speed or 0.01,
+    )
+    found = panels.options(
+        {key: counters[key] for key in ("load", "solar", "ev")},
+        start,
+        end,
+        zone,
+        schedule(),
+        battery,
+        kwp,
+        stored.get("inverter_kw"),
+        stored.get("new_inverter_kw"),
+    )
+    cost = stored.get("cost_per_kwp")
+    for row in found["options"]:
+        row["cost_gbp"] = round(cost * row["extra_kwp"]) if cost else None
+        row["payback_years"] = (
+            round(row["cost_gbp"] / row["saved_gbp_year"], 1)
+            if cost and row["saved_gbp_year"] > 0
+            else None
+        )
+    result.update(has_data=True, first_day=start.date(), battery_kwh=battery.capacity_kwh, **found)
     return result
 
 
