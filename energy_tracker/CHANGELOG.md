@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.24.0
+
+- Notes: pin a note to a day ("new tariff", "heat pump serviced"). Notes show as markers on
+  the history and return on investment charts, and are included in backups.
+- Yearly report: "Hide costs" leaves out everything about money, for sharing.
+
 ## 0.23.1
 
 - Return on investment: the line from your bills is projected forward too, with its own

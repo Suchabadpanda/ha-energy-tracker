@@ -29,6 +29,7 @@ def empty_database():
             "extra_income",
             "bills",
             "slot_prices",
+            "notes",
             "meta",
         ):
             conn.execute(f"DELETE FROM {table}")  # noqa: S608 - fixed table names

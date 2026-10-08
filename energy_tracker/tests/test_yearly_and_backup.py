@@ -136,3 +136,31 @@ def test_a_file_that_is_not_a_backup_changes_nothing():
         assert refused.status_code == 422, body[:60]
     assert len(client.get("/api/bills").json()["bills"]) == 1
     assert client.get("/api/income").json()["total_gbp"] == 12.5
+
+
+def test_notes_can_be_added_changed_removed_and_backed_up():
+    client.post("/api/notes", json={"day": "2026-04-01", "text": "Price change"})
+    added = client.post(
+        "/api/notes", json={"day": "2026-09-05", "text": " Heat pump serviced "}
+    ).json()
+    assert [n["text"] for n in added["notes"]] == ["Heat pump serviced", "Price change"]
+    first = added["notes"][1]["id"]
+    changed = client.post(f"/api/notes?id={first}", json={"day": "2026-04-02", "text": "New rates"})
+    assert changed.json()["notes"][1] == {"id": first, "day": "2026-04-02", "text": "New rates"}
+    assert client.post("/api/notes", json={"day": "2026-01-01", "text": ""}).status_code == 422
+    assert (
+        client.post("/api/notes", json={"day": "2026-01-01", "text": "x" * 201}).status_code == 422
+    )
+
+    saved = client.get("/api/backup").content
+    assert len(json.loads(saved)["tables"]["notes"]) == 2
+    client.delete(f"/api/notes/{first}")
+    assert len(client.get("/api/notes").json()["notes"]) == 1
+    assert client.delete(f"/api/notes/{first}").status_code == 404
+    client.post("/api/tariffs", json=RATES)  # a backup needs rates in it
+    saved = json.loads(saved)
+    saved["tables"]["tariff_periods"] = json.loads(client.get("/api/backup").content)["tables"][
+        "tariff_periods"
+    ]
+    restored = client.post("/api/restore?dry_run=false", content=json.dumps(saved)).json()
+    assert restored["found"]["notes"] == 2 and len(client.get("/api/notes").json()["notes"]) == 2

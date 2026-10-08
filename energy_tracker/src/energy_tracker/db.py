@@ -63,6 +63,13 @@ SCHEMA = """
         hidden      INTEGER NOT NULL DEFAULT 0
     );
 
+    -- Notes the user pins to a day ("new tariff", "heat pump serviced").
+    CREATE TABLE IF NOT EXISTS notes (
+        id   INTEGER PRIMARY KEY,
+        day  TEXT NOT NULL,
+        text TEXT NOT NULL
+    );
+
     CREATE TABLE IF NOT EXISTS bills (
         id          INTEGER PRIMARY KEY,
         first_day   TEXT NOT NULL,
@@ -320,9 +327,34 @@ class Database:
                 keep,
             ).rowcount
 
+    # --- notes ------------------------------------------------------------------------------
+
+    def note_rows(self) -> list[dict]:
+        with closing(self._connect()) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute("SELECT * FROM notes ORDER BY day DESC, id DESC").fetchall()
+        return [dict(row) for row in rows]
+
+    def save_note(self, day: date, text: str, row_id: int | None = None) -> int:
+        with closing(self._connect()) as conn, conn:
+            if row_id is not None:
+                cursor = conn.execute(
+                    "UPDATE notes SET day = ?, text = ? WHERE id = ?",
+                    (day.isoformat(), text, row_id),
+                )
+                if cursor.rowcount:
+                    return row_id
+            return conn.execute(
+                "INSERT INTO notes (day, text) VALUES (?, ?)", (day.isoformat(), text)
+            ).lastrowid
+
+    def delete_note(self, row_id: int) -> bool:
+        with closing(self._connect()) as conn, conn:
+            return conn.execute("DELETE FROM notes WHERE id = ?", (row_id,)).rowcount > 0
+
     # --- backing up and restoring what the user has entered ---------------------------------
 
-    BACKED_UP = ("tariff_periods", "comparison_tariffs", "bills", "extra_income")
+    BACKED_UP = ("tariff_periods", "comparison_tariffs", "bills", "extra_income", "notes")
 
     def dump(self) -> dict[str, list[dict]]:
         """Every row of the tables holding what the user has entered, as stored."""

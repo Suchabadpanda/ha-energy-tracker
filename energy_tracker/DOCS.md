@@ -224,9 +224,18 @@ you used came from them, what the smart load and the EV charger used, extra inco
 much of the system's cost had been saved by the end of the year, and the year's standout
 days. Below that, the year beside the one before, and a line for each month.
 
-Use the arrows to move between years and **Print** to print the report on its own. The
+Use the arrows to move between years and **Print** to print the report on its own. **Hide
+costs** leaves out every figure about money, so the report can be shared or printed for
+someone else; press it again to bring them back. The
 current year is shown "so far". A change between two years is only worked out when both
 are complete, since part of a year against a whole one is not a fair comparison.
+
+## Notes
+
+Under **Notes**, pin a note to a day: a tariff change, a service visit, a new appliance,
+time away. Notes show as a small yellow marker on the history chart (in the column for that
+day, week or month) and on the return on investment chart; point at a marker to read it.
+They are included in **Download settings**.
 
 ## Bill check
 
@@ -453,7 +462,7 @@ prices could not be fetched.
 ## Backup and restore
 
 **Download settings** saves everything you have entered as one file: tariff rates, tariffs
-to compare, bills, extra income, and the settings for return on investment, the planner
+to compare, bills, extra income, notes, and the settings for return on investment, the planner
 and folded sections.
 
 To restore, choose the file and press **Check file**. The page lists what the file holds;

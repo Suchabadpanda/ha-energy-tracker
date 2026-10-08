@@ -86,7 +86,9 @@ The figures shown are made-up example data.
 - **Performance**: self-sufficiency, battery efficiency and dear-rate import, with an estimate
   of what a bigger battery would save.
 - **Monthly summary**: a month on one page, against the month before and a year earlier.
-- **Yearly report**: a year on one page, beside the year before, ready to print.
+- **Yearly report**: a year on one page, beside the year before, ready to print, with a
+  costs-hidden version for sharing.
+- **Notes**: pin a note to a day; it shows as a marker on the charts.
 - **Backup and restore**: everything you have entered saved as one file, to keep or to move
   to another install.
 - **Bill check**: your bill's figures beside what the tracker measured for the same dates.

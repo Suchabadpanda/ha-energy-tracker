@@ -188,6 +188,9 @@
                          border-radius: 2px; margin-right: 6px; vertical-align: middle;
                          background: var(--c); }
   .empty { color: var(--muted); padding: 30px 0; text-align: center; }
+  /* Sharing the yearly report: everything about money is left out. */
+  #yearly-section.sharing .money { display: none; }
+  #yearly-share[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
   #reminders { display: grid; gap: 8px; margin: 14px 0 0; }
   #reminders div { border: 1px solid var(--warn); border-radius: 10px; padding: 10px 14px; font-size: 14px;
                    line-height: 1.5; background: var(--card); }
@@ -391,6 +394,7 @@
       <div class="nav">
         <button type="button" id="yearly-prev" aria-label="Earlier year">&lsaquo;</button>
         <button type="button" id="yearly-next" aria-label="Later year">&rsaquo;</button>
+        <button type="button" id="yearly-share" aria-pressed="false">Hide costs</button>
         <button type="button" id="yearly-print">Print</button>
       </div>
       <span class="period-label" id="yearly-label"></span>
@@ -409,7 +413,7 @@
         <div class="group-title" style="margin-top: 16px;">Month by month</div>
         <div class="table-scroll">
           <table>
-            <thead><tr><th>Month</th><th class="num">Net cost</th><th class="num">Solar</th><th class="num">Used</th>
+            <thead><tr><th>Month</th><th class="num money">Net cost</th><th class="num">Solar</th><th class="num">Used</th>
               <th class="num">Imported</th><th class="num">Exported</th><th class="num">Self-sufficiency</th></tr></thead>
             <tbody id="yearly-months"></tbody>
           </table>
@@ -596,6 +600,22 @@
     </details>
   </div>
 
+  <h2 id="notes-heading">Notes</h2>
+  <div class="chart">
+    <div class="hint" style="margin-top: 0;">Pin a note to a day, such as "new tariff" or "heat pump serviced", to
+      explain a change in the figures later. Notes show as a yellow marker on the history chart and the return on
+      investment chart; point at the marker to read them.</div>
+    <div class="table-scroll"><table><tbody id="notes-rows"></tbody></table></div>
+    <form id="notes-form">
+      <div class="field-row">
+        <label style="flex: 0 1 190px;">Day <input type="date" name="day" required></label>
+        <label style="flex: 3 1 300px;">Note <input type="text" name="text" maxlength="200" required></label>
+      </div>
+      <div class="actions"><button class="primary" type="submit">Add note</button></div>
+      <div id="notes-message" style="grid-column: 1 / -1; font-size: 13px; min-height: 18px; color: var(--muted);"></div>
+    </form>
+  </div>
+
   <div class="nav" style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
     <h2 id="compare-heading">Compare tariffs</h2>
     <select id="compare-period" aria-label="Period to compare over">
@@ -736,7 +756,7 @@
   <h2 id="backup-heading">Backup and restore</h2>
   <div class="chart">
     <div class="hint" style="margin-top: 0;">Save everything you have entered as one file: tariff rates, tariffs
-      to compare, bills, extra income, and the settings for return on investment, the planner and folded sections. Restoring a file replaces all of those with what the file holds. Readings are not in the file:
+      to compare, bills, extra income, notes, and the settings for return on investment, the planner and folded sections. Restoring a file replaces all of those with what the file holds. Readings are not in the file:
       they are kept by Home Assistant's own backups. The file contains your bill figures and costs, so keep it
       somewhere private.</div>
     <div class="actions" style="margin-top: 12px; flex-wrap: wrap; align-items: center;">
@@ -1623,9 +1643,17 @@ function drawHistory(data) {
     if (i % labelEvery === 0) {
       add("text", { x: left + band / 2, y: H - 8, "text-anchor": "middle", class: "axis" }, short);
     }
+    // Notes pinned to a day in this column: a marker at the top, and their text in the tooltip.
+    const first = localDay(row.start), after = localDay(row.end);
+    const here = pinned.filter(n => n.day >= first && (n.day < after || after === first));
+    if (here.length) {
+      const cx = left + band / 2;
+      add("path", { d: `M${cx - 5},${T}h10l-5,8z`, fill: "var(--warn)" });
+    }
     // The whole column is the hover and keyboard target, and lists every series.
     const hit = add("rect", { x: left, y: T, width: band, height: H - T - B, class: "hit", tabindex: 0,
-                              "aria-label": full + ": " + shownSeries.map(s => s.label + " " + kwh(row[s.key])).join(", ") });
+                              "aria-label": full + ": " + shownSeries.map(s => s.label + " " + kwh(row[s.key])).join(", ") +
+                                here.map(n => ". Note: " + n.text).join("") });
     const show = () => {
       const heading = Object.assign(document.createElement("div"), { className: "when", textContent: full });
       const lines = shownSeries.map(series => {
@@ -1635,7 +1663,11 @@ function drawHistory(data) {
                     Object.assign(document.createElement("strong"), { textContent: kwh(row[series.key]) }));
         return line;
       });
-      tip.replaceChildren(heading, ...lines);
+      const noted = here.map(n => Object.assign(document.createElement("div"), {
+        textContent: (here.length > 1 || new Date(row.end) - new Date(row.start) > 26 * 3600 * 1000
+          ? dayText(n.day) + ": " : "") + n.text,
+        style: "margin-top: 6px; color: var(--warn); font-weight: 600; max-width: 260px;" }));
+      tip.replaceChildren(heading, ...lines, ...noted);
       tip.hidden = false;
       const scale = svg.clientWidth / W, centre = (left + band / 2) * scale;
       const flip = centre > svg.clientWidth / 2;
@@ -1798,11 +1830,73 @@ async function refreshPerformance() {
 }
 document.getElementById("performance-period").addEventListener("change", refreshPerformance);
 
+// --- Notes ---------------------------------------------------------------------------------
+
+let pinned = [];  // notes, newest first: shown on the charts as well as listed
+const localDay = iso => new Date(iso).toLocaleDateString("en-CA");  // "2026-10-08"
+let editingNote = null;
+function renderNotes() {
+  const cell = text => Object.assign(document.createElement("td"), { textContent: text });
+  document.getElementById("notes-rows").replaceChildren(...pinned.map(note => {
+    const tr = document.createElement("tr");
+    const actions = document.createElement("td");
+    actions.style.whiteSpace = "nowrap";
+    const action = (label, onClick) => {
+      const button = Object.assign(document.createElement("button"), { className: "link", type: "button", textContent: label });
+      button.style.marginRight = "12px";
+      button.addEventListener("click", onClick);
+      actions.append(button);
+    };
+    action("Edit", () => {
+      editingNote = note.id;
+      notesForm.elements.day.value = note.day;
+      notesForm.elements.text.value = note.text;
+      notesForm.querySelector("button.primary").textContent = "Save note";
+      notesForm.elements.text.focus();
+    });
+    action("Remove", async () => {
+      try { pinned = (await sendTariff("api/notes/" + note.id, { method: "DELETE" })).notes; notesChanged(); }
+      catch (err) { document.getElementById("notes-message").textContent = err.message; }
+    });
+    const day = cell(dayText(note.day));
+    day.style.whiteSpace = "nowrap";
+    tr.append(day, cell(note.text), actions);
+    return tr;
+  }));
+}
+function notesChanged() {
+  renderNotes();
+  if (historyData) drawHistory(historyData);
+  if (lastRoi) renderPayback(lastRoi);
+}
+async function refreshNotes() {
+  try { pinned = (await getJson("api/notes")).notes; notesChanged(); } catch { /* charts simply show no notes */ }
+}
+const notesForm = document.getElementById("notes-form");
+notesForm.addEventListener("submit", async event => {
+  event.preventDefault();
+  try {
+    const data = await sendTariff("api/notes" + (editingNote ? "?id=" + editingNote : ""), {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ day: notesForm.elements.day.value, text: notesForm.elements.text.value }) });
+    pinned = data.notes;
+    editingNote = null;
+    notesForm.reset();
+    notesForm.querySelector("button.primary").textContent = "Add note";
+    document.getElementById("notes-message").textContent = "Saved.";
+    notesChanged();
+  } catch (err) { document.getElementById("notes-message").textContent = err.message; }
+});
+
 // --- Yearly report -------------------------------------------------------------------------
 
 let yearlyYear = null;   // null means this year
+let yearlyShare = false; // true while costs are hidden for sharing
+let lastYearly = null;
 let yearlyLinks = {};
 function renderYearly(data) {
+  lastYearly = data;
+  document.getElementById("yearly-section").classList.toggle("sharing", yearlyShare);
   yearlyLinks = { previous: data.previous, next: data.next };
   document.getElementById("yearly-prev").disabled = !data.previous;
   document.getElementById("yearly-next").disabled = !data.next;
@@ -1815,13 +1909,17 @@ function renderYearly(data) {
   document.getElementById("yearly-body").hidden = !y;
   if (!y) { document.getElementById("yearly-hint").textContent = ""; return; }
   const c = y.cost, lines = [];
-  lines.push("Electricity cost " + money(c.net_gbp) + " in all: " + money(c.import_gbp) + " for " +
+  // Lines about money are marked, so the shared view can leave them out.
+  const moneyLine = text => ({ text, money: true });
+  lines.push(moneyLine("Electricity cost " + money(c.net_gbp) + " in all: " + money(c.import_gbp) + " for " +
     c.import_kwh.toFixed(0) + " kWh imported, plus " + money(c.standing_charge_gbp) + " standing charge, less " +
-    money(c.export_credit_gbp) + " for " + c.export_kwh.toFixed(0) + " kWh exported.");
-  if (before && before.complete && y.complete) lines.push("That is " + change(c.net_gbp, before.cost.net_gbp, money) +
-    " than " + (data.year - 1) + ".");
-  if (c.saved_gbp > 0) lines.push("Importing at cheaper times saved " + money(c.saved_gbp) +
-    " against paying the day rate for everything.");
+    money(c.export_credit_gbp) + " for " + c.export_kwh.toFixed(0) + " kWh exported."));
+  lines.push({ text: "The house imported " + c.import_kwh.toFixed(0) + " kWh from the grid and exported " +
+    c.export_kwh.toFixed(0) + " kWh.", shareOnly: true });
+  if (before && before.complete && y.complete) lines.push(moneyLine("That is " + change(c.net_gbp, before.cost.net_gbp, money) +
+    " than " + (data.year - 1) + "."));
+  if (c.saved_gbp > 0) lines.push(moneyLine("Importing at cheaper times saved " + money(c.saved_gbp) +
+    " against paying the day rate for everything."));
   if (y.solar_kwh !== null) lines.push("The panels made " + kwh(y.solar_kwh) + (y.solar_used_percent !== null
     ? ", of which " + percent(y.solar_used_percent) + " was used at home." : "."));
   if (y.self_sufficiency_percent !== null) lines.push(percent(y.self_sufficiency_percent) +
@@ -1829,44 +1927,46 @@ function renderYearly(data) {
   const d = data.devices;
   if (d) {
     const parts = [];
+    const cost = v => yearlyShare ? "" : " (about " + money(v) + ")";
     if (d.heat_pump_kwh !== undefined) parts.push("the " + data.smart_load_label.toLowerCase() + " used " +
-      kwh(d.heat_pump_kwh) + " (about " + money(d.heat_pump_gbp) + ")");
-    if (d.ev_charger_kwh !== undefined) parts.push("the EV charger " + kwh(d.ev_charger_kwh) +
-      " (about " + money(d.ev_charger_gbp) + ")");
+      kwh(d.heat_pump_kwh) + cost(d.heat_pump_gbp));
+    if (d.ev_charger_kwh !== undefined) parts.push("the EV charger " + kwh(d.ev_charger_kwh) + cost(d.ev_charger_gbp));
     if (parts.length) lines.push("Of the electricity used, " + parts.join(" and ") + ".");
   }
-  if (y.extra_income_gbp > 0) lines.push("Extra income came to " + money(y.extra_income_gbp) + ".");
+  if (y.extra_income_gbp > 0) lines.push(moneyLine("Extra income came to " + money(y.extra_income_gbp) + "."));
   if (data.saved_by_year_end_gbp !== null && data.system_cost_gbp) {
-    lines.push((data.is_current ? "So far the system has saved " : "By the end of the year the system had saved ") +
+    lines.push(moneyLine((data.is_current ? "So far the system has saved " : "By the end of the year the system had saved ") +
       pounds(data.saved_by_year_end_gbp) + " of its " + pounds(data.system_cost_gbp) + " cost (" +
-      (data.saved_by_year_end_gbp / data.system_cost_gbp * 100).toFixed(1) + "%).");
+      (data.saved_by_year_end_gbp / data.system_cost_gbp * 100).toFixed(1) + "%)."));
   }
-  if (y.dearest_day) lines.push("The dearest day was " + dayName(y.dearest_day.day) + " at " + money(y.dearest_day.value) + ".");
+  if (y.dearest_day) lines.push(moneyLine("The dearest day was " + dayName(y.dearest_day.day) + " at " + money(y.dearest_day.value) + "."));
   if (y.sunniest_day && y.sunniest_day.value > 0) lines.push("The sunniest day was " + dayName(y.sunniest_day.day) +
     " with " + kwh(y.sunniest_day.value) + " generated.");
   if (y.busiest_day) lines.push("The most electricity was used on " + dayName(y.busiest_day.day) + ": " +
     kwh(y.busiest_day.value) + ".");
-  document.getElementById("yearly-points").replaceChildren(
-    ...lines.map(text => Object.assign(document.createElement("li"), { textContent: text })));
+  document.getElementById("yearly-points").replaceChildren(...lines
+    .filter(line => typeof line === "string" || (yearlyShare ? !line.money : !line.shareOnly))
+    .map(line => Object.assign(document.createElement("li"), { textContent: typeof line === "string" ? line : line.text })));
 
   const cell = (text, numeric = true) => Object.assign(document.createElement("td"), { textContent: text, className: numeric ? "num" : "" });
   const cash = v => v === null || v === undefined ? "–" : money(v);
   const rows = [
-    ["Net cost", x => x.cost.net_gbp, cash],
-    ["Import cost", x => x.cost.import_gbp, cash],
-    ["Export credit", x => x.cost.export_credit_gbp, cash],
-    ["Standing charge", x => x.cost.standing_charge_gbp, cash],
-    ["Extra income", x => x.extra_income_gbp, cash],
+    ["Net cost", x => x.cost.net_gbp, cash, true],
+    ["Import cost", x => x.cost.import_gbp, cash, true],
+    ["Export credit", x => x.cost.export_credit_gbp, cash, true],
+    ["Standing charge", x => x.cost.standing_charge_gbp, cash, true],
+    ["Extra income", x => x.extra_income_gbp, cash, true],
     ["Solar generated", x => x.solar_kwh, kwh],
     ["Used", x => x.consumption_kwh, kwh],
     ["Imported", x => x.import_kwh, kwh],
     ["Exported", x => x.export_kwh, kwh],
     ["Self-sufficiency", x => x.self_sufficiency_percent, percent],
-    ["Dear-rate import", x => x.dear_import_kwh, kwh],
+    ["Dear-rate import", x => x.dear_import_kwh, kwh, true],
     ["Days counted", x => x.days, String],
   ];
-  document.getElementById("yearly-rows").replaceChildren(...rows.map(([label, pick, show]) => {
+  document.getElementById("yearly-rows").replaceChildren(...rows.map(([label, pick, show, isMoney]) => {
     const tr = document.createElement("tr");
+    if (isMoney) tr.className = "money";
     const now = pick(y), then = before ? pick(before) : null;
     // Part of a year against a whole one is not a fair comparison, so no change is given.
     const comparable = before && before.complete && y.complete;
@@ -1877,15 +1977,18 @@ function renderYearly(data) {
   }));
   document.getElementById("yearly-months").replaceChildren(...y.months.map(m => {
     const tr = document.createElement("tr");
+    const net = cell(cash(m.net_gbp));
+    net.classList.add("money");
     tr.append(cell(new Date(m.month + "-01T00:00").toLocaleDateString([], { month: "long" }), false),
-              cell(cash(m.net_gbp)), cell(kwh(m.solar_kwh)), cell(kwh(m.consumption_kwh)), cell(kwh(m.import_kwh)),
+              net, cell(kwh(m.solar_kwh)), cell(kwh(m.consumption_kwh)), cell(kwh(m.import_kwh)),
               cell(kwh(m.export_kwh)), cell(percent(m.self_sufficiency_percent)));
     return tr;
   }));
   const partial = [[y, String(data.year)], [before, String(data.year - 1)]]
     .filter(([x]) => x && !x.complete).map(([x, name]) => name + " covers " + x.days + " days");
-  document.getElementById("yearly-hint").textContent =
-    (partial.length ? partial.join("; ") + ", so no change is worked out between them. " : "") +
+  document.getElementById("yearly-hint").textContent = yearlyShare
+    ? "Costs and anything about money are hidden, so this can be shared. Press \"Hide costs\" again to show them."
+    : (partial.length ? partial.join("; ") + ", so no change is worked out between them. " : "") +
     "Whole days up to yesterday. Costs are the tracker's estimate at your tariff rates. Device costs are each " +
     "device's share of the import cost.";
 }
@@ -1897,6 +2000,12 @@ async function refreshYearly() {
 document.getElementById("yearly-prev").addEventListener("click", () => { yearlyYear = yearlyLinks.previous; refreshYearly(); });
 document.getElementById("yearly-next").addEventListener("click", () => { yearlyYear = yearlyLinks.next; refreshYearly(); });
 document.getElementById("yearly-print").addEventListener("click", () => printSection("yearly-section"));
+document.getElementById("yearly-share").addEventListener("click", event => {
+  yearlyShare = !yearlyShare;
+  event.target.setAttribute("aria-pressed", String(yearlyShare));
+  event.target.textContent = yearlyShare ? "Show costs" : "Hide costs";
+  if (lastYearly) renderYearly(lastYearly);
+});
 
 // --- Backup and restore --------------------------------------------------------------------
 
@@ -2855,6 +2964,16 @@ function drawPayback(p, totalCost, billed) {
     add("line", { x1: x(t), x2: x(t), y1: T, y2: H - B, class: "gridline" });
     add("text", { x: x(t), y: H - 8, "text-anchor": "middle", class: "axis" }, year);
   }
+  // Notes: a marker on the top edge, with the note as its tooltip.
+  for (const note of pinned) {
+    const t = time(note.day);
+    if (t < start || t > end) continue;
+    add("line", { x1: x(t), x2: x(t), y1: T, y2: H - B, stroke: "var(--warn)", "stroke-dasharray": "2 4", "stroke-width": 1 });
+    const marker = add("path", { d: `M${x(t) - 5},${T}h10l-5,8z`, fill: "var(--warn)", style: "cursor: help;" });
+    const title = document.createElementNS(NS, "title");
+    title.textContent = dayText(note.day) + ": " + note.text;
+    marker.append(title);
+  }
   const path = pts => pts.map(([t, v], i) => (i ? "L" : "M") + x(t).toFixed(1) + "," + y(v).toFixed(1)).join("");
   // Whatever lies above the cost line is profit: shaded, by clipping the area under the
   // savings line to the part of the chart above the cost.
@@ -3612,6 +3731,7 @@ async function start() {
   // The tiles first, so the top of the page appears before the heavier sections are asked for.
   await refresh();
   every(10000, refresh);
+  refreshNotes();
   setInterval(refreshLive, 2000);
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) return;

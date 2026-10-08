@@ -118,7 +118,7 @@ async def lifespan(_: FastAPI):
         await asyncio.to_thread(thread.join, 10)
 
 
-app = FastAPI(title="Energy Tracker", version="0.23.1", lifespan=lifespan)
+app = FastAPI(title="Energy Tracker", version="0.24.0", lifespan=lifespan)
 # The page and its chart data are mostly text: sent compressed, they are a quarter the size.
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
@@ -1040,6 +1040,34 @@ def monthly_summary(
     }
 
 
+# --- Notes on the timeline ----------------------------------------------------------------------
+
+
+class NoteIn(BaseModel):
+    day: date
+    text: str = Field(min_length=1, max_length=200)
+
+
+@app.get("/api/notes")
+def notes() -> dict:
+    """Notes pinned to days, newest first."""
+    return {"notes": database().note_rows()}
+
+
+@app.post("/api/notes")
+def save_note(body: NoteIn, id: int | None = None) -> dict:  # noqa: A002
+    """Add a note, or change the one with the given id."""
+    database().save_note(body.day, body.text.strip(), id)
+    return notes()
+
+
+@app.delete("/api/notes/{row_id}")
+def delete_note(row_id: int) -> dict:
+    if not database().delete_note(row_id):
+        raise HTTPException(status_code=404, detail="That note is not in the list")
+    return notes()
+
+
 # --- Yearly report -------------------------------------------------------------------------------
 
 
@@ -1145,6 +1173,10 @@ def checked_backup(body: bytes) -> tuple[dict[str, list[dict]], dict[str, str]]:
         for row in tables.get("extra_income", []):
             date.fromisoformat(row["day"])
             str(row["description"])
+        for row in tables.get("notes", []):
+            date.fromisoformat(row["day"])
+            if not isinstance(row["text"], str):
+                raise ValueError("a note has no text")
         settings_ = {}
         for key in BACKUP_SETTINGS:
             if key in stored:
@@ -1174,6 +1206,7 @@ async def restore_backup(request: Request, dry_run: bool = True) -> dict:
         "comparison_tariffs": len(tables["comparison_tariffs"]),
         "bills": len(tables["bills"]),
         "extra_income": len(tables["extra_income"]),
+        "notes": len(tables["notes"]),
         "settings": sorted(stored),
         "saved": json.loads(body).get("saved"),
         "version": json.loads(body).get("version"),
