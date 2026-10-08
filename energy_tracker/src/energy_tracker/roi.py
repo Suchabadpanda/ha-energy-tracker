@@ -259,3 +259,59 @@ def payback(
         "adjusted": adjusted,
         "today": today,
     }
+
+
+def billed_line(
+    otherwise: dict[date, float],
+    paid: dict[date, float],
+    paid_before_export: dict[date, float],
+    bills: list[dict],
+    extra: dict[date, float],
+    estimated_before: float,
+) -> dict | None:
+    """Savings so far worked out from the bills instead of the tracker's own costing.
+
+    On each day a bill covers, what was paid is the bill's charge spread evenly over its
+    days, less the export payment from an export bill covering that day (or, without one,
+    the export credit the tracker measured). Days no bill covers use the tracker's figure,
+    so the line can be read against the tracker's own. It stops at the last billed day.
+
+    Returns None if no bill with a charge covers a day with readings.
+    """
+    charged: dict[date, float] = {}
+    credited: dict[date, float] = {}
+    for bill in sorted(bills, key=lambda b: b["first_day"]):
+        first, last = date.fromisoformat(bill["first_day"]), date.fromisoformat(bill["last_day"])
+        length = (last - first).days + 1
+        for n in range(length):
+            day = first + timedelta(days=n)
+            if bill.get("charge_gbp") is not None:
+                charged[day] = bill["charge_gbp"] / length
+            if bill.get("export_gbp") is not None:
+                credited[day] = bill["export_gbp"] / length
+    days = sorted(paid)
+    billed = [day for day in days if day in charged]
+    if not billed:
+        return None
+    last_billed = billed[-1]
+    running = tracker = estimated_before
+    series = [(days[0] - timedelta(days=1), round(running, 2))]
+    covered = [day for day in days if day <= last_billed]
+    for index, day in enumerate(covered):
+        if day in charged:
+            credit = credited.get(day, paid_before_export[day] - paid[day])
+            cost = charged[day] - credit
+        else:
+            cost = paid[day]
+        running += otherwise[day] - cost + extra.get(day, 0.0)
+        tracker += otherwise[day] - paid[day] + extra.get(day, 0.0)
+        if index % 7 == 6 or index == len(covered) - 1:
+            series.append((day, round(running, 2)))
+    return {
+        "series": series,
+        "saved_gbp": round(running, 2),
+        "tracker_saved_gbp": round(tracker, 2),
+        "first_billed": billed[0],
+        "last_billed": last_billed,
+        "billed_days": len(billed),
+    }

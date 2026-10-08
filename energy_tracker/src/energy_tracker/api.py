@@ -118,7 +118,7 @@ async def lifespan(_: FastAPI):
         await asyncio.to_thread(thread.join, 10)
 
 
-app = FastAPI(title="Energy Tracker", version="0.22.2", lifespan=lifespan)
+app = FastAPI(title="Energy Tracker", version="0.23.0", lifespan=lifespan)
 # The page and its chart data are mostly text: sent compressed, they are a quarter the size.
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
@@ -1587,7 +1587,11 @@ def payback_figures() -> dict:
             without_system,
             schedule(),
         )
-    result["payback"] = roi.payback(
+    # The same savings, worked out from the bills wherever there are bills.
+    paid_before_export = roi.daily_costs(
+        counters[COST_COUNTERS[0]], None, start, end, zone, schedule()
+    )
+    payback = result["payback"] = roi.payback(
         savings,
         total_cost,
         installed,
@@ -1599,6 +1603,15 @@ def payback_figures() -> dict:
         None if carry_on else extra_by_day,
         settings_.get("horizon_years", 20),
     )
+    if payback.get("has_data"):
+        result["bills_line"] = roi.billed_line(
+            otherwise,
+            paid,
+            paid_before_export,
+            database().bill_rows(),
+            extra_by_day,
+            payback["estimated_before_gbp"],
+        )
 
     return result
 

@@ -140,3 +140,38 @@ def test_savings_that_shrink_away_never_reach_the_cost():
     assert late["break_even"] == first + timedelta(days=9999) > late["horizon"]
     assert late["projection"][-1] == (late["break_even"], 10000.0)
     assert late["profit_at_horizon_gbp"] == pytest.approx(7306 - 10000)
+
+
+def test_billed_line_uses_bill_charges_where_there_are_bills():
+    from energy_tracker.roi import billed_line
+
+    first = date(2026, 1, 1)
+    days = [first + timedelta(days=n) for n in range(20)]
+    otherwise = {d: 5.0 for d in days}  # without the system: £5 a day
+    paid = {d: 1.0 for d in days}  # the tracker's net cost: £1.50 import less 50p export
+    before_export = {d: 1.5 for d in days}
+    bills = [
+        # Days 3 to 12: the bill charged £20 over 10 days, £2 a day.
+        {
+            "first_day": "2026-01-03",
+            "last_day": "2026-01-12",
+            "charge_gbp": 20.0,
+            "export_gbp": None,
+        },
+        # An export bill for days 6 to 10 paid £10, £2 a day.
+        {
+            "first_day": "2026-01-06",
+            "last_day": "2026-01-10",
+            "charge_gbp": None,
+            "export_gbp": 10.0,
+        },
+    ]
+    line = billed_line(otherwise, paid, before_export, bills, {first: 3.0}, 7.0)
+    assert line["first_billed"] == date(2026, 1, 3) and line["last_billed"] == date(2026, 1, 12)
+    assert line["billed_days"] == 10 and line["series"][-1][0] == date(2026, 1, 12)
+    # Unbilled days 1-2 save £4 each; billed days with the tracker's 50p export save £3.50,
+    # and those with the export bill's £2 save £5. Plus £3 of extra income and £7 before.
+    assert line["saved_gbp"] == pytest.approx(7 + 3 + 2 * 4 + 5 * 3.5 + 5 * 5)
+    assert line["tracker_saved_gbp"] == pytest.approx(7 + 3 + 12 * 4)
+    assert billed_line(otherwise, paid, before_export, bills[1:], {}, 0) is None
+    assert billed_line(otherwise, paid, before_export, [], {}, 0) is None

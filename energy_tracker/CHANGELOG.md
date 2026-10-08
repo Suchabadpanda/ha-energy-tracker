@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.23.0
+
+- Return on investment: a second savings line, and a tile, worked out from your bills
+  wherever you have them, to set beside the tracker's own costing.
+
 ## 0.22.2
 
 - The Battery health section has been removed.
