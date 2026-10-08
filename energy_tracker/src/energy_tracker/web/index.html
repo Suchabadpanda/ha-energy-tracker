@@ -2823,7 +2823,8 @@ function drawPayback(p, totalCost, billed) {
   const projected = on("projected") ? p.projection.map(([d, v]) => [time(d), v]) : [];
   const adjusted = on("adjusted") ? (p.adjusted?.projection ?? []).map(([d, v]) => [time(d), v]) : [];
   const fromBills = billed && on("bills") ? billed.series.map(([d, v]) => [time(d), v]) : [];
-  const all = [...actual, ...projected, ...fromBills];
+  const billsAhead = billed && on("bills-projected") ? (billed.projection ?? []).map(([d, v]) => [time(d), v]) : [];
+  const all = [...actual, ...projected, ...fromBills, ...billsAhead];
   const latest = Math.max(...[...all, ...adjusted].map(a => a[0]));
   const start = all[0][0];
   // Leave room to the right of today even when no break-even date can be worked out.
@@ -2889,6 +2890,13 @@ function drawPayback(p, totalCost, billed) {
                   "stroke-linejoin": "round" });
     const [t, v] = fromBills[fromBills.length - 1];
     add("circle", { cx: x(t), cy: y(v), r: 3.5, fill: "var(--accent)" });
+  }
+  if (billsAhead.length > 1) {
+    add("path", { d: path(billsAhead), fill: "none", stroke: "var(--accent)", "stroke-width": 2,
+                  "stroke-dasharray": "6 5" });
+    if (billed.break_even && !billed.already_reached) {
+      add("circle", { cx: x(time(billed.break_even)), cy: y(totalCost), r: 5, fill: "var(--accent)" });
+    }
   }
   if (adjusted.length > 1) {
     add("path", { d: path(adjusted), fill: "none", stroke: "var(--warn)", "stroke-width": 2,
@@ -2959,6 +2967,14 @@ function renderPayback(data) {
     const b = data.bills_line;
     document.getElementById("roi-tiles").append(tile("Saved, from your bills", pounds(b.saved_gbp),
       "To " + dayText(b.last_billed) + ". The tracker's own costing gives " + pounds(b.tracker_saved_gbp) + " to then"));
+    if (!b.already_reached) {
+      document.getElementById("roi-tiles").append(tile("Break-even, from your bills",
+        b.break_even ? longDate(b.break_even) : "Not in sight",
+        b.break_even ? b.years_from_install + " years after install" + (b.rough ? " (rough)" : "") +
+          (b.profit_at_horizon_gbp !== null ? ". " + (b.profit_at_horizon_gbp < 0 ? "A loss of " + pounds(-b.profit_at_horizon_gbp)
+            : pounds(b.profit_at_horizon_gbp) + " profit") + " by " + horizonYear : "")
+          : "Savings by the bills are not positive"));
+    }
   }
   // Progress towards the cost, and what is left.
   const progress = document.getElementById("roi-progress");
@@ -2979,6 +2995,8 @@ function renderPayback(data) {
     { key: "projected", label: "Projected", color: "var(--good)", dashed: true },
     ...(p.adjusted ? [{ key: "adjusted", label: "With your yearly assumptions", color: "var(--warn)", dashed: true }] : []),
     ...(data.bills_line ? [{ key: "bills", label: "Saved, from your bills", color: "var(--accent)" }] : []),
+    ...(data.bills_line?.projection?.length ? [{ key: "bills-projected", label: "Projected, from your bills",
+                                                 color: "var(--accent)", dashed: true }] : []),
     { key: "cost", label: "System cost", color: "var(--danger)" },
   ], () => lastRoi && renderPayback(lastRoi));
   drawPayback(p, cost, data.bills_line);
@@ -2999,7 +3017,9 @@ function renderPayback(data) {
     notes.push("Worked out from your bills (" + b.billed_days + " billed days, to " + dayText(b.last_billed) +
       "), the system had saved " + pounds(b.saved_gbp) + " by then, against " + pounds(b.tracker_saved_gbp) +
       " on the tracker's own costing" + (Math.abs(gap) < 1 ? "." : ": " + pounds(Math.abs(gap)) +
-      (gap > 0 ? " more" : " less") + " by the bills.") + " Days no bill covers use the tracker's figure.");
+      (gap > 0 ? " more" : " less") + " by the bills.") + " Days no bill covers use the tracker's figure." +
+      (b.projection?.length ? " The dashed blue line carries the bills' rate of saving (about " + pounds(b.yearly_gbp) +
+        " a year) forward from the last bill, the same way as the green one." : ""));
   }
   if (p.estimated_before_days > 0) {
     notes.push("The " + p.estimated_before_days + " days between the install date and the first reading are " +

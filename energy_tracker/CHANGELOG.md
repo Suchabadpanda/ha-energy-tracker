@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.23.1
+
+- Return on investment: the line from your bills is projected forward too, with its own
+  break-even date and profit at the end of the chart.
+
 ## 0.23.0
 
 - Return on investment: a second savings line, and a tile, worked out from your bills

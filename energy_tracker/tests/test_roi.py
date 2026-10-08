@@ -173,5 +173,7 @@ def test_billed_line_uses_bill_charges_where_there_are_bills():
     # and those with the export bill's £2 save £5. Plus £3 of extra income and £7 before.
     assert line["saved_gbp"] == pytest.approx(7 + 3 + 2 * 4 + 5 * 3.5 + 5 * 5)
     assert line["tracker_saved_gbp"] == pytest.approx(7 + 3 + 12 * 4)
+    assert sum(line["savings"].values()) == pytest.approx(line["saved_gbp"] - 7)
+    assert list(line["savings"]) == days[:12]  # up to the last billed day
     assert billed_line(otherwise, paid, before_export, bills[1:], {}, 0) is None
     assert billed_line(otherwise, paid, before_export, [], {}, 0) is None

@@ -297,17 +297,20 @@ def billed_line(
     running = tracker = estimated_before
     series = [(days[0] - timedelta(days=1), round(running, 2))]
     covered = [day for day in days if day <= last_billed]
+    by_day: dict[date, float] = {}
     for index, day in enumerate(covered):
         if day in charged:
             credit = credited.get(day, paid_before_export[day] - paid[day])
             cost = charged[day] - credit
         else:
             cost = paid[day]
-        running += otherwise[day] - cost + extra.get(day, 0.0)
+        by_day[day] = otherwise[day] - cost + extra.get(day, 0.0)
+        running += by_day[day]
         tracker += otherwise[day] - paid[day] + extra.get(day, 0.0)
         if index % 7 == 6 or index == len(covered) - 1:
             series.append((day, round(running, 2)))
     return {
+        "savings": by_day,  # each day's saving, for projecting forward
         "series": series,
         "saved_gbp": round(running, 2),
         "tracker_saved_gbp": round(tracker, 2),

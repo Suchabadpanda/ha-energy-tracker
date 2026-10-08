@@ -315,6 +315,8 @@ How it is worked out:
   its days, less the payment on an export bill for that day (or, without one, the export
   credit the tracker measured). Days no bill covers use the tracker's figure, and the line
   stops at the last billed day. The note under the chart gives both totals to that day.
+  A dashed blue line carries on from the last bill at the rate the bills show, worked out
+  the same way as the main projection, with its own break-even date in a tile.
 - **Progress bar**: how much of the cost has been paid back, the amount remaining and when
   it is expected to be recovered. Once the system has paid for itself it shows the profit
   so far.
