@@ -318,6 +318,13 @@ How it is worked out:
   carried forward and the estimate is marked **rough**; it firms up as readings build.
 - Time between the install date and the first reading is filled in at the average, and the
   amount is stated under the chart.
+- **Also compare with**: under **System cost and settings**, choose a second tariff from
+  your comparison list to draw a purple line of savings measured against it instead, with
+  its own projection and a tile giving the break-even date. Typically this is the standard
+  variable rate: "what has the system saved against doing nothing at all", beside "what
+  has it saved me as I actually live". So that past price changes count, set that tariff to
+  follow Octopus's published prices (see Comparing tariffs); otherwise its typed-in prices
+  are used for every day.
 - **Saved, from your bills**: a second line on the chart, and a tile, working out the
   savings from the bills entered under **Bill check** instead of the tracker's own
   costing. On each day a bill covers, what you paid is the bill's charge spread evenly over
@@ -394,9 +401,12 @@ tariffs, over the last 30 days, 90 days, 12 months or everything stored.
 - **Look up Octopus Energy prices**: choose your region and a tariff, then **Fill in
   prices**. The form is filled with today's published prices including VAT, with VAT to
   add set to 0. Check the export rate (it is left as your own), then save.
-- **Half-hourly prices (Octopus Agile)**: choose your region and the tariff under "Or
-  follow half-hourly prices". Each half hour is priced at what was published for it; the
-  rates typed in cover any half hour without a published price.
+- **Follow published prices**: choose your region and the tariff under "Or follow its
+  published prices". Each half hour is then priced at what Octopus published for it at
+  the time: every half hour for Agile, or whatever was in force that day for a variable
+  tariff such as Flexible Octopus, so past price changes are included. The rates typed in
+  cover any half hour without a published price, and the standing charge is always the one
+  typed in.
 
 Two costs are shown for each tariff:
 

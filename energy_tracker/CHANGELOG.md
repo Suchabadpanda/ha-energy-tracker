@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.25.0
+
+- Return on investment: "Also compare with" draws a second savings line, with its own
+  projection and break-even date, against another tariff such as the standard variable rate.
+- Tariffs can follow the published prices of any Octopus import tariff, not just Agile. A
+  variable tariff such as Flexible Octopus then uses each past price at the time it applied.
+
 ## 0.24.0
 
 - Notes: pin a note to a day ("new tariff", "heat pump serviced"). Notes show as markers on

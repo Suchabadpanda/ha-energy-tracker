@@ -118,7 +118,7 @@ async def lifespan(_: FastAPI):
         await asyncio.to_thread(thread.join, 10)
 
 
-app = FastAPI(title="Energy Tracker", version="0.24.0", lifespan=lifespan)
+app = FastAPI(title="Energy Tracker", version="0.25.0", lifespan=lifespan)
 # The page and its chart data are mostly text: sent compressed, they are a quarter the size.
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
@@ -1518,6 +1518,9 @@ class PaybackIn(BaseModel):
     install_date: date
     # "own": the tariff you were on each day. Otherwise the id of a tariff saved for comparison.
     baseline: str = Field(default="own", pattern=r"^(own|\d{1,9})$")
+    # A second tariff to measure against, drawn as its own line ("" for none): the id of a
+    # tariff saved for comparison, such as a standard variable rate.
+    second_baseline: str = Field(default="", pattern=r"^(\d{1,9})?$")
     costs: list[CostIn] = Field(max_length=20)
     # Optional yearly assumptions for the adjusted estimate, in percent. 0 leaves one out.
     panel_ageing_percent: float = Field(default=0, ge=0, le=5)
@@ -1666,6 +1669,40 @@ def payback_figures() -> dict:
                 rough=ahead["rough"],
             )
         result["bills_line"] = billed
+
+        # Savings against a second tariff, such as the standard variable rate.
+        second = rows.get(settings_.get("second_baseline") or "")
+        result["second_line"] = None
+        if second:
+            alternative = Schedule([comparison_tariff(second)])
+            instead = roi.daily_costs(counters[LOAD_COUNTER], None, start, end, zone, alternative)
+            against = {day: instead[day] - paid[day] + extra_by_day.get(day, 0.0) for day in paid}
+            other = roi.payback(
+                against,
+                total_cost,
+                installed,
+                today_local,
+                one_off=None if carry_on else extra_by_day,
+                horizon_years=settings_.get("horizon_years", 20),
+            )
+            result["second_line"] = {
+                "name": second["name"],
+                "follows_published": bool(second.get("dynamic")),
+                **{
+                    key: other[key]
+                    for key in (
+                        "series",
+                        "projection",
+                        "saved_gbp",
+                        "break_even",
+                        "already_reached",
+                        "years_from_install",
+                        "yearly_gbp",
+                        "profit_at_horizon_gbp",
+                        "rough",
+                    )
+                },
+            }
 
     return result
 

@@ -489,6 +489,8 @@
             <input type="number" name="horizon_years" min="5" max="40" step="1" value="20" required></label>
           <label class="grow" style="flex: 2 1 280px;">Tariff without the system
             <select name="baseline"></select></label>
+          <label class="grow" style="flex: 2 1 280px;">Also compare with (a second line)
+            <select name="second_baseline"></select></label>
         </div>
         <div class="group-title">What it cost</div>
         <div class="windows" id="roi-costs"></div>
@@ -648,7 +650,8 @@
           <button type="button" id="compare-lookup">Fill in prices</button>
         </div>
         <div class="lookup">
-          <label>Or follow half-hourly prices, for the region above (Octopus Agile)
+          <label>Or follow its published prices day by day, for the region above (Agile, or a variable
+            tariff such as Flexible Octopus, so past price changes count)
             <select name="dynamic_product"><option value="">Not used</option></select></label>
         </div>
         <label>Tariff name <input type="text" name="name" maxlength="120" required></label>
@@ -720,10 +723,11 @@
         as they appear on your bill before VAT and set VAT to 5, or enter prices that already
         include VAT and set VAT to 0. VAT is added to import and the standing charge, not to
         export. The standard rate applies all day unless you add time windows with a different
-        rate: one for a single cheap period, or several. For a tariff whose price changes every
-        half hour (Octopus Agile), choose it under half-hourly prices: each half hour is then
-        charged at the price published for it, which already includes VAT, and the rates typed
-        here are only used where no price has been published. On a fixed-price deal, enter the
+        rate: one for a single cheap period, or several. For an Octopus tariff whose price changes
+        every half hour (Agile) or from time to time (a variable tariff), choose it under published
+        prices: each half hour is then charged at the price Octopus published for it, which
+        already includes VAT, and the rates typed here are only used where no price has been
+        published. The standing charge is always the one typed here. On a fixed-price deal, enter the
         last day the price is guaranteed and the page will remind you a month before it ends.</div>
       <form id="tariff-form">
         <label>Rates start on <input type="date" name="effective_from" required></label>
@@ -739,7 +743,7 @@
           <input type="number" name="other_rate" min="0" step="0.0001" required></label>
         <div class="windows" id="tariff-windows"></div>
         <div class="lookup" style="border-bottom: none; padding-bottom: 0;">
-          <label>Half-hourly prices (optional): your region
+          <label>Published prices to follow (optional): your region
             <select name="dynamic_region"><option value="">Choose a region</option></select></label>
           <label>Tariff to follow
             <select name="dynamic_product"><option value="">Not used</option></select></label>
@@ -1412,7 +1416,7 @@ function setDynamic(productSelect, regionSelect, dynamic) {
 }
 function getDynamic(productSelect, regionSelect) {
   if (!productSelect.value) return "";
-  if (!regionSelect.value) throw new Error("Choose your region for the half-hourly prices.");
+  if (!regionSelect.value) throw new Error("Choose your region for the published prices.");
   return productSelect.value + "/" + regionSelect.value;
 }
 // Where a tariff's prices come from, for the tables.
@@ -1423,7 +1427,7 @@ function publishedNote(published) {
   const until = published.until
     ? "prices held from " + when(published.from) + " to " + when(published.until)
     : "no prices fetched yet (they arrive within a minute or so)";
-  return "Half-hourly prices from " + product + ", region " + region + ": " + until +
+  return "Published prices from " + product + ", region " + region + ": " + until +
     (published.error ? ". Last attempt failed: " + published.error : "") + ". Otherwise: ";
 }
 
@@ -1455,7 +1459,7 @@ function renderReminders(found) {
       : r.kind === "fixed_ended"
       ? "The fixed price on " + r.tariff + " ended on " + dayText(r.date) + ". Costs are still being worked out at " +
         "the old rates: enter the new ones under Tariff rates, starting the day after."
-      : "Half-hourly prices for " + r.tariff + " could not be fetched (" + r.error + "). Costs use the typed-in " +
+      : "Published prices for " + r.tariff + " could not be fetched (" + r.error + "). Costs use the typed-in " +
         "rates for any half hour without a published price, and are corrected once prices arrive.";
     return Object.assign(document.createElement("div"), { textContent: text });
   }));
@@ -2906,6 +2910,10 @@ function fillRoiForm(data) {
   const chosen = data.settings?.baseline ?? f.baseline.value ?? "own";
   f.baseline.replaceChildren(...data.baselines.map(b => new Option(b.name, b.id)));
   f.baseline.value = data.baselines.some(b => b.id === chosen) ? chosen : "own";
+  const second = data.settings?.second_baseline ?? f.second_baseline.value ?? "";
+  f.second_baseline.replaceChildren(new Option("Nothing", ""),
+    ...data.baselines.filter(b => b.id !== "own").map(b => new Option(b.name, b.id)));
+  f.second_baseline.value = data.baselines.some(b => b.id === second) ? second : "";
   if (roiFormFilled) return;  // don't overwrite what is being typed
   roiFormFilled = true;
   if (data.settings) {
@@ -2921,7 +2929,7 @@ function fillRoiForm(data) {
   if (!roiCosts.children.length) addCost();
 }
 
-function drawPayback(p, totalCost, billed) {
+function drawPayback(p, totalCost, billed, second) {
   const svg = document.getElementById("roi-chart");
   const NS = "http://www.w3.org/2000/svg";
   const W = 900, H = 300, L = 58, R = 14, T = 12, B = 26;
@@ -2933,7 +2941,9 @@ function drawPayback(p, totalCost, billed) {
   const adjusted = on("adjusted") ? (p.adjusted?.projection ?? []).map(([d, v]) => [time(d), v]) : [];
   const fromBills = billed && on("bills") ? billed.series.map(([d, v]) => [time(d), v]) : [];
   const billsAhead = billed && on("bills-projected") ? (billed.projection ?? []).map(([d, v]) => [time(d), v]) : [];
-  const all = [...actual, ...projected, ...fromBills, ...billsAhead];
+  const versus = second && on("second") ? second.series.map(([d, v]) => [time(d), v]) : [];
+  const versusAhead = second && on("second-projected") ? second.projection.map(([d, v]) => [time(d), v]) : [];
+  const all = [...actual, ...projected, ...fromBills, ...billsAhead, ...versus, ...versusAhead];
   const latest = Math.max(...[...all, ...adjusted].map(a => a[0]));
   const start = all[0][0];
   // Leave room to the right of today even when no break-even date can be worked out.
@@ -3009,6 +3019,15 @@ function drawPayback(p, totalCost, billed) {
                   "stroke-linejoin": "round" });
     const [t, v] = fromBills[fromBills.length - 1];
     add("circle", { cx: x(t), cy: y(v), r: 3.5, fill: "var(--accent)" });
+  }
+  if (versus.length > 1) {
+    add("path", { d: path(versus), fill: "none", stroke: "var(--load)", "stroke-width": 2, "stroke-linejoin": "round" });
+  }
+  if (versusAhead.length > 1) {
+    add("path", { d: path(versusAhead), fill: "none", stroke: "var(--load)", "stroke-width": 2, "stroke-dasharray": "6 5" });
+    if (second.break_even && !second.already_reached) {
+      add("circle", { cx: x(time(second.break_even)), cy: y(totalCost), r: 5, fill: "var(--load)" });
+    }
   }
   if (billsAhead.length > 1) {
     add("path", { d: path(billsAhead), fill: "none", stroke: "var(--accent)", "stroke-width": 2,
@@ -3095,6 +3114,15 @@ function renderPayback(data) {
           : "Savings by the bills are not positive"));
     }
   }
+  if (data.second_line) {
+    const v = data.second_line;
+    document.getElementById("roi-tiles").append(tile("Saved against " + v.name, pounds(v.saved_gbp),
+      (v.already_reached ? "Broke even " + longDate(v.break_even)
+        : v.break_even ? "Break-even " + longDate(v.break_even) + ", " + v.years_from_install + " years after install" +
+          (v.rough ? " (rough)" : "") : "Break-even not in sight") +
+      (v.profit_at_horizon_gbp !== null ? ". " + signed(v.profit_at_horizon_gbp) + (v.profit_at_horizon_gbp < 0 ? "" : " profit") +
+        " by " + horizonYear : "")));
+  }
   // Progress towards the cost, and what is left.
   const progress = document.getElementById("roi-progress");
   progress.hidden = p.percent === null;
@@ -3116,9 +3144,13 @@ function renderPayback(data) {
     ...(data.bills_line ? [{ key: "bills", label: "Saved, from your bills", color: "var(--accent)" }] : []),
     ...(data.bills_line?.projection?.length ? [{ key: "bills-projected", label: "Projected, from your bills",
                                                  color: "var(--accent)", dashed: true }] : []),
+    ...(data.second_line ? [
+      { key: "second", label: "Saved against " + data.second_line.name, color: "var(--load)" },
+      { key: "second-projected", label: "Projected against " + data.second_line.name, color: "var(--load)", dashed: true },
+    ] : []),
     { key: "cost", label: "System cost", color: "var(--danger)" },
   ], () => lastRoi && renderPayback(lastRoi));
-  drawPayback(p, cost, data.bills_line);
+  drawPayback(p, cost, data.bills_line, data.second_line);
   const notes = ["Measured against " + data.baseline_name + ", from " +
     new Date(p.first_day + "T00:00").toLocaleDateString([], { dateStyle: "medium" }) + " (" + p.days + " days of readings)."];
   if (p.yearly_solar_gbp !== null) {
@@ -3139,6 +3171,12 @@ function renderPayback(data) {
       (gap > 0 ? " more" : " less") + " by the bills.") + " Days no bill covers use the tracker's figure." +
       (b.projection?.length ? " The dashed blue line carries the bills' rate of saving (about " + pounds(b.yearly_gbp) +
         " a year) forward from the last bill, the same way as the green one." : ""));
+  }
+  if (data.second_line) {
+    const v = data.second_line;
+    notes.push("The purple line measures the same savings against " + v.name + " instead: about " + pounds(v.yearly_gbp) +
+      " a year." + (v.follows_published ? " It follows that tariff's published prices day by day, so past price changes count."
+        : " It uses that tariff's prices as entered for every day, so past price changes are not allowed for."));
   }
   if (p.estimated_before_days > 0) {
     notes.push("The " + p.estimated_before_days + " days between the install date and the first reading are " +
@@ -3180,6 +3218,7 @@ roiForm.addEventListener("submit", async event => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ install_date: roiForm.elements.install_date.value,
                              baseline: roiForm.elements.baseline.value, costs,
+                             second_baseline: roiForm.elements.second_baseline.value,
                              panel_ageing_percent: Number(roiForm.elements.panel_ageing.value) || 0,
                              battery_ageing_percent: Number(roiForm.elements.battery_ageing.value) || 0,
                              price_change_percent: Number(roiForm.elements.price_change.value) || 0,
@@ -3368,10 +3407,15 @@ async function loadLookup() {
       ...data.products.map(p => new Option(p.name, p.code)));
     for (const select of [f.dynamic_product, own.dynamic_product]) {
       const chosen = select.value;
-      for (const p of data.half_hourly) {
-        const existing = [...select.options].find(o => o.value === p.code);
-        if (existing) existing.textContent = p.name; else select.add(new Option(p.name, p.code));
-      }
+      const saved = [...select.options].filter(o => o.value && ![...data.half_hourly, ...data.products].some(p => p.code === o.value));
+      const group = (label, items) => {
+        const optgroup = Object.assign(document.createElement("optgroup"), { label });
+        optgroup.append(...items.map(p => new Option(p.name, p.code)));
+        return optgroup;
+      };
+      select.replaceChildren(new Option("Not used", ""), ...saved,
+        group("Price changes every half hour", data.half_hourly),
+        group("Same prices each day, changing from time to time", data.products));
       select.value = chosen;
     }
   } catch (err) {

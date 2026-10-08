@@ -301,3 +301,25 @@ def test_figures_change_as_soon_as_something_they_depend_on_is_saved():
 def test_large_responses_are_sent_compressed():
     page = client.get("/", headers={"Accept-Encoding": "gzip"})
     assert page.headers["content-encoding"] == "gzip" and "Energy Tracker" in page.text
+
+
+def test_payback_can_also_be_measured_against_a_second_tariff():
+    body, _ = house_with_payback_set_up()
+    flat = {
+        "name": "Standard variable",
+        "export_p_per_kwh": 0,
+        "standing_charge_p_per_day": 50,
+        "vat_percent": 0,
+        "import_bands": [{"start": "00:00", "end": "24:00", "p_per_kwh": 40.0}],
+    }
+    tariff = client.post("/api/compare/tariffs", json=flat).json()["id"]
+    assert client.get("/api/roi").json()["second_line"] is None
+    data = client.post("/api/roi/settings", json={**body, "second_baseline": str(tariff)}).json()
+    second = data["second_line"]
+    assert second["name"] == "Standard variable" and second["follows_published"] is False
+    # Dearer prices without the system mean more saved against them.
+    assert second["saved_gbp"] > data["payback"]["saved_gbp"]
+    assert second["series"] and second["projection"]
+    assert (
+        client.post("/api/roi/settings", json={**body, "second_baseline": "own"}).status_code == 422
+    )
