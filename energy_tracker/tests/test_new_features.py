@@ -459,6 +459,98 @@ def test_one_off_income_counts_as_saved_but_is_not_projected():
     assert apart["break_even"] > plain["break_even"]
 
 
+def test_regular_income_is_carried_on_unaged_and_at_least_the_minimum():
+    first = date(2026, 1, 1)
+    savings = {first + timedelta(days=n): 2.0 for n in range(100)}
+    for n in (0, 30, 60, 90):  # Axle pays 5 a month, below its 10 minimum
+        savings[first + timedelta(days=n)] += 5.0
+    regular = {first + timedelta(days=n): 5.0 for n in (0, 30, 60, 90)}
+    at_rate = payback(savings, 5000, first, first + timedelta(days=100), regular=regular)
+    assert at_rate["saved_gbp"] == 220.0
+    assert at_rate["yearly_regular_income_gbp"] == pytest.approx(20 / 100 * 365)
+    assert at_rate["yearly_gbp"] == pytest.approx(2.2 * 365)
+    floor = payback(
+        savings,
+        5000,
+        first,
+        first + timedelta(days=100),
+        regular=regular,
+        regular_minimum_per_year=120,
+    )
+    assert floor["yearly_regular_income_gbp"] == 120
+    assert floor["yearly_gbp"] == pytest.approx(2.0 * 365 + 120)
+    assert floor["break_even"] < at_rate["break_even"]
+    # Battery ageing wears down the energy saving, not Axle's payments.
+    aged = payback(
+        savings,
+        5000,
+        first,
+        first + timedelta(days=100),
+        battery_ageing=0.5,
+        regular=regular,
+        regular_minimum_per_year=120,
+    )
+    year_on = [v for d, v in aged["adjusted"]["projection"] if d >= first + timedelta(days=3650)]
+    assert year_on  # by year ten the energy saving is nearly gone; the income still adds up
+    tenth, eleventh = (
+        next(v for d, v in aged["adjusted"]["projection"] if d >= first + timedelta(days=365 * y))
+        for y in (10, 11)
+    )
+    assert eleventh - tenth > 115
+
+
+def test_income_is_sorted_into_regular_and_one_off(tmp_path):
+    import sqlite3
+    from contextlib import closing
+
+    from energy_tracker.db import Database
+
+    path = tmp_path / "old.db"
+    with closing(sqlite3.connect(path)) as conn, conn:  # an income table from before 0.28
+        conn.execute(
+            "CREATE TABLE extra_income (id INTEGER PRIMARY KEY, day TEXT NOT NULL, "
+            "description TEXT NOT NULL, amount_gbp REAL, source TEXT NOT NULL DEFAULT 'manual', "
+            "event_start INTEGER UNIQUE, event_end INTEGER, kwh REAL, "
+            "estimated INTEGER NOT NULL DEFAULT 0, hidden INTEGER NOT NULL DEFAULT 0)"
+        )
+        conn.executemany(
+            "INSERT INTO extra_income (day, description, amount_gbp, source) VALUES (?, ?, ?, ?)",
+            [
+                ("2026-01-05", "Axle monthly payment", 10, "manual"),
+                ("2026-01-06", "Referral bonus", 50, "manual"),
+                ("2026-01-07", "Axle export event", 2, "axle"),
+            ],
+        )
+    db = Database(path)
+    kinds = {row["description"]: row["regular"] for row in db.income_rows()}
+    assert kinds == {
+        "Axle monthly payment": True,
+        "Referral bonus": False,
+        "Axle export event": True,
+    }
+    db.save_income(date(2026, 2, 1), "Axle bonus for a winter event", 5, None, regular=False)
+    db.save_income(date(2026, 2, 2), "Octopus referral", 50, None)
+    kinds = {row["description"]: row["regular"] for row in db.income_rows()}
+    assert kinds["Axle bonus for a winter event"] is False and kinds["Octopus referral"] is False
+
+
+def test_income_endpoint_and_roi_split_regular_from_one_off():
+    yesterday = (datetime.now(api.local_timezone()) - timedelta(days=1)).date().isoformat()
+    client.post("/api/income", json={"day": yesterday, "description": "Axle", "amount_gbp": 10})
+    data = client.post(
+        "/api/income",
+        json={"day": yesterday, "description": "Referral", "amount_gbp": 50, "regular": False},
+    ).json()
+    assert (data["regular_gbp"], data["one_off_gbp"]) == (10, 50)
+    body = {
+        "install_date": "2026-01-01",
+        "costs": [{"date": "2026-01-01", "amount": 9000}],
+        "regular_income_minimum_gbp": 10,
+    }
+    saved = client.post("/api/roi/settings", json=body).json()
+    assert saved["settings"]["regular_income_minimum_gbp"] == 10
+
+
 def test_payback_setting_for_extra_income_is_kept():
     body = {
         "install_date": "2026-01-01",

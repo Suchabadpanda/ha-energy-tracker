@@ -122,7 +122,7 @@ async def lifespan(_: FastAPI):
         await asyncio.to_thread(thread.join, 10)
 
 
-app = FastAPI(title="Energy Tracker", version="0.27.1", lifespan=lifespan)
+app = FastAPI(title="Energy Tracker", version="0.28.0", lifespan=lifespan)
 # The page and its chart data are mostly text: sent compressed, they are a quarter the size.
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
@@ -1527,6 +1527,9 @@ class IncomeIn(BaseModel):
     day: date
     description: str = Field(min_length=1, max_length=80)
     amount_gbp: float = Field(ge=0, le=100_000)
+    # Whether it can be expected to carry on (Axle's monthly payments), or is a one-off (a
+    # referral bonus). Left out: told from the description ("Axle" is regular).
+    regular: bool | None = None
 
 
 class AxleRateIn(BaseModel):
@@ -1538,13 +1541,20 @@ def extra_income() -> dict:
     """Income on top of the tariff: entries typed in, and recorded Axle Energy events."""
     entries = database().income_rows()
     by_year: dict[str, float] = {}
+    regular = one_off = 0.0
     for entry in entries:
         if entry["amount_gbp"]:
             year = entry["day"][:4]
             by_year[year] = round(by_year.get(year, 0.0) + entry["amount_gbp"], 2)
+            if entry["regular"]:
+                regular += entry["amount_gbp"]
+            else:
+                one_off += entry["amount_gbp"]
     return {
         "entries": entries,
         "total_gbp": round(sum(by_year.values()), 2),
+        "regular_gbp": round(regular, 2),
+        "one_off_gbp": round(one_off, 2),
         "by_year": dict(sorted(by_year.items())),
         "axle": {
             "entity": settings().axle_event_entity,
@@ -1557,7 +1567,7 @@ def extra_income() -> dict:
 @app.post("/api/income")
 def save_income(body: IncomeIn, id: int | None = None) -> dict:  # noqa: A002
     """Add an entry, or correct the one with the given id."""
-    database().save_income(body.day, body.description.strip(), body.amount_gbp, id)
+    database().save_income(body.day, body.description.strip(), body.amount_gbp, id, body.regular)
     clear_caches()
     return extra_income()
 
@@ -1684,9 +1694,12 @@ class PaybackIn(BaseModel):
     panel_ageing_percent: float = Field(default=0, ge=0, le=5)
     battery_ageing_percent: float = Field(default=0, ge=0, le=10)
     price_change_percent: float = Field(default=0, ge=-10, le=20)
-    # Whether extra income (grid event payments) is assumed to carry on at the same rate.
-    # Either way it counts towards what has been saved so far.
+    # Whether regular extra income (Axle's payments) is assumed to carry on at the same rate.
+    # Either way it counts towards what has been saved so far. One-off income (a referral
+    # bonus, say) is never assumed to carry on.
     project_extra_income: bool = True
+    # The least regular income is projected at, a month: Axle's guaranteed minimum, say.
+    regular_income_minimum_gbp: float = Field(default=0, ge=0, le=1000)
     # How long after the install date the chart and the profit estimate run.
     horizon_years: int = Field(default=20, ge=5, le=40)
 
@@ -1758,17 +1771,34 @@ def payback_figures() -> dict:
     otherwise = roi.daily_costs(counters[LOAD_COUNTER], None, start, end, zone, without_system)
     savings = {day: otherwise[day] - paid[day] for day in paid}
     # Extra income (grid event payments and the like) counts towards paying the system off.
+    # Regular income (Axle) is projected forward if chosen; one-offs never are.
     extra = 0.0
     extra_by_day: dict[date, float] = {}
+    regular_by_day: dict[date, float] = {}
+    one_off_by_day: dict[date, float] = {}
     for entry in database().income_rows():
         day = date.fromisoformat(entry["day"])
         if entry["amount_gbp"] and day in savings:
             savings[day] += entry["amount_gbp"]
             extra_by_day[day] = extra_by_day.get(day, 0.0) + entry["amount_gbp"]
+            kind = regular_by_day if entry["regular"] else one_off_by_day
+            kind[day] = kind.get(day, 0.0) + entry["amount_gbp"]
             extra += entry["amount_gbp"]
     result["extra_income_gbp"] = round(extra, 2)
+    result["regular_income_gbp"] = round(sum(regular_by_day.values()), 2)
+    result["one_off_income_gbp"] = round(sum(one_off_by_day.values()), 2)
     carry_on = settings_.get("project_extra_income", True)
     result["extra_income_projected"] = carry_on
+    # How each line treats income in its projection.
+    if carry_on:
+        not_projected = one_off_by_day
+        projected = {
+            "regular": regular_by_day,
+            "regular_minimum_per_year": settings_.get("regular_income_minimum_gbp", 0) * 12,
+        }
+    else:
+        not_projected = extra_by_day
+        projected = {}
     # The panels' share of the saving, where solar generation has been recorded.
     solar = None
     if counters[SOLAR_COUNTER]:
@@ -1794,8 +1824,9 @@ def payback_figures() -> dict:
         settings_.get("panel_ageing_percent", 0) / 100,
         settings_.get("battery_ageing_percent", 0) / 100,
         settings_.get("price_change_percent", 0) / 100,
-        None if carry_on else extra_by_day,
+        not_projected,
         settings_.get("horizon_years", 20),
+        **projected,
     )
     if payback.get("has_data"):
         billed = roi.billed_line(
@@ -1814,8 +1845,9 @@ def payback_figures() -> dict:
                 total_cost,
                 installed,
                 today_local,
-                one_off=None if carry_on else extra_by_day,
+                one_off=not_projected,
                 horizon_years=settings_.get("horizon_years", 20),
+                **projected,
             )
             billed.update(
                 projection=ahead["projection"],
@@ -1840,8 +1872,9 @@ def payback_figures() -> dict:
                 total_cost,
                 installed,
                 today_local,
-                one_off=None if carry_on else extra_by_day,
+                one_off=not_projected,
                 horizon_years=settings_.get("horizon_years", 20),
+                **projected,
             )
             result["second_line"] = {
                 "name": second["name"],

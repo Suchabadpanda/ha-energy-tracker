@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.28.0
+
+- Extra income is sorted into **regular** (Axle's monthly payments and events) and
+  **one-off** (a referral bonus, say). Each entry shows which it is and can be changed with
+  Edit. Existing entries are sorted for you: anything from or described as Axle is regular.
+- Return on investment carries only regular income forward in its projection, unaffected
+  by panel or battery ageing and price changes. One-off income still counts towards what
+  has been saved.
+- New setting: **Regular income of at least (£ a month)**, such as Axle's £10 minimum, so
+  the projection never assumes less.
+
 ## 0.27.1
 
 - Faster: each section is fetched only when it is scrolled near, so the top of the page

@@ -385,9 +385,15 @@ How it is worked out:
   at the end. This assumes the system keeps working at no further cost. A battery or an
   inverter may need replacing within that time, and that is not allowed for, so treat the
   later years as a ceiling, not a forecast.
-- **Extra income** always counts towards what has been saved. Under **System cost and
-  settings**, untick **Assume extra income carries on** to leave it out of the yearly
-  figure and the projection: sensible if the payments are occasional or may stop.
+- **Extra income** always counts towards what has been saved. Only **regular** income
+  (such as Axle's monthly payments) is carried forward in the projection, at what the last
+  year paid; **one-off** income (a referral bonus, say) never is. Regular income is carried
+  forward as it is: it does not age with the equipment or follow energy prices.
+  - **Regular income of at least (£ a month)**: Axle pays a minimum each month, so set it
+    here (10, say) and the projection never assumes less, even before a year of payments
+    has been recorded.
+  - Untick **Assume regular income carries on** to leave all extra income out of the
+    yearly figure and the projection, if the payments may stop.
 
 ### Optional yearly assumptions
 
@@ -415,6 +421,10 @@ for exporting during grid events. The total counts towards **Return on investmen
 from the cost figures, which stay as what your supplier charges.
 
 - **By hand**: open **Add income or change settings**, and enter the date and amount.
+  Choose whether it **counts as** regular (it carries on, such as Axle's monthly
+  payment) or one-off (a referral, a bonus). Anything described as Axle starts as regular,
+  everything else as one-off; **Edit** an entry to change it. Each entry shows which it is.
+  Recorded Axle events are always regular.
 - **Automatically, for Axle Energy**: if Home Assistant has Axle's sensors, each export
   event is recorded when it appears. Both set-ups in Axle's Home Assistant guide work: the
   "Axle VPP" integration from HACS (`sensor.axle_start_time`, `sensor.axle_end_time` and

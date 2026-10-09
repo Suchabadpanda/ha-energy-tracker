@@ -85,12 +85,14 @@ def _project(
     price_change: float = 0.0,
     horizon: date | None = None,
     reached: date | None = None,
+    income_pattern: list[float] | None = None,
 ) -> tuple[date | None, list[tuple[date, float]], float | None]:
     """Carry savings forward day by day: to the day they reach the cost, and on to `horizon`.
 
     The yearly rates are fractions (0.005 for 0.5%). Panel ageing shrinks the solar part,
     battery ageing the battery part, and a price change scales both. `reached` is the
-    break-even day if it has already passed.
+    break-even day if it has already passed. `income_pattern` is regular income (Axle),
+    carried on as it is: it does not age with the panels or battery, or follow energy prices.
 
     Returns the break-even day (None if not reached within the limit), points for a chart,
     and the total saved by the horizon (None if the horizon is not after `last_day`). The
@@ -110,6 +112,8 @@ def _project(
             solar_pattern[ahead % len(solar_pattern)] * (1 - panel_ageing) ** years
             + battery_pattern[ahead % len(battery_pattern)] * (1 - battery_ageing) ** years
         )
+        if income_pattern:
+            running += income_pattern[ahead % len(income_pattern)]
         just_reached = break_even is None and running >= total_cost
         if just_reached:
             break_even = day
@@ -132,12 +136,18 @@ def payback(
     price_change: float = 0.0,
     one_off: dict[date, float] | None = None,
     horizon_years: int = 20,
+    regular: dict[date, float] | None = None,
+    regular_minimum_per_year: float = 0.0,
 ) -> dict:
     """Cumulative savings so far, and a projection to the day they equal the system's cost.
 
     `one_off` is the part of each day's saving that should not be assumed to carry on
     (extra income the user has chosen to leave out of the projection). It counts in full
     towards what has been saved, but not towards the rate savings are projected at.
+
+    `regular` is the part that is income which can be expected to carry on, such as Axle's
+    monthly payments. It is projected on its own, at no less than `regular_minimum_per_year`
+    (Axle's guaranteed minimum, say), and does not age with the equipment.
 
     The projection runs on past break-even to `horizon_years` after the install date, to
     show what the system could be worth beyond its cost.
@@ -153,8 +163,11 @@ def payback(
     if not days:
         return {"has_data": False}
     # What can be expected to carry on: each day's saving less anything one-off.
+    income = [(regular or {}).get(d, 0.0) for d in days]
     values = [savings[d] - (one_off or {}).get(d, 0.0) for d in days]
     average = sum(values) / len(values)
+    # Energy savings alone, to be aged; regular income is carried on separately.
+    values = [value - paid for value, paid in zip(values, income, strict=True)]
     # Without a solar figure nothing can be told apart, so all of it counts as "battery"
     # and panel ageing has nothing to act on.
     solar_values = [solar.get(d, 0.0) for d in days] if solar is not None else [0.0] * len(days)
@@ -185,7 +198,16 @@ def payback(
     else:
         solar_pattern, battery_pattern = solar_values[-YEAR:], battery_values[-YEAR:]
         yearly_solar, yearly_battery = sum(solar_pattern), sum(battery_pattern)
-    yearly = yearly_solar + yearly_battery
+    income_pattern = (
+        ([sum(income) / len(days)] if rough else income[-YEAR:]) if regular is not None else [0.0]
+    )
+    yearly_income = sum(income_pattern) * (YEAR if rough else 1)
+    if regular is not None and yearly_income < regular_minimum_per_year:
+        # At least the guaranteed minimum: the shortfall spread evenly over the year.
+        top_up = (regular_minimum_per_year - yearly_income) / YEAR
+        income_pattern = [value + top_up for value in income_pattern]
+        yearly_income = regular_minimum_per_year
+    yearly = yearly_solar + yearly_battery + yearly_income
 
     def years_after_install(day: date | None) -> float | None:
         return round((day - installed).days / 365.25, 1) if day else None
@@ -208,6 +230,7 @@ def payback(
                 0,
                 horizon,
                 reached,
+                income_pattern,
             )
             profit = at_horizon - total_cost if at_horizon is not None else None
         if panel_ageing or battery_ageing or price_change:
@@ -222,6 +245,7 @@ def payback(
                 price_change,
                 horizon,
                 reached,
+                income_pattern,
             )
             adjusted = {
                 "break_even": adjusted_day,
@@ -244,6 +268,7 @@ def payback(
         "yearly_gbp": round(yearly, 2),
         "yearly_solar_gbp": round(yearly_solar, 2) if solar is not None else None,
         "yearly_battery_gbp": round(yearly_battery, 2) if solar is not None else None,
+        "yearly_regular_income_gbp": round(yearly_income, 2) if regular is not None else None,
         "percent": round(saved / total_cost * 100, 1) if total_cost > 0 else None,
         # What is still to be recovered; below zero once the system has paid for itself.
         "remaining_gbp": round(total_cost - saved, 2),

@@ -558,7 +558,14 @@
         </div>
         <div class="group-title">Extra income</div>
         <label class="wide"><input type="checkbox" name="project_extra" checked>
-          Assume extra income carries on at the same rate in the years ahead</label>
+          Assume regular income (such as Axle) carries on in the years ahead</label>
+        <div class="field-row">
+          <label>Regular income of at least (<span class="major">£</span> a month)
+            <input type="number" name="regular_minimum" min="0" max="1000" step="0.01" placeholder="Axle's minimum, such as 10"></label>
+        </div>
+        <div class="hint" style="margin-top: 0; grid-column: 1 / -1;">Regular income is projected at what the last year paid, and at
+          least this much a month. One-off income, such as a referral bonus, counts towards what has been
+          saved but is never assumed to carry on. Choose which each entry is under Extra income.</div>
         <div class="actions"><button class="primary" type="submit">Save</button></div>
         <div id="roi-message"></div>
       </form>
@@ -580,11 +587,18 @@
         exporting during grid events. It counts towards Return on investment. Add entries by hand here. If
         Home Assistant has an Axle event sensor, export events are also recorded automatically,
         with the payment estimated as the energy exported during the event times the rate below.
-        Use Edit on an entry to replace an estimate with what you were actually paid.</div>
+        Use Edit on an entry to replace an estimate with what you were actually paid.
+        Regular income, such as Axle's monthly payments, is carried forward in Return on investment's
+        projection; one-off income, such as a referral bonus, is counted but not projected.</div>
       <form id="income-form">
         <label>Date <input type="date" name="day" required></label>
         <label>For <input type="text" name="description" maxlength="80" value="Axle export event" required></label>
         <label>Amount (<span class="major">£</span>) <input type="number" name="amount" min="0" step="0.01" required></label>
+        <label>Counts as
+          <select name="regular">
+            <option value="true">Regular: carries on, such as Axle</option>
+            <option value="false">One-off: a referral, bonus or similar</option>
+          </select></label>
         <div class="actions"><button class="primary" type="submit">Save entry</button></div>
         <div id="income-message" style="grid-column: 1 / -1; font-size: 13px; min-height: 18px; color: var(--muted);"></div>
       </form>
@@ -2681,6 +2695,12 @@ billsForm.addEventListener("submit", async event => {
 const incomeForm = document.getElementById("income-form");
 const axleForm = document.getElementById("axle-form");
 let editingIncome = null;
+// Until a kind is picked, it follows the description: anything from Axle is regular.
+let kindChosen = false;
+incomeForm.elements.regular.addEventListener("change", () => { kindChosen = true; });
+incomeForm.elements.description.addEventListener("input", () => {
+  if (!kindChosen) incomeForm.elements.regular.value = String(/axle/i.test(incomeForm.elements.description.value));
+});
 
 function incomeMessage(text, isError = false) {
   const el = document.getElementById("income-message");
@@ -2697,12 +2717,17 @@ function renderIncome(data) {
   };
   const years = Object.entries(data.by_year).map(([year, total]) => year + ": " + money(total)).join(", ");
   document.getElementById("income-summary").textContent = data.entries.length
-    ? "Total " + money(data.total_gbp) + (years ? " (" + years + ")." : ".")
+    ? "Total " + money(data.total_gbp) + (years ? " (" + years + ")" : "") + ": " +
+      money(data.regular_gbp) + " regular, " + money(data.one_off_gbp) + " one-off."
     : "Nothing recorded yet.";
   document.getElementById("income-rows").replaceChildren(...data.entries.map(entry => {
     const tr = document.createElement("tr");
     const what = cell(entry.description);
     const pending = entry.amount_gbp === null;
+    what.append(Object.assign(document.createElement("span"), { className: "tag",
+      textContent: entry.regular ? "Regular" : "One-off",
+      title: entry.regular ? "Carried forward in the return on investment projection"
+        : "Counted as saved, but not assumed to carry on" }));
     if (entry.estimated || pending) {
       const tag = Object.assign(document.createElement("span"), { className: "tag",
         textContent: pending ? "Waiting for the event to finish" : "Estimate" });
@@ -2727,6 +2752,8 @@ function renderIncome(data) {
       incomeForm.elements.day.value = entry.day;
       incomeForm.elements.description.value = entry.description;
       incomeForm.elements.amount.value = entry.amount_gbp ?? "";
+      incomeForm.elements.regular.value = String(entry.regular);
+      kindChosen = true;
       document.getElementById("income-editor").open = true;
       incomeMessage("Editing the entry for " + entry.day + ". Saving replaces it" +
         (entry.estimated ? " and marks it as the actual amount." : "."));
@@ -2766,9 +2793,11 @@ incomeForm.addEventListener("submit", async event => {
     const data = await sendTariff("api/income" + (editingIncome ? "?id=" + editingIncome : ""), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ day: f.day.value, description: f.description.value, amount_gbp: Number(f.amount.value) }),
+      body: JSON.stringify({ day: f.day.value, description: f.description.value, amount_gbp: Number(f.amount.value),
+                             regular: f.regular.value === "true" }),
     });
     editingIncome = null;
+    kindChosen = false;
     f.amount.value = "";
     incomeMessage("Saved.");
     renderIncome(data);
@@ -3156,6 +3185,7 @@ function fillRoiForm(data) {
     f.battery_ageing.value = data.settings.battery_ageing_percent || "";
     f.price_change.value = data.settings.price_change_percent || "";
     f.project_extra.checked = data.settings.project_extra_income ?? true;
+    f.regular_minimum.value = data.settings.regular_income_minimum_gbp || "";
     f.horizon_years.value = data.settings.horizon_years ?? 20;
     roiCosts.replaceChildren();
     for (const c of data.settings.costs) addCost(c.date, c.description, c.amount);
@@ -3391,10 +3421,18 @@ function renderPayback(data) {
     notes.push("Of the " + pounds(p.yearly_gbp) + " a year, about " + pounds(p.yearly_solar_gbp) +
       " is what the panels alone would save and " + pounds(p.yearly_battery_gbp) + " is added by the battery.");
   }
-  if (data.extra_income_gbp > 0) {
-    notes.push("Includes " + money(data.extra_income_gbp) + " of extra income, which " +
-      (data.extra_income_projected ? "is assumed to carry on at the same rate."
-        : "is counted as saved but left out of the yearly figure and the projection."));
+  if (data.extra_income_gbp > 0 || p.yearly_regular_income_gbp) {
+    const parts = [];
+    if (data.regular_income_gbp > 0) {
+      parts.push(money(data.regular_income_gbp) + " regular (" + (data.extra_income_projected
+        ? "carried forward at about " + pounds(p.yearly_regular_income_gbp ?? 0) + " a year"
+        : "not carried forward, as chosen below") + ")");
+    } else if (p.yearly_regular_income_gbp) {
+      parts.push("no regular income yet, but your minimum of about " + pounds(p.yearly_regular_income_gbp) +
+        " a year is carried forward");
+    }
+    if (data.one_off_income_gbp > 0) parts.push(money(data.one_off_income_gbp) + " one-off (counted, not carried forward)");
+    notes.push("Extra income: " + parts.join("; ") + ".");
   }
   const b = data.bills_line;
   if (b) {
@@ -3457,6 +3495,7 @@ roiForm.addEventListener("submit", async event => {
                              battery_ageing_percent: Number(roiForm.elements.battery_ageing.value) || 0,
                              price_change_percent: Number(roiForm.elements.price_change.value) || 0,
                              project_extra_income: roiForm.elements.project_extra.checked,
+                             regular_income_minimum_gbp: Number(roiForm.elements.regular_minimum.value) || 0,
                              horizon_years: Number(roiForm.elements.horizon_years.value) || 20 }),
     });
     roiMessage("Saved.");

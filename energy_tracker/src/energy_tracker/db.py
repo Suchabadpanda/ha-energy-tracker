@@ -60,7 +60,8 @@ SCHEMA = """
         event_end   INTEGER,
         kwh         REAL,
         estimated   INTEGER NOT NULL DEFAULT 0,
-        hidden      INTEGER NOT NULL DEFAULT 0
+        hidden      INTEGER NOT NULL DEFAULT 0,
+        regular     INTEGER                   -- 1: can be expected to carry on (Axle)
     );
 
     -- Notes the user pins to a day ("new tariff", "heat pump serviced").
@@ -95,6 +96,18 @@ def _when(seconds: int) -> datetime:
     return datetime.fromtimestamp(seconds, UTC)
 
 
+def _sort_income(conn: sqlite3.Connection) -> None:
+    """Decide, for income not yet sorted, whether it can be expected to carry on.
+
+    Axle pays every month (a minimum, plus its events), so its income is regular. Anything
+    else typed in, such as a referral bonus, is taken to be a one-off.
+    """
+    conn.execute(
+        "UPDATE extra_income SET regular = CASE WHEN source != 'manual' "
+        "OR lower(description) LIKE '%axle%' THEN 1 ELSE 0 END WHERE regular IS NULL"
+    )
+
+
 class Database:
     def __init__(self, path: Path) -> None:
         self.path = Path(path)
@@ -112,6 +125,11 @@ class Database:
             columns = {row[1] for row in conn.execute("PRAGMA table_info(tariff_periods)")}
             if "fixed_until" not in columns:
                 conn.execute("ALTER TABLE tariff_periods ADD COLUMN fixed_until TEXT")
+            # Added in 0.28: income that can be expected to carry on, apart from one-offs.
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(extra_income)")}
+            if "regular" not in columns:
+                conn.execute("ALTER TABLE extra_income ADD COLUMN regular INTEGER")
+            _sort_income(conn)
             conn.commit()
 
     def _connect(self) -> sqlite3.Connection:
@@ -392,6 +410,7 @@ class Database:
                     "ON CONFLICT (key) DO UPDATE SET value = excluded.value",
                     (key, value),
                 )
+            _sort_income(conn)  # entries from a backup made before income was sorted
 
     # --- small settings ---------------------------------------------------------------------
 
@@ -463,28 +482,41 @@ class Database:
             {
                 **dict(row),
                 "estimated": bool(row["estimated"]),
+                "regular": bool(row["regular"]),
                 "event_start": _when(row["event_start"]) if row["event_start"] else None,
                 "event_end": _when(row["event_end"]) if row["event_end"] else None,
             }
             for row in rows
         ]
 
-    def save_income(self, day: date, description: str, amount: float, row_id: int | None) -> int:
+    def save_income(
+        self,
+        day: date,
+        description: str,
+        amount: float,
+        row_id: int | None,
+        regular: bool | None = None,
+    ) -> int:
         """Add an entry typed in by hand, or correct an existing one (which stops it being
-        an estimate)."""
+        an estimate). `regular`: whether it can be expected to carry on; None to tell from
+        the description."""
+        flag = None if regular is None else int(regular)
         with closing(self._connect()) as conn, conn:
             if row_id is not None:
                 cursor = conn.execute(
                     "UPDATE extra_income SET day = ?, description = ?, amount_gbp = ?, "
-                    "estimated = 0 WHERE id = ? AND hidden = 0",
-                    (day.isoformat(), description, amount, row_id),
+                    "estimated = 0, regular = ? WHERE id = ? AND hidden = 0",
+                    (day.isoformat(), description, amount, flag, row_id),
                 )
                 if cursor.rowcount:
+                    _sort_income(conn)
                     return row_id
             cursor = conn.execute(
-                "INSERT INTO extra_income (day, description, amount_gbp) VALUES (?, ?, ?)",
-                (day.isoformat(), description, amount),
+                "INSERT INTO extra_income (day, description, amount_gbp, regular) "
+                "VALUES (?, ?, ?, ?)",
+                (day.isoformat(), description, amount, flag),
             )
+            _sort_income(conn)
             return cursor.lastrowid
 
     def remove_income(self, row_id: int) -> bool:
@@ -504,7 +536,7 @@ class Database:
         with closing(self._connect()) as conn, conn:
             cursor = conn.execute(
                 "INSERT OR IGNORE INTO extra_income (day, description, source, event_start, "
-                "event_end, estimated) VALUES (?, ?, ?, ?, ?, 1)",
+                "event_end, estimated, regular) VALUES (?, ?, ?, ?, ?, 1, 1)",
                 (
                     day.isoformat(),
                     "Axle export event",
