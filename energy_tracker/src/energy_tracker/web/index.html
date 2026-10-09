@@ -485,6 +485,31 @@
     </div>
   </div>
 
+  <div id="heating-section" hidden>
+    <h2 id="heating-heading">Heat pump and the weather</h2>
+    <div class="tiles" id="heating-tiles"></div>
+    <div class="chart" style="margin-top: 12px;">
+      <div class="empty" id="heating-empty" hidden></div>
+      <svg id="heating-chart" viewBox="0 0 900 320" role="img"
+           aria-label="Each day's heat pump use against that day's outdoor temperature" hidden></svg>
+      <div class="hint" id="heating-chart-hint"></div>
+    </div>
+    <div class="chart" id="heating-table-box" hidden>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Period</th><th class="num">Days</th><th class="num">Average outside</th>
+            <th class="num">Heat pump</th><th class="num">Degree days</th><th class="num">kWh per degree day</th></tr></thead>
+          <tbody id="heating-rows"></tbody>
+        </table>
+      </div>
+      <div class="hint">Degree days measure how cold it was: each day adds how far its average fell below
+        15.5 °C. kWh per degree day lets one winter be compared fairly with another, whatever the weather; if it
+        rises, the heat pump (or its settings) is working less efficiently. Winters run October to April; months with
+        little heating are left blank, as hot water would swamp the figure.</div>
+    </div>
+    <div class="hint" id="heating-hint"></div>
+  </div>
+
   <h2 id="roi-heading">Return on investment</h2>
   <div class="tiles" id="roi-tiles"></div>
   <div id="roi-progress" hidden>
@@ -2957,6 +2982,125 @@ async function refreshDeviceCosts() {
   catch (err) { document.getElementById("device-costs-hint").textContent = "Could not work out device costs (" + err.message + ")."; }
 }
 
+// --- Heat pump and the weather -------------------------------------------------------------------
+
+function renderHeating(data) {
+  const section = document.getElementById("heating-section");
+  section.hidden = !data.has_heat_pump;
+  if (!data.has_heat_pump) return;
+  const label = data.smart_load_label || "Heat pump";
+  const source = data.entity
+    ? "Outdoor temperature from " + data.entity + ". To use a different sensor, set outdoor_temperature_entity in the add-on's options."
+    : data.has_temperature ? "Outdoor temperatures from earlier readings; none is being read right now. Name a sensor in the add-on's outdoor_temperature_entity option if the weather entity has gone."
+    : "No outdoor temperature found. Home Assistant normally has a weather entity for your home; or name a temperature sensor in the add-on's outdoor_temperature_entity option.";
+  document.getElementById("heating-hint").textContent = source;
+  const empty = document.getElementById("heating-empty");
+  const chart = document.getElementById("heating-chart");
+  const tiles = document.getElementById("heating-tiles");
+  document.getElementById("heating-table-box").hidden = !data.has_data;
+  chart.hidden = !data.has_data;
+  empty.hidden = data.has_data;
+  if (!data.has_data) {
+    tiles.replaceChildren();
+    document.getElementById("heating-chart-hint").textContent = "";
+    empty.textContent = data.has_temperature
+      ? "Outdoor temperatures are being collected. The comparison appears after the first full day."
+      : "Waiting for outdoor temperatures. " + source;
+    return;
+  }
+  const tile = (name, value, note) => {
+    const el = document.createElement("div");
+    el.className = "tile";
+    for (const [cls, text] of [["label", name], ["value", value], ["note", note ?? ""]]) {
+      el.append(Object.assign(document.createElement("div"), { className: cls, textContent: text }));
+    }
+    return el;
+  };
+  const seasons = data.seasons ?? [];
+  const latest = seasons.at(-1), before = seasons.at(-2);
+  const rate = s => s?.kwh_per_degree_day == null ? "–" : s.kwh_per_degree_day.toFixed(2) + " kWh";
+  let change = "";
+  if (latest?.kwh_per_degree_day != null && before?.kwh_per_degree_day != null) {
+    const pct = Math.round(100 * (latest.kwh_per_degree_day / before.kwh_per_degree_day - 1));
+    change = pct === 0 ? "Same as " + before.name : Math.abs(pct) + "% " + (pct < 0 ? "less" : "more") + " than " + before.name;
+  }
+  tiles.replaceChildren(
+    tile("Extra use per °C colder", data.per_degree_colder_kwh == null ? "–" : data.per_degree_colder_kwh.toFixed(1) + " kWh",
+         "A day, on days below " + data.base_c + " °C"),
+    tile("Use on warm days", data.warm_day_kwh == null ? "–" : data.warm_day_kwh.toFixed(1) + " kWh",
+         data.warm_day_kwh == null ? "Not enough warm days yet" : "A day: mostly hot water"),
+    tile(latest ? "Per degree day, " + latest.name : "Per degree day", rate(latest),
+         change || (latest ? latest.degree_days + " degree days so far" : "Needs a colder spell")),
+    tile("Days compared", String(data.days), "With both readings"));
+
+  // Scatter: each day's use against its average temperature, with the fitted line.
+  const NS = "http://www.w3.org/2000/svg";
+  const add = (tag, attrs, text) => {
+    const node = document.createElementNS(NS, tag);
+    for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v);
+    if (text != null) node.textContent = text;
+    chart.append(node);
+    return node;
+  };
+  chart.replaceChildren();
+  const points = data.points.slice(-365);
+  const left = 56, right = 884, top = 30, bottom = 280;
+  const temps = points.map(p => p.temperature);
+  const tMin = Math.floor(Math.min(...temps, 0) / 5) * 5, tMax = Math.ceil(Math.max(...temps, 20) / 5) * 5;
+  const lineAt = t => data.line ? Math.max(0, data.line.slope * t + data.line.intercept) : 0;
+  const kMax = Math.max(5, Math.ceil(Math.max(...points.map(p => p.kwh), lineAt(Math.min(...temps))) / 5) * 5);
+  const x = t => left + (t - tMin) / (tMax - tMin) * (right - left);
+  const y = k => bottom - k / kMax * (bottom - top);
+  for (let k = 0; k <= kMax; k += kMax / 5) {
+    add("line", { x1: left, x2: right, y1: y(k), y2: y(k), stroke: "var(--grid-line, var(--border))", "stroke-width": 1 });
+    add("text", { x: left - 8, y: y(k) + 4, "text-anchor": "end", "font-size": 12, fill: "var(--muted)" }, Math.round(k) + "");
+  }
+  for (let t = tMin; t <= tMax; t += 5) {
+    add("text", { x: x(t), y: bottom + 18, "text-anchor": "middle", "font-size": 12, fill: "var(--muted)" }, t + " °C");
+  }
+  add("text", { x: 8, y: 12, "font-size": 12, fill: "var(--muted)" }, "kWh a day");
+  add("line", { x1: x(data.base_c), x2: x(data.base_c), y1: top, y2: bottom, stroke: "var(--muted)",
+                "stroke-dasharray": "4 4", "stroke-width": 1 });
+  add("text", { x: x(data.base_c) + 6, y: top + 12, "font-size": 11, fill: "var(--muted)" }, "Heating needed below " + data.base_c + " °C");
+  const newest = points.length ? points.at(-1).day : null;
+  for (const p of points) {
+    const recent = newest && (new Date(newest) - new Date(p.day)) < 30 * 86400000;
+    const dot = add("circle", { cx: x(p.temperature), cy: y(p.kwh), r: recent ? 4 : 3,
+                                fill: "var(--heatpump)", "fill-opacity": recent ? 0.95 : 0.45 });
+    const title = document.createElementNS(NS, "title");
+    title.textContent = new Date(p.day + "T00:00").toLocaleDateString([], { weekday: "short", day: "numeric", month: "short", year: "numeric" })
+      + "\n" + p.temperature.toFixed(1) + " °C outside\n" + label + ": " + p.kwh.toFixed(1) + " kWh";
+    dot.append(title);
+  }
+  if (data.line) {
+    const from = Math.max(tMin, Math.min(...temps)), to = Math.min(data.base_c, tMax);
+    add("line", { x1: x(from), y1: y(lineAt(from)), x2: x(to), y2: y(lineAt(to)), stroke: "var(--accent)", "stroke-width": 2.5 });
+  }
+  document.getElementById("heating-chart-hint").textContent =
+    "Each dot is a day (the last 30 days darker); hover for details. The line is the trend on days needing heating.";
+
+  const rows = document.getElementById("heating-rows");
+  const cell = (text, cls) => Object.assign(document.createElement("td"), { textContent: text, className: cls ?? "" });
+  const line = (name, r, cls) => {
+    const tr = document.createElement("tr");
+    if (cls) tr.className = cls;
+    tr.append(cell(name), cell(String(r.days), "num"), cell(r.mean_temperature.toFixed(1) + " °C", "num"),
+              cell(r.kwh.toFixed(0) + " kWh", "num"), cell(String(r.degree_days), "num"),
+              cell(r.kwh_per_degree_day == null ? "" : r.kwh_per_degree_day.toFixed(2), "num"));
+    return tr;
+  };
+  const monthName = key => new Date(key + "-01T00:00").toLocaleDateString([], { month: "long", year: "numeric" });
+  rows.replaceChildren(
+    ...[...seasons].reverse().map(s => line("Winter " + s.name, s, "year-row")),
+    ...[...data.months].reverse().map(m => line(monthName(m.name), m)));
+}
+
+async function refreshHeating() {
+  if (!sectionOpen("heating-heading")) return;  // fetched when the section is opened
+  try { renderHeating(await getJson("api/heating")); }
+  catch (err) { document.getElementById("heating-hint").textContent = "Could not compare with the weather (" + err.message + ")."; }
+}
+
 // --- Payback -------------------------------------------------------------------------------
 
 const roiForm = document.getElementById("roi-form");
@@ -3679,6 +3823,7 @@ function refreshEverything() {
   refreshSummary();
   refreshBills();
   refreshDeviceCosts();
+  refreshHeating();
 }
 
 // The page is refreshed in three parts, each as often as it is worth: the tiles and today's
@@ -3779,7 +3924,7 @@ const SECTION_LOADERS = {
   "income-heading": () => refreshIncome(), "bills-heading": () => refreshBills(),
   "compare-heading": () => refreshCompare(), "planner-heading": () => refreshPlanner(),
 
-  "yearly-heading": () => refreshYearly(),
+  "yearly-heading": () => refreshYearly(), "heating-heading": () => refreshHeating(),
 };
 function setFolded(h2, fold) {
   const wasFolded = h2.getAttribute("aria-expanded") === "false";
@@ -3881,6 +4026,8 @@ async function start() {
   every(5 * MINUTE, () => { if (!historyDay) refreshHistory(); });
   refreshDeviceCosts();
   every(10 * MINUTE, refreshDeviceCosts);
+  refreshHeating();
+  every(10 * MINUTE, refreshHeating);
   refreshPayback();
   every(30 * MINUTE, refreshPayback);
   refreshIncome();

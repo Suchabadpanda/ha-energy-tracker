@@ -31,6 +31,7 @@ from . import (
     billreader,
     collector,
     devices,
+    heating,
     history,
     import_history,
     income,
@@ -43,6 +44,7 @@ from . import (
     roi,
     shift,
     tariff_store,
+    weather,
 )
 from .config import Metric, Settings, load_metrics, load_settings
 from .costs import combine
@@ -119,7 +121,7 @@ async def lifespan(_: FastAPI):
         await asyncio.to_thread(thread.join, 10)
 
 
-app = FastAPI(title="Energy Tracker", version="0.26.0", lifespan=lifespan)
+app = FastAPI(title="Energy Tracker", version="0.27.0", lifespan=lifespan)
 # The page and its chart data are mostly text: sent compressed, they are a quarter the size.
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
@@ -425,6 +427,7 @@ def keep_figures_ready(stop: threading.Event) -> None:
         for work in (
             years.fresh,
             device_costs.fresh,
+            heat_pump_and_weather.fresh,
             bills.fresh,
             payback_figures.fresh,
             lambda: monthly_summary.fresh(None),
@@ -938,6 +941,40 @@ def more_panels() -> dict:
             else None
         )
     result.update(has_data=True, first_day=start.date(), battery_kwh=battery.capacity_kwh, **found)
+    return result
+
+
+# --- The heat pump against the weather ------------------------------------------------------------
+
+
+@app.get("/api/heating")
+@kept
+def heat_pump_and_weather() -> dict:
+    """The heat pump's daily use set against the outdoor temperature."""
+    zone = local_timezone()
+    now = datetime.now(UTC)
+    result: dict = {
+        "has_data": False,
+        "entity": weather.entity_in_use or settings().outdoor_temperature_entity or None,
+        "smart_load_label": settings().smart_load_label,
+    }
+    first_heat = database().first_time(devices.CIRCUIT)
+    first_temperature = database().first_time(weather.METRIC)
+    result.update(has_heat_pump=bool(first_heat), has_temperature=bool(first_temperature))
+    if not first_heat or not first_temperature:
+        return result
+    end = local_midnight(now, zone)  # whole days
+    start = max(end - timedelta(days=3 * 365), first_heat, first_temperature).astimezone(zone)
+    if start >= end:
+        return result
+    samples = counter_samples(devices.COUNTERS, start - timedelta(days=1), HALF_HOURLY, end)
+    counters = {name: Counter(series, HALF_HOURLY_GAP) for name, series in samples.items()}
+    if not counters[devices.LOAD] or not counters[devices.IMPORT]:
+        return result
+    days = devices.daily(counters, start, end, zone, schedule(), settings().ev_on_smart_load)
+    used = {day: row["heat_pump_kwh"] for day, row in days.items() if "heat_pump_kwh" in row}
+    hourly = database().series([weather.METRIC], start, 3600)[weather.METRIC]
+    result.update(heating.analyse(used, heating.daily_means(hourly, zone)))
     return result
 
 

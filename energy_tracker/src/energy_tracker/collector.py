@@ -12,7 +12,7 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 
-from . import backfill, income, live
+from . import backfill, income, live, weather
 from .config import Metric, Settings
 from .db import Database
 from .normalise import normalise
@@ -101,6 +101,7 @@ def run(settings: Settings, db: Database, metrics: list[Metric], stop: threading
             log.debug("No Axle event history: %s", exc)
         last_stored = datetime.now(UTC)
         last_thinned: datetime | None = None
+        weather_checked = False
 
         while not stop.is_set():
             try:
@@ -109,6 +110,25 @@ def run(settings: Settings, db: Database, metrics: list[Metric], stop: threading
                     fill_gaps(now)  # polling was interrupted
                 states = fetch_states(client)
                 rows = build_rows(states, metrics, now)
+                outdoor = weather.row(states, settings.outdoor_temperature_entity, now)
+                if outdoor:
+                    rows.append(outdoor)
+                if not weather_checked and weather.entity_in_use:
+                    weather_checked = True  # once per start: bring in what Home Assistant has
+                    try:
+                        found = weather.backfill(
+                            db,
+                            client,
+                            settings.ha_websocket_url,
+                            settings.ha_token,
+                            weather.entity_in_use,
+                            now,
+                            settings.backfill_days,
+                        )
+                        if found:
+                            log.info("Brought in %d earlier outdoor temperatures", found)
+                    except (httpx.HTTPError, sqlite3.Error, ValueError, OSError) as exc:
+                        log.info("Could not bring in earlier outdoor temperatures: %s", exc)
                 if rows:
                     db.insert_readings(rows)
                     last_stored = now
@@ -125,7 +145,9 @@ def run(settings: Settings, db: Database, metrics: list[Metric], stop: threading
 
                 # Once a day, thin old readings so the database stays small.
                 if last_thinned is None or now - last_thinned > THIN_EVERY:
-                    removed = db.thin(names, now - timedelta(days=settings.detail_days))
+                    removed = db.thin(
+                        [*names, weather.METRIC], now - timedelta(days=settings.detail_days)
+                    )
                     # ...and drop whatever has passed the age limit. Run daily, this removes
                     # a day's worth at a time.
                     expired = db.delete_older_than(now - timedelta(days=365 * settings.keep_years))

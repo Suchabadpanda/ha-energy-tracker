@@ -34,6 +34,10 @@ The figures shown are made-up example data.
 
 ![Table of energy and cost for the heat pump, EV charger and rest of the house, by month and year](docs/images/devices.png)
 
+**Heat pump and the weather**
+
+![Each day's heat pump use against the outdoor temperature, with kWh per degree day by month and winter](docs/images/heating.png)
+
 **History for any day, week, month or year**
 
 ![Bar chart of a month's solar, use, import and export by day, with totals above](docs/images/history.png)
@@ -73,6 +77,8 @@ The figures shown are made-up example data.
 - **Where it's going**: smart load (such as a heat pump), EV charger and the rest of the house, where those are fitted.
 - **Running costs by device**: what the smart load, the EV charger and the rest of the house
   cost to run, by month and year.
+- **Heat pump and the weather**: each day's heat pump use against the outdoor temperature,
+  extra use per degree colder, and kWh per degree day so winters can be compared fairly.
 - **Today**: energy generated, used, imported and exported, and use by device.
 - **Cost today and by month**: import cost, export credit, standing charge and VAT, with
   buttons to step back through earlier months.

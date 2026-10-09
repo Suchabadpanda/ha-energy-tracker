@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.27.0
+
+- Heat pump and the weather: each day's heat pump use plotted against the outdoor
+  temperature, with how much more it uses for each degree colder, its use on warm days
+  (mostly hot water) and kWh per degree day for each month and winter, so winters can be
+  compared fairly whatever the weather.
+- The outdoor temperature is read from Home Assistant's weather entity, or from a sensor
+  named in the new `outdoor_temperature_entity` option. Earlier temperatures Home Assistant
+  already holds are brought in once.
+
 ## 0.26.0
 
 - Performance: "Would more panels, or a bigger inverter, pay?" estimates the yearly gain

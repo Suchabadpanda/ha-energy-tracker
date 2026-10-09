@@ -73,6 +73,7 @@ their own mean cheaper or better, and dearer or a problem.
 | `currency_minor` | p | The small unit prices are entered in, such as p or c. One hundred of them make one of the main unit. |
 | `axle_event_entity` | sensor.axle_event | Only for the manual Axle set-up with a differently named sensor. The HACS "Axle VPP" integration is found without it. |
 | `smart_load_label` | Heat pump | What is connected to the gateway's smart load port 1, as named on the dashboard. |
+| `outdoor_temperature_entity` | (empty) | A temperature sensor outside, for the heat pump and the weather. Left empty, the first weather entity is used (Home Assistant sets one up for your home). |
 | `ev_on_smart_load` | true | On if the EV charger is wired through smart load port 1. Its use is then taken off the smart load figure. Turn off if the charger is on its own circuit. |
 
 ## Optional equipment
@@ -157,6 +158,28 @@ later powered, without following each unit through the battery. As a result:
 - A device run mostly from solar still carries a share of the day's import, and a car
   charged overnight is costed at the day's average price, not purely the night rate.
 - The standing charge and export income are left out. They belong to the house as a whole.
+
+## Heat pump and the weather
+
+Shown when a smart load is fitted. Each dot on the chart is a day: the heat pump's use
+against that day's average outdoor temperature. The line is the trend on days cold enough
+to need heating.
+
+- **Extra use per °C colder**: how much more the heat pump uses on a day one degree colder.
+- **Use on warm days**: its use on days above 15.5 °C, which is mostly hot water.
+- **kWh per degree day**: each day adds "degree days" for how far its average fell below
+  15.5 °C, the usual UK base for heating. Dividing the heat pump's use by them gives a
+  figure that can be compared from one winter, or month, to the next whatever the weather.
+  If it rises, the heat pump or its settings are working less efficiently. Winters run
+  October to April, and months with little heating are left blank, as hot water would
+  swamp the figure.
+
+The outdoor temperature comes from Home Assistant's weather entity (a forecast service,
+which reports the temperature near you), or from your own outdoor sensor if you name it in
+the `outdoor_temperature_entity` option. A sensor outside, out of the sun, is more accurate.
+When the app starts it brings in the temperatures Home Assistant already has, once: years
+of hourly averages for a sensor with long-term statistics, or about ten days for a weather
+entity. A day counts once it has at least 12 hours of readings.
 
 ## History and downloads
 
@@ -543,7 +566,8 @@ replaces what the earlier one brought in.
 - The dashboard opens through Home Assistant, behind its login. No network port is opened.
 - The only outside service contacted is Octopus Energy's public price list, and only when
   you use the tariff lookup.
-- The app only reads from Home Assistant. It never changes a device or setting.
+- The app only reads from Home Assistant. It never changes a device or setting. The
+  outdoor temperature is read from Home Assistant too, not from an outside weather service.
 - Readings and rates are stored in the app's data folder and are included in Home
   Assistant backups. The app pauses for a few seconds while a backup is taken.
 

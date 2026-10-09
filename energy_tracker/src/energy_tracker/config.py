@@ -86,6 +86,9 @@ class Settings:
     currency_minor: str = "p"
     # Home Assistant sensor showing Axle Energy grid events, if there is one.
     axle_event_entity: str = "sensor.axle_event"
+    # Outdoor temperature, for the heat pump against the weather. Empty: the first weather
+    # entity Home Assistant has.
+    outdoor_temperature_entity: str = ""
     # What the Sigenergy "smart load 1" port feeds, as shown on the dashboard.
     smart_load_label: str = "Heat pump"
     # True if the EV charger is wired through the smart load port, so its use is taken off
@@ -143,6 +146,7 @@ def load_settings() -> Settings:
             currency_symbol=_text(options.get("currency_symbol"), "£")[:4],
             currency_minor=_text(options.get("currency_minor"), "p")[:4],
             axle_event_entity=str(options.get("axle_event_entity") or "sensor.axle_event").strip(),
+            outdoor_temperature_entity=str(options.get("outdoor_temperature_entity") or "").strip(),
             ev_on_smart_load=_flag(options.get("ev_on_smart_load"), True),
         )
 
@@ -164,5 +168,6 @@ def load_settings() -> Settings:
         currency_symbol=_text(env.get("CURRENCY_SYMBOL"), "£")[:4],
         currency_minor=_text(env.get("CURRENCY_MINOR"), "p")[:4],
         axle_event_entity=(env.get("AXLE_EVENT_ENTITY") or "sensor.axle_event").strip(),
+        outdoor_temperature_entity=(env.get("OUTDOOR_TEMPERATURE_ENTITY") or "").strip(),
         ev_on_smart_load=_flag(env.get("EV_ON_SMART_LOAD"), True),
     )
