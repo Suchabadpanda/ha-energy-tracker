@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.28.1
+
+- The **Sections** menu links to the user guide, the overview page and what's new, so
+  help is a click away while using the app. They open on GitHub in a new tab.
+
 ## 0.28.0
 
 - Extra income is sorted into **regular** (Axle's monthly payments and events) and

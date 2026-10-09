@@ -12,6 +12,10 @@ heading to fold that section away, and again to bring it back; **Fold all sectio
 **Open all sections** are at the foot of the menu. What you fold is saved with the app, so
 it stays folded the next time you open it, on any device or browser.
 
+The top of the **Sections** menu also links to this user guide, the app's overview page
+and the list of changes in each version. They open in a new tab, on GitHub, so they need
+an internet connection.
+
 Folding sections you rarely look at also makes the page quicker to open: nothing is
 fetched for a folded section until you open it.
 

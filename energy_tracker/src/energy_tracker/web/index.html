@@ -46,6 +46,10 @@
                        background: none; padding: 7px 10px; border-radius: 6px; font-size: 14px; }
   .jump-panel button:hover, .jump-panel button:focus-visible { background: var(--bg); }
   .jump-panel button.folded { color: var(--muted); }
+  .jump-panel a { display: block; padding: 7px 10px; border-radius: 6px; color: inherit;
+                  text-decoration: none; font-size: 14px; }
+  .jump-panel a:hover, .jump-panel a:focus-visible { background: var(--bg); }
+  .jump-panel a small { display: block; color: var(--muted); font-size: 12px; }
   .jump-panel hr { border: none; border-top: 1px solid var(--line); margin: 6px 4px; }
   /* Section headings fold their section away when clicked. */
   h2[aria-expanded] { cursor: pointer; user-select: none; scroll-margin-top: 76px; }
@@ -4061,6 +4065,13 @@ function buildJumpMenu() {
   };
   const shown = headings.filter(h2 => h2.getClientRects().length);  // skip sections that do not apply
   document.getElementById("jump-panel").replaceChildren(
+    ...HELP_LINKS.map(([label, note, href]) => {
+      const link = Object.assign(document.createElement("a"), { href, target: "_blank", rel: "noopener", textContent: label + " \u2197" });
+      link.append(Object.assign(document.createElement("small"), { textContent: note }));
+      link.addEventListener("click", () => { jump.open = false; });
+      return link;
+    }),
+    document.createElement("hr"),
     item("Top of page", () => window.scrollTo({ top: 0, behavior: "smooth" })),
     document.createElement("hr"),
     ...shown.map(h2 => item(h2.textContent, () => {
@@ -4073,6 +4084,13 @@ function buildJumpMenu() {
     item("Fold all sections", () => headings.forEach(h2 => setFolded(h2, true))),
     item("Open all sections", () => headings.forEach(h2 => setFolded(h2, false))));
 }
+// Help, on the project's GitHub page (opens in a new tab).
+const REPOSITORY = "https://github.com/Suchabadpanda/ha-energy-tracker/blob/main/";
+const HELP_LINKS = [
+  ["User guide", "What every section shows and how its figures are worked out", REPOSITORY + "energy_tracker/DOCS.md"],
+  ["About this app", "Overview, screenshots and installing", REPOSITORY + "README.md"],
+  ["What's new", "Changes in each version", REPOSITORY + "energy_tracker/CHANGELOG.md"],
+];
 jump.addEventListener("toggle", () => { if (jump.open) buildJumpMenu(); });
 document.addEventListener("click", event => { if (jump.open && !jump.contains(event.target)) jump.open = false; });
 document.addEventListener("keydown", event => { if (event.key === "Escape") jump.open = false; });
