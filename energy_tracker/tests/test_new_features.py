@@ -709,3 +709,28 @@ def test_a_failed_price_fetch_raises_a_reminder():
     assert found == [
         {"kind": "prices_failed", "tariff": "Agile", "error": "Could not reach the price list"}
     ]
+
+
+def test_old_figures_are_served_at_once_and_refreshed_in_the_background(monkeypatch):
+    from energy_tracker import api
+
+    kept, clock, calls = api.Kept(), [1000.0], []
+    monkeypatch.setattr(api.time, "monotonic", lambda: clock[0])
+
+    def work():
+        calls.append(clock[0])
+        return len(calls)
+
+    assert kept.get(("k",), work) == 1
+    clock[0] += api.CACHE_SECONDS + 1
+    assert kept.get(("k",), work) == 1  # old, but served without waiting
+    assert kept.wake.is_set() and len(calls) == 1
+    key, due = kept.next_due()
+    assert kept.get(key, due, fresh=True) == 2 and kept.next_due() is None
+    assert kept.get(("k",), work) == 2
+    clock[0] += api.STALE_SECONDS + 1
+    assert kept.get(("k",), work) == 3  # too old to serve: worked out there and then
+    kept.wake.clear()
+    kept.clear()
+    assert kept.cleared and kept.wake.is_set()
+    assert kept.get(("k",), work) == 4

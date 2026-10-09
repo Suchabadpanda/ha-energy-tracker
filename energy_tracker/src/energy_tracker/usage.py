@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from bisect import bisect_right
 from datetime import UTC, datetime, timedelta
+from functools import lru_cache
 
 Sample = tuple[datetime, float]
 
@@ -46,6 +47,11 @@ class Counter:
         cleaned = monotonic(sorted(in_utc))
         self.times = [t for t, _ in cleaned]
         self.values = [v for _, v in cleaned]
+        # The same times as seconds: quicker to search and to work with than datetimes.
+        self.stamps = [t.timestamp() for t in self.times]
+        # Values already worked out, by moment. Neighbouring half hours share a boundary and
+        # most figures walk the same slots, so most lookups are repeats.
+        self._known: dict[float, float] = {}
 
     def __bool__(self) -> bool:
         return bool(self.times)
@@ -62,21 +68,31 @@ class Counter:
         """
         if not self.times:
             return None
-        index = bisect_right(self.times, when)
+        return self.at_stamp(when.timestamp())
+
+    def at_stamp(self, stamp: float) -> float:
+        """`at`, for a moment given in seconds since 1970. Needs at least one sample."""
+        known = self._known.get(stamp)
+        if known is not None:
+            return known
+        stamps = self.stamps
+        index = bisect_right(stamps, stamp)
         if index == 0:
-            return self.values[0]
-        if index == len(self.times):
-            return self.values[-1]
-        t0, t1 = self.times[index - 1], self.times[index]
-        v0, v1 = self.values[index - 1], self.values[index]
-        return v0 + (v1 - v0) * ((when - t0) / (t1 - t0))
+            value = self.values[0]
+        elif index == len(stamps):
+            value = self.values[-1]
+        else:
+            s0, s1 = stamps[index - 1], stamps[index]
+            v0, v1 = self.values[index - 1], self.values[index]
+            value = v0 + (v1 - v0) * ((stamp - s0) / (s1 - s0))
+        self._known[stamp] = value
+        return value
 
     def between(self, start: datetime, end: datetime) -> float | None:
         """kWh used between two moments, or None if there are no samples."""
-        a, b = self.at(start), self.at(end)
-        if a is None or b is None:
+        if not self.times:
             return None
-        return max(0.0, b - a)
+        return max(0.0, self.at_stamp(end.timestamp()) - self.at_stamp(start.timestamp()))
 
     def uncovered(self, start: datetime, end: datetime) -> timedelta:
         """How much of the period has no readings (so its figures are interpolated)."""
@@ -102,8 +118,14 @@ def uncovered(samples: list[Sample], start: datetime, end: datetime) -> timedelt
     return Counter(samples).uncovered(start, end)
 
 
-def half_hour_slots(start: datetime, end: datetime) -> list[tuple[datetime, datetime]]:
+def half_hour_slots(start: datetime, end: datetime) -> tuple[tuple[datetime, datetime], ...]:
     """Split a period into pieces that each sit inside one half-hour settlement slot."""
+    # Many figures walk the same year of slots: work each period out once.
+    return _half_hour_slots(start.astimezone(UTC), end.astimezone(UTC))
+
+
+@lru_cache(maxsize=64)
+def _half_hour_slots(start: datetime, end: datetime) -> tuple[tuple[datetime, datetime], ...]:
     slots: list[tuple[datetime, datetime]] = []
     seconds = int(SLOT.total_seconds())
     cursor = start
@@ -114,7 +136,7 @@ def half_hour_slots(start: datetime, end: datetime) -> list[tuple[datetime, date
         piece_end = min(end, datetime.fromtimestamp(boundary, UTC))
         slots.append((cursor, piece_end))
         cursor = piece_end
-    return slots
+    return tuple(slots)
 
 
 def window_start(counters: list[Counter], period_start: datetime) -> datetime | None:

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.27.1
+
+- Faster: each section is fetched only when it is scrolled near, so the top of the page
+  appears first. Opening the page from cold asks for about a third as much.
+- Faster: figures that are a little old are shown at once and brought up to date in the
+  background, instead of making the page wait. The yearly report and the panels estimate
+  are now prepared in the background too, and everything is prepared again straight after
+  a change rather than on the next visit.
+- Faster: the half-hour arithmetic behind the long-range figures does less repeated work.
+
 ## 0.27.0
 
 - Heat pump and the weather: each day's heat pump use plotted against the outdoor

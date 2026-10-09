@@ -27,9 +27,13 @@ fetched for a folded section until you open it.
 | Return on investment, performance, comparison | Every 30 minutes |
 
 The long-range figures take a while to work out on a small machine, so the app prepares
-them in the background every ten minutes and keeps them ready. They can therefore be up to
-about twenty minutes behind; saving rates, a bill, a tariff or income works them out again
-at once. Nothing is fetched while the page is in a background tab.
+them in the background every ten minutes and keeps them ready, so the page never waits for
+them. They can therefore be a few minutes behind; saving rates, a bill, a tariff, a note or
+income works them out again straight away, in the background.
+
+Each section is only fetched once it is scrolled near, and not at all while it is folded,
+so the top of the page appears quickly. Nothing is fetched while the page is in a
+background tab.
 
 ## Colours
 

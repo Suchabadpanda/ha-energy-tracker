@@ -116,12 +116,13 @@ async def lifespan(_: FastAPI):
     ).start()
     yield
     stop.set()
+    _kept.wake.set()  # let the background worker see it is time to stop
     price_refresh.set()
     if thread:
         await asyncio.to_thread(thread.join, 10)
 
 
-app = FastAPI(title="Energy Tracker", version="0.27.0", lifespan=lifespan)
+app = FastAPI(title="Energy Tracker", version="0.27.1", lifespan=lifespan)
 # The page and its chart data are mostly text: sent compressed, they are a quarter the size.
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
@@ -351,8 +352,11 @@ def month(
 # They are kept once worked out, and a background task works them out afresh every few
 # minutes, so opening the page never has to wait for them.
 
-CACHE_SECONDS = 20 * 60  # how long a kept figure may be served
-KEEP_FRESH_SECONDS = 10 * 60  # how often the usual ones are worked out again
+CACHE_SECONDS = 10 * 60  # a kept figure older than this is worked out again
+# Until then, a figure up to this old is still served at once, and brought up to date in the
+# background: opening the page never waits for one that is merely a little old.
+STALE_SECONDS = 12 * 3600
+KEEP_FRESH_SECONDS = 10 * 60  # how often the page's opening figures are worked out again
 CACHE_SIZE = 200
 
 
@@ -364,18 +368,30 @@ class Kept:
         self._values: dict[tuple, tuple[float, object]] = {}
         self._working: dict[tuple, threading.Lock] = {}
         self._generation = 0
+        self._due: dict[tuple, object] = {}  # served while old: to work out again soon
+        self.cleared = False  # everything was forgotten: the opening figures are needed again
+        self.wake = threading.Event()  # tells the background worker there is work
 
     def clear(self) -> None:
         with self._lock:
             self._values.clear()
+            self._due.clear()
             self._generation += 1  # anything being worked out now is out of date already
+            self.cleared = True
+        self.wake.set()
 
     def get(self, key: tuple, work, fresh: bool = False):
         """The kept result for `key`, working it out if there is none (or `fresh` is set)."""
         with self._lock:
             held = self._values.get(key)
-            if held and not fresh and time.monotonic() - held[0] < CACHE_SECONDS:
-                return held[1]
+            if held and not fresh:
+                age = time.monotonic() - held[0]
+                if age < CACHE_SECONDS:
+                    return held[1]
+                if age < STALE_SECONDS:
+                    self._due[key] = work
+                    self.wake.set()
+                    return held[1]
             working = self._working.setdefault(key, threading.Lock())
         with working:  # one caller works it out; any others wait and share the result
             with self._lock:
@@ -389,7 +405,13 @@ class Kept:
                     if len(self._values) >= CACHE_SIZE:
                         del self._values[min(self._values, key=lambda k: self._values[k][0])]
                     self._values[key] = (time.monotonic(), value)
+                    self._due.pop(key, None)
             return value
+
+    def next_due(self) -> tuple[tuple, object] | None:
+        """A figure that was served while old, to work out again."""
+        with self._lock:
+            return self._due.popitem() if self._due else None
 
 
 _kept = Kept()
@@ -421,28 +443,48 @@ def clear_caches() -> None:
 
 
 def keep_figures_ready(stop: threading.Event) -> None:
-    """Work out the figures the page opens with, now and every few minutes after."""
+    """Work out the figures the page opens with, now and every few minutes after; at once
+    after anything they depend on has changed; and any served while old."""
+    # In the order they appear on the page, so the top of it is ready first.
+    opening = (
+        (years, ()),
+        (monthly_summary, (None,)),
+        (yearly_report, (None,)),
+        (device_costs, ()),
+        (heat_pump_and_weather, ()),
+        (system_performance, ("12m",)),
+        (more_panels, ()),
+        (payback_figures, ()),
+        (bills, ()),
+        (compare, ("12m",)),
+        (switch_planner, (None,)),
+    )
+
+    def attempt(work) -> None:
+        try:
+            work()
+        except Exception:  # one failing must not stop the others
+            log.exception("Could not prepare figures in the background")
+        stop.wait(0.5)  # leave room for the page between the heavy jobs
+
     stop.wait(5)  # let the collector make its first reading and fill any gap
+    next_round = 0.0
     while not stop.is_set():
-        for work in (
-            years.fresh,
-            device_costs.fresh,
-            heat_pump_and_weather.fresh,
-            bills.fresh,
-            payback_figures.fresh,
-            lambda: monthly_summary.fresh(None),
-            lambda: system_performance.fresh("12m"),
-            lambda: compare.fresh("12m"),
-            lambda: switch_planner.fresh(None),
-        ):
-            if stop.is_set():
-                return
-            try:
-                work()
-            except Exception:  # one failing must not stop the others
-                log.exception("Could not prepare figures in the background")
-            stop.wait(1)  # leave room for the page between the heavy jobs
-        stop.wait(KEEP_FRESH_SECONDS)
+        _kept.wake.clear()
+        everything = time.monotonic() >= next_round
+        if everything or _kept.cleared:
+            _kept.cleared = False
+            for func, args in opening:
+                if stop.is_set():
+                    return
+                # After a change, anything the page has already asked for again is kept.
+                attempt(lambda f=func, a=args, e=everything: f.fresh(*a) if e else f(*a))
+            if everything:
+                next_round = time.monotonic() + KEEP_FRESH_SECONDS
+        while (due := _kept.next_due()) and not stop.is_set():
+            key, work = due
+            attempt(lambda k=key, w=work: _kept.get(k, w, fresh=True))
+        _kept.wake.wait(max(1.0, next_round - time.monotonic()))
 
 
 @app.get("/api/years")

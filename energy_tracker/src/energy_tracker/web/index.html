@@ -197,6 +197,7 @@
   #notice { border: 1px solid var(--danger); border-radius: 10px; padding: 12px 14px;
             margin: 14px 0 0; font-size: 14px; line-height: 1.5; }
   footer { color: var(--muted); font-size: 12px; margin: 26px 2px 8px; text-align: center; }
+.section-marker { height: 1px; margin-bottom: -1px; }
 </style>
 </head>
 <body>
@@ -3830,7 +3831,10 @@ function refreshEverything() {
 // costs every ten seconds, the power charts every minute (each point on them is an average
 // over several minutes), and the rates and yearly tables every five minutes. A section that
 // is folded away is not fetched at all until it is opened.
-const sectionOpen = key => !folded.has(key);
+// A section is fetched only when it is open and has come near the screen: opening the page
+// asks for what is in view first, and the rest as it is scrolled to.
+const sectionsSeen = new Set();
+const sectionOpen = key => !folded.has(key) && sectionsSeen.has(key);
 
 async function refresh() {
   const status = document.getElementById("status");
@@ -3873,6 +3877,14 @@ async function refreshCharts() {
   } catch { /* the ten-second refresh reports a lost connection */ }
 }
 
+// The power and consumption charts share one fetch: asking again while it is under way
+// joins it rather than starting another.
+{
+  const fetchCharts = refreshCharts;
+  let underWay = null;
+  refreshCharts = () => underWay ??= fetchCharts().finally(() => { underWay = null; });
+}
+
 async function refreshRates() {
   const [tariffs, years] = await Promise.all([
     getJson("api/tariffs").catch(() => null),
@@ -3909,7 +3921,7 @@ function sectionParts(h2) {
   const row = h2.parentElement.matches(".filters, .section-head, .nav") ? h2.parentElement : h2;
   const body = [];
   for (let el = row.nextElementSibling; el; el = el.nextElementSibling) {
-    if (el.matches("h2") || el.querySelector("h2")) break;
+    if (el.matches("h2, .section-marker") || el.querySelector("h2")) break;
     body.push(el);
   }
   const controls = row === h2 ? [] : [...row.children].filter(el => el !== h2);
@@ -3972,6 +3984,32 @@ for (const h2 of headings) {
   });
 }
 loadLayout();
+
+// Watch a marker just above each section (sections that start hidden have no position of
+// their own) and fetch the section the first time it comes within a screen or so of view.
+const sectionMarkers = new Map();
+const nearScreen = new IntersectionObserver(entries => {
+  for (const entry of entries) {
+    if (!entry.isIntersecting) continue;
+    const key = sectionMarkers.get(entry.target);
+    nearScreen.unobserve(entry.target);
+    if (sectionsSeen.has(key)) continue;
+    sectionsSeen.add(key);
+    if (!folded.has(key)) SECTION_LOADERS[key]?.();
+  }
+}, { rootMargin: "1000px 0px" });
+for (const h2 of headings) {
+  let block = h2.parentElement.matches(".filters, .section-head, .nav") ? h2.parentElement : h2;
+  while (block.parentElement !== mainEl && block.parentElement.querySelectorAll("h2").length === 1) {
+    block = block.parentElement;
+  }
+  const marker = document.createElement("div");
+  marker.className = "section-marker";
+  marker.setAttribute("aria-hidden", "true");
+  block.before(marker);
+  sectionMarkers.set(marker, h2.dataset.key);
+  nearScreen.observe(marker);
+}
 
 // The Sections menu lists every heading; choosing one opens that section and scrolls to it.
 const jump = document.getElementById("jump");

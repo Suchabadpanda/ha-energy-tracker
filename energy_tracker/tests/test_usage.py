@@ -41,7 +41,7 @@ def test_counter_reset_is_ignored():
 
 
 def test_half_hour_slots_split_on_settlement_boundaries():
-    slots = half_hour_slots(at(5, 50), at(7, 10))
+    slots = list(half_hour_slots(at(5, 50), at(7, 10)))
     assert slots == [
         (at(5, 50), at(6, 0)),
         (at(6, 0), at(6, 30)),
