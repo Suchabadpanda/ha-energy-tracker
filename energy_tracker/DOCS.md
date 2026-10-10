@@ -137,11 +137,12 @@ stored readings and reconnect on their own.
   used would have earned if it had been exported, at your export rate, whether it used the
   solar straight away or later from the battery. Solar is free to use, but using it gives
   up that payment, so this is what running the heat pump really costs you.
-- Beside it, **Heating** and **Hot water** tiles split the heat pump's cost. Hot water is
+- After the devices, a **split** tile divides the heat pump's cost into **Heating** and
+  **Hot water**. Hot water is
   taken as up to the heat pump's usual use on warm days (worked out under **Heat pump and
   the weather**); anything above that on a day is heating. Hot water takes more energy in
-  winter, so in cold months it is likely to be a little more than shown. The two tiles
-  appear once there are a few warm days to go on.
+  winter, so in cold months it is likely to be a little more than shown. The tile appears
+  once there are a few warm days to go on.
 
 ### Time windows
 

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.31.3
+
+- Cost by device: the heat pump, EV charger and rest of the house tiles come first, then
+  one split tile for the heat pump's heating and hot water.
+
 ## 0.31.2
 
 - Heating and Hot water are back under today's and the month's cost, as tiles beside the

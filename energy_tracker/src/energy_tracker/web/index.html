@@ -204,6 +204,10 @@
 .by-device { margin-top: 14px; }
 .by-device .group-title { margin-bottom: 8px; }
 .by-device .note { white-space: pre-line; }
+.tile.split { grid-column: span 2; }
+.tile.split > .label { margin-bottom: 4px; }
+.tile.split .halves { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.tile.split .halves > div + div { border-left: 1px solid var(--line); padding-left: 12px; }
 .section-marker { height: 1px; margin-bottom: -1px; }
 </style>
 </head>
@@ -1336,17 +1340,30 @@ function renderByDevice(boxId, split) {
     const lines = [part.kwh.toFixed(1) + " kWh, " + part.share_percent + "% of the devices' cost"];
     if (key === "heat_pump" && part.true_gbp != null) lines.push("True cost " + money(part.true_gbp));
     readings[key] = { value: part.gbp, note: lines.join("\n") };
-    // The heat pump's use split into heating and hot water, beside it.
-    if (key === "heat_pump" && part.heating) {
-      for (const [sub, label] of [["heating", "Heating"], ["hot_water", "Hot water"]]) {
-        const piece = part[sub];
-        tiles.push({ metric: sub, label: label, prefix: "£", color: colours.heat_pump });
-        readings[sub] = { value: piece.gbp, note: [piece.kwh.toFixed(1) + " kWh",
-          ...(piece.true_gbp != null ? ["True cost " + money(piece.true_gbp)] : [])].join("\n") };
-      }
-    }
   }
-  renderTiles(document.getElementById(boxId + "-tiles"), tiles, readings);
+  const row = document.getElementById(boxId + "-tiles");
+  renderTiles(row, tiles, readings);
+
+  // One more tile, after the devices: the heat pump split into heating and hot water.
+  const hp = split.parts.heat_pump;
+  if (hp?.heating) {
+    const tile = Object.assign(document.createElement("div"), { className: "tile tinted split" });
+    tile.style.setProperty("--c", colours.heat_pump);
+    tile.append(Object.assign(document.createElement("div"), { className: "label", textContent: names.heat_pump + " split" }));
+    const halves = Object.assign(document.createElement("div"), { className: "halves" });
+    for (const [sub, label] of [["heating", "Heating"], ["hot_water", "Hot water"]]) {
+      const piece = hp[sub];
+      const half = document.createElement("div");
+      half.append(
+        Object.assign(document.createElement("div"), { className: "label", textContent: label }),
+        Object.assign(document.createElement("div"), { className: "value", textContent: money(piece.gbp) }),
+        Object.assign(document.createElement("div"), { className: "note", textContent: piece.kwh.toFixed(1) + " kWh" +
+          (piece.true_gbp != null ? "\nTrue cost " + money(piece.true_gbp) : "") }));
+      halves.append(half);
+    }
+    tile.append(halves);
+    row.append(tile);
+  }
   const carried = document.getElementById(boxId + "-carried");
   const amount = split.carried_gbp ?? 0;
   const period = boxId === "cost-devices" ? "today" : "this month";
