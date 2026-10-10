@@ -857,3 +857,43 @@ def test_cost_today_and_this_month_are_shared_between_devices():
         assert sum(p["gbp"] for p in parts.values()) == pytest.approx(cost["import_gbp"], abs=0.02)
         assert parts["heat_pump"]["share_percent"] == pytest.approx(50, abs=2)
     assert checked or now - midnight < timedelta(minutes=10)
+
+
+def test_heat_pump_true_cost_and_hot_water_split(monkeypatch):
+    monkeypatch.setattr(api, "heat_pump_and_weather", lambda: {"warm_day_kwh": 0.5})
+    now = datetime.now(UTC).replace(second=0, microsecond=0)
+    midnight = api.local_midnight(now, api.local_timezone())
+    if now - midnight < timedelta(minutes=30):
+        pytest.skip("too soon after midnight for a day's figures")
+    tariff = {
+        "name": "Flat",
+        "effective_from": "2020-01-01",
+        "export_p_per_kwh": 10.0,
+        "standing_charge_p_per_day": 0.0,
+        "vat_percent": 0,
+        "import_bands": [{"start": "00:00", "end": "24:00", "p_per_kwh": 20.0}],
+    }
+    assert client.post("/api/tariffs", json=tariff).status_code == 200
+    rows, used, heat, imported, solar, exported = [], 100.0, 40.0, 70.0, 10.0, 1.0
+    when = midnight - timedelta(hours=1)
+    while when <= now:
+        rows += [
+            (when, "load_energy_total", used),
+            (when, "smart_load_energy_total", heat),
+            (when, "import_energy_total", imported),
+            (when, "export_energy_total", exported),
+            (when, "pv_energy_total", solar),
+        ]
+        used, heat, imported = used + 0.2, heat + 0.1, imported + 0.1
+        solar, exported = solar + 0.15, exported + 0.05  # 0.1 kWh of solar kept each step
+        when += timedelta(minutes=5)
+    api.database().insert_readings(rows)
+    api.clear_caches()
+    hp = client.get("/api/today").json()["by_device"]["parts"]["heat_pump"]
+    # Half the house's use, so half the solar it kept, valued at 10p a unit.
+    kept_kwh = (now - midnight) / timedelta(minutes=5) * 0.1
+    assert hp["solar_gbp"] == pytest.approx(kept_kwh / 2 * 0.10, rel=0.1)
+    assert hp["true_gbp"] == pytest.approx(hp["gbp"] + hp["solar_gbp"], abs=0.01)
+    assert hp["hot_water"]["kwh"] == pytest.approx(min(0.5, hp["kwh"]), abs=0.05)
+    assert hp["heating"]["kwh"] + hp["hot_water"]["kwh"] == pytest.approx(hp["kwh"], abs=0.1)
+    assert hp["heating"]["gbp"] + hp["hot_water"]["gbp"] == pytest.approx(hp["gbp"], abs=0.02)

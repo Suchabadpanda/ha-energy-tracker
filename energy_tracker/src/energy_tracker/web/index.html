@@ -203,6 +203,8 @@
   footer { color: var(--muted); font-size: 12px; margin: 26px 2px 8px; text-align: center; }
 .by-device { margin-top: 14px; }
 .by-device .group-title { margin-bottom: 8px; }
+.by-device .note { white-space: pre-line; }
+.by-device .heat-detail { margin-top: 12px; }
 .section-marker { height: 1px; margin-bottom: -1px; }
 </style>
 </head>
@@ -249,6 +251,10 @@
   <div class="by-device" id="cost-devices" hidden>
     <div class="group-title">Import cost by device</div>
     <div class="tiles" id="cost-devices-tiles"></div>
+    <div class="chart heat-detail" id="cost-devices-heat" hidden>
+      <div class="table-scroll"><table><thead></thead><tbody></tbody></table></div>
+      <div class="hint"></div>
+    </div>
   </div>
 
   <div class="section-head">
@@ -264,9 +270,16 @@
   <div class="by-device" id="month-devices" hidden>
     <div class="group-title">Import cost by device</div>
     <div class="tiles" id="month-devices-tiles"></div>
+    <div class="chart heat-detail" id="month-devices-heat" hidden>
+      <div class="table-scroll"><table><thead></thead><tbody></tbody></table></div>
+      <div class="hint"></div>
+    </div>
     <div class="hint">Each day's import cost is shared out by how much of that day's electricity each used,
       so solar and battery power are spread fairly across everything. The standing charge and export credit
-      belong to the house as a whole and are left out. See "Running costs by device" for earlier months.</div>
+      belong to the house as a whole and are left out. See "Running costs by device" for earlier months.
+      The heat pump's true cost adds what the solar it used would have earned if exported: solar is free to
+      use, but using it gives up that payment. Hot water takes more energy in winter (colder mains water, and
+      the heat pump works harder), so in cold months it is likely to be a little more than shown.</div>
   </div>
 
   <div class="filters">
@@ -1321,11 +1334,40 @@ function renderByDevice(boxId, split) {
   const names = { heat_pump: split.smart_load_label || "Heat pump", ev_charger: "EV charger", rest: "Rest of house" };
   const colours = { heat_pump: "var(--heatpump)", ev_charger: "var(--ev)", rest: "var(--house)" };
   const tiles = Object.keys(split.parts).map(key => ({ metric: key, label: names[key], prefix: "£", color: colours[key] }));
-  const readings = Object.fromEntries(Object.entries(split.parts).map(([key, part]) => [key, {
-    value: part.gbp,
-    note: part.kwh.toFixed(1) + " kWh, " + part.share_percent + "% of the import cost",
-  }]));
+  const readings = Object.fromEntries(Object.entries(split.parts).map(([key, part]) => {
+    const lines = [part.kwh.toFixed(1) + " kWh, " + part.share_percent + "% of the import cost"];
+    if (key === "heat_pump" && part.true_gbp != null) lines.push("True cost " + money(part.true_gbp));
+    return [key, { value: part.gbp, note: lines.join("\n") }];
+  }));
   renderTiles(document.getElementById(boxId + "-tiles"), tiles, readings);
+
+  // The heat pump in more detail: heating against hot water, and its true cost.
+  const hp = split.parts.heat_pump;
+  const detail = document.getElementById(boxId + "-heat");
+  detail.hidden = !hp || (hp.true_gbp == null && !hp.heating);
+  if (detail.hidden) return;
+  const withTrue = hp.true_gbp != null;
+  const cell = (text, cls = "num") => Object.assign(document.createElement("td"), { textContent: text, className: cls });
+  const head = document.createElement("tr");
+  head.append(...[names.heat_pump, "Used", "Import cost", ...(withTrue ? ["Solar it used", "True cost"] : [])]
+    .map((text, i) => Object.assign(document.createElement("th"), { textContent: text, className: i ? "num" : "" })));
+  const line = (label, row, solar, cls) => {
+    const tr = document.createElement("tr");
+    if (cls) tr.className = cls;
+    tr.append(cell(label, ""), cell(row.kwh.toFixed(1) + " kWh"), cell(money(row.gbp)),
+              ...(withTrue ? [cell(money(solar)), cell(money(row.true_gbp))] : []));
+    return tr;
+  };
+  const rows = hp.heating
+    ? [line("Heating", hp.heating, hp.heating.true_gbp - hp.heating.gbp),
+       line("Hot water", hp.hot_water, hp.hot_water.true_gbp - hp.hot_water.gbp)]
+    : [];
+  rows.push(line("Total", hp, hp.solar_gbp ?? 0, "year-row"));
+  detail.querySelector("thead").replaceChildren(head);
+  detail.querySelector("tbody").replaceChildren(...rows);
+  detail.querySelector(".hint").textContent = hp.heating
+    ? "Hot water is taken as up to " + hp.hot_water_per_day_kwh.toFixed(1) + " kWh a day, the heat pump's usual use on warm days; the rest is heating."
+    : "Heating and hot water are told apart once \"Heat pump and the weather\" has a few warm days to go on.";
 }
 
 function renderToday(today, month) {

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.30.0
+
+- The heat pump's cost, under today's and the month's cost, is split into heating and hot
+  water, and given a **true cost**: its import cost plus the export payment given up on the
+  solar it used.
+
 ## 0.29.0
 
 - Cost today and the month's cost show the import cost by device: the heat pump (or other

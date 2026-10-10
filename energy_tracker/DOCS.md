@@ -132,6 +132,16 @@ stored readings and reconnect on their own.
   It is shown when a smart load or an EV charger is fitted, adds up to the Import figure,
   and is worked out the same way as **Running costs by device** below. The standing charge
   and export credit are left out, as they belong to the house as a whole.
+- Below it, the **heat pump** has a table of its own:
+  - **Heating and hot water**: hot water is taken as up to the heat pump's usual use on
+    warm days (worked out under **Heat pump and the weather**); anything above that on a
+    day is heating. Hot water takes more energy in winter, so in cold months it is likely
+    to be a little more than shown. Until there are a few warm days to go on, only the
+    total is shown.
+  - **True cost**: the import cost plus what the solar it used would have earned if it had
+    been exported, at your export rate. Solar is free to use, but using it gives up that
+    payment, so this is what running the heat pump really costs you. Its share of the solar
+    is worked out the same way as its share of the import.
 
 ### Time windows
 
