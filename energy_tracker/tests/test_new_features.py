@@ -826,3 +826,34 @@ def test_old_figures_are_served_at_once_and_refreshed_in_the_background(monkeypa
     kept.clear()
     assert kept.cleared and kept.wake.is_set()
     assert kept.get(("k",), work) == 4
+
+
+def test_cost_today_and_this_month_are_shared_between_devices():
+    data = client.get("/api/today").json()
+    assert data["by_device"] is None  # nothing recorded
+    now = datetime.now(UTC).replace(second=0, microsecond=0)
+    midnight = api.local_midnight(now, api.local_timezone())
+    rows, used, heat, imported = [], 100.0, 40.0, 70.0
+    when = midnight - timedelta(hours=2)
+    while when <= now:
+        rows += [
+            (when, "load_energy_total", used),
+            (when, "smart_load_energy_total", heat),
+            (when, "import_energy_total", imported),
+            (when, "export_energy_total", 5.0),
+        ]
+        used, heat, imported = used + 0.2, heat + 0.1, imported + 0.2
+        when += timedelta(minutes=5)
+    api.database().insert_readings(rows)
+    api.clear_caches()
+    checked = 0
+    for body in (client.get("/api/today").json(), client.get("/api/month").json()):
+        split, cost = body["by_device"], body["cost"]
+        if cost is None or not cost["import_gbp"]:
+            continue  # just after midnight there is nothing yet
+        checked += 1
+        parts = split["parts"]
+        assert set(parts) == {"heat_pump", "rest"}  # no EV charger recorded
+        assert sum(p["gbp"] for p in parts.values()) == pytest.approx(cost["import_gbp"], abs=0.02)
+        assert parts["heat_pump"]["share_percent"] == pytest.approx(50, abs=2)
+    assert checked or now - midnight < timedelta(minutes=10)

@@ -201,6 +201,8 @@
   #notice { border: 1px solid var(--danger); border-radius: 10px; padding: 12px 14px;
             margin: 14px 0 0; font-size: 14px; line-height: 1.5; }
   footer { color: var(--muted); font-size: 12px; margin: 26px 2px 8px; text-align: center; }
+.by-device { margin-top: 14px; }
+.by-device .group-title { margin-bottom: 8px; }
 .section-marker { height: 1px; margin-bottom: -1px; }
 </style>
 </head>
@@ -244,6 +246,10 @@
   <h2>Cost today</h2>
   <div class="tiles" id="cost"></div>
   <div class="hint" id="cost-hint"></div>
+  <div class="by-device" id="cost-devices" hidden>
+    <div class="group-title">Import cost by device</div>
+    <div class="tiles" id="cost-devices-tiles"></div>
+  </div>
 
   <div class="section-head">
     <h2 id="month-title">Cost this month</h2>
@@ -255,6 +261,13 @@
   </div>
   <div class="tiles" id="month"></div>
   <div class="hint" id="month-hint"></div>
+  <div class="by-device" id="month-devices" hidden>
+    <div class="group-title">Import cost by device</div>
+    <div class="tiles" id="month-devices-tiles"></div>
+    <div class="hint">Each day's import cost is shared out by how much of that day's electricity each used,
+      so solar and battery power are spread fairly across everything. The standing charge and export credit
+      belong to the house as a whole and are left out. See "Running costs by device" for earlier months.</div>
+  </div>
 
   <div class="filters">
     <h2 id="flows-heading">Power Metrics Chart (kW)</h2>
@@ -1300,12 +1313,29 @@ function renderCost(tilesId, hintId, cost, finished = false) {
     : "";
 }
 
+// The import cost shared between the heat pump, the EV charger and the rest of the house.
+function renderByDevice(boxId, split) {
+  const box = document.getElementById(boxId);
+  box.hidden = !split;
+  if (!split) return;
+  const names = { heat_pump: split.smart_load_label || "Heat pump", ev_charger: "EV charger", rest: "Rest of house" };
+  const colours = { heat_pump: "var(--heatpump)", ev_charger: "var(--ev)", rest: "var(--house)" };
+  const tiles = Object.keys(split.parts).map(key => ({ metric: key, label: names[key], prefix: "£", color: colours[key] }));
+  const readings = Object.fromEntries(Object.entries(split.parts).map(([key, part]) => [key, {
+    value: part.gbp,
+    note: part.kwh.toFixed(1) + " kWh, " + part.share_percent + "% of the import cost",
+  }]));
+  renderTiles(document.getElementById(boxId + "-tiles"), tiles, readings);
+}
+
 function renderToday(today, month) {
   const energy = today?.energy;
   renderTiles(document.getElementById("devices"), installed(DEVICE_TILES), asReadings(energy));
   document.getElementById("devices-hint").textContent = energy ? coverageHint(energy) : "";
   renderCost("cost", "cost-hint", today?.cost);
   renderCost("month", "month-hint", month?.cost, month ? !month.is_current : false);
+  renderByDevice("cost-devices", today?.by_device);
+  renderByDevice("month-devices", month?.by_device);
   if (month) {
     document.getElementById("month-title").textContent = "Cost in " + month.month;
     if (!month.cost) document.getElementById("month-hint").textContent = "No readings for this month.";

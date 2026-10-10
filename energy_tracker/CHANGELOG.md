@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.29.0
+
+- Cost today and the month's cost show the import cost by device: the heat pump (or other
+  smart load), the EV charger and the rest of the house, with the energy each used and its
+  share. The three add up to the Import figure.
+
 ## 0.28.1
 
 - The **Sections** menu links to the user guide, the overview page and what's new, so

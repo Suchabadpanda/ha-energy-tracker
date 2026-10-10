@@ -122,7 +122,7 @@ async def lifespan(_: FastAPI):
         await asyncio.to_thread(thread.join, 10)
 
 
-app = FastAPI(title="Energy Tracker", version="0.28.1", lifespan=lifespan)
+app = FastAPI(title="Energy Tracker", version="0.29.0", lifespan=lifespan)
 # The page and its chart data are mostly text: sent compressed, they are a quarter the size.
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
@@ -262,6 +262,7 @@ def today() -> dict:
     # nothing was being collected at midnight itself.
     samples = counter_samples(DEVICE_COUNTERS + COST_COUNTERS, midnight - timedelta(days=1), 5)
     used = database().latest(["load_energy_today"], midnight).get("load_energy_today")
+    cost = cost_since(samples, midnight, now, local_timezone(), schedule())
 
     return {
         "energy": energy_by_device(
@@ -271,8 +272,54 @@ def today() -> dict:
             used[1] if used else None,
             settings().ev_on_smart_load,
         ),
-        "cost": cost_since(samples, midnight, now, local_timezone(), schedule()),
+        "cost": cost,
+        "by_device": cost_by_device(samples, midnight, now, cost),
     }
+
+
+def cost_by_device(
+    samples: dict[str, list],
+    start: datetime,
+    end: datetime,
+    cost: dict | None,
+    gap: timedelta | None = None,
+) -> dict | None:
+    """The period's import cost shared between the heat pump, the EV charger and the rest
+    of the house, by how much of each day's electricity each used.
+
+    Only worth showing where a smart load or an EV charger is fitted. The shares are scaled
+    to the import cost shown beside them, so they add up to it exactly.
+    """
+    if not cost or cost.get("import_gbp") is None:
+        return None
+    counters = {
+        name: Counter(samples.get(name, []), *([gap] if gap else [])) for name in devices.COUNTERS
+    }
+    if not counters[devices.LOAD] or not counters[devices.IMPORT]:
+        return None
+    if not counters[devices.CIRCUIT] and not counters[devices.EV]:
+        return None
+    days = devices.daily(
+        counters, start, end, local_timezone(), schedule(), settings().ev_on_smart_load
+    )
+    if not days:
+        return None
+    total = devices.total(list(days.values()))
+    worked_out = sum(total.get(f"{part}_gbp", 0.0) for part in ("heat_pump", "ev_charger", "rest"))
+    scale = cost["import_gbp"] / worked_out if worked_out > 0 else 0.0
+    parts = {}
+    for part in ("heat_pump", "ev_charger", "rest"):
+        if f"{part}_kwh" not in total:
+            continue
+        kwh, gbp = total[f"{part}_kwh"], total.get(f"{part}_gbp", 0.0) * scale
+        parts[part] = {
+            "kwh": round(kwh, 1),
+            "gbp": round(gbp, 2),
+            # What each unit it used cost on average, solar and battery included.
+            "p_per_kwh": round(gbp * 100 / kwh, 1) if kwh >= 0.1 else None,
+            "share_percent": round(gbp / cost["import_gbp"] * 100) if cost["import_gbp"] else 0,
+        }
+    return {"parts": parts, "smart_load_label": settings().smart_load_label}
 
 
 # --- Costs by month and by year ---------------------------------------------------------------
@@ -324,7 +371,7 @@ def month(
         raise HTTPException(status_code=404, detail="That month has not started yet")
 
     samples = counter_samples(
-        COST_COUNTERS,
+        COST_COUNTERS + DEVICE_COUNTERS,
         start - timedelta(days=1),
         HALF_HOURLY,
         following_month(start) + timedelta(days=1),
@@ -341,7 +388,15 @@ def month(
         "is_current": start == current,
         "previous": month_key(previous_month(start)) if start > earliest else None,
         "next": month_key(following_month(start)) if start < current else None,
-        "cost": cost_of_month(samples, start, now, schedule()),
+        "cost": (cost := cost_of_month(samples, start, now, schedule())),
+        # Shared out once every few minutes: it walks the whole month, and this is asked
+        # for every few seconds.
+        "by_device": _kept.get(
+            ("month_by_device", month_key(start), int(time.time() // 300)),
+            lambda: cost_by_device(
+                samples, start, min(now, following_month(start)), cost, HALF_HOURLY_GAP
+            ),
+        ),
     }
 
 

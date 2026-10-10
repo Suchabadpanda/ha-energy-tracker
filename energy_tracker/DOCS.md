@@ -127,6 +127,11 @@ stored readings and reconnect on their own.
   set VAT to 0. VAT is added to import and the standing charge, not to export.
 - "Saved by off-peak" is what the same import would have cost at the dearest rate, minus
   what it did cost. On half-hourly prices it is measured against each day's average price.
+- **Import cost by device**, under Cost today and the month's cost, shares the import cost
+  between the heat pump (or other smart load), the EV charger and the rest of the house.
+  It is shown when a smart load or an EV charger is fitted, adds up to the Import figure,
+  and is worked out the same way as **Running costs by device** below. The standing charge
+  and export credit are left out, as they belong to the house as a whole.
 
 ### Time windows
 
