@@ -897,3 +897,25 @@ def test_heat_pump_true_cost_and_hot_water_split(monkeypatch):
     assert hp["hot_water"]["kwh"] == pytest.approx(min(0.5, hp["kwh"]), abs=0.05)
     assert hp["heating"]["kwh"] + hp["hot_water"]["kwh"] == pytest.approx(hp["kwh"], abs=0.1)
     assert hp["heating"]["gbp"] + hp["hot_water"]["gbp"] == pytest.approx(hp["gbp"], abs=0.02)
+
+
+def test_device_figures_start_when_the_heat_pump_readings_do():
+    now = datetime.now(UTC).replace(minute=0, second=0, microsecond=0)
+    zone = api.local_timezone()
+    rows, used, heat, imported = [], 100.0, 40.0, 70.0
+    heat_from = api.local_midnight(now, zone) - timedelta(days=3)
+    when = heat_from - timedelta(days=10)
+    while when <= now:
+        rows += [(when, "load_energy_total", used), (when, "import_energy_total", imported)]
+        if when >= heat_from:
+            rows.append((when, "smart_load_energy_total", heat))
+            heat += 0.5
+        used, imported = used + 1.0, imported + 1.0
+        when += timedelta(hours=1)
+    api.database().insert_readings(rows)
+    api.clear_caches()
+    data = client.get("/api/devices").json()
+    assert data["has_data"] and data["from"] == heat_from.astimezone(zone).date().isoformat()
+    month = client.get("/api/month").json()["by_device"]
+    if month and heat_from.astimezone(zone).day > 1:
+        assert month["from"] and month["carried_gbp"] is None

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.31.6
+
+- Device figures now start from when every device counter was being read. Before, months
+  before the smart load sensor was switched on showed the heat pump as using nothing and
+  counted its use as house load.
+
 ## 0.31.5
 
 - Removed the "true cost" figures from the heat pump tiles, to keep cost by device simple.

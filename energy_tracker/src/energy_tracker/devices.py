@@ -44,6 +44,18 @@ WARM_UP = timedelta(days=1)
 PARTS = ("heat_pump", "ev_charger", "rest")
 
 
+def readings_start(counters: dict[str, Counter]) -> datetime | None:
+    """When every device counter that has readings at all has begun.
+
+    Before then a device would look as if it used nothing, and its use would be counted
+    as the house's, so device figures start here.
+    """
+    firsts = [
+        counters[name].first_time for name in (LOAD, IMPORT, CIRCUIT, EV) if counters.get(name)
+    ]
+    return max(firsts) if firsts else None
+
+
 def daily(
     counters: dict[str, Counter],
     start: datetime,

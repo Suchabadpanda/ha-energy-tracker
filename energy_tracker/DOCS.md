@@ -192,6 +192,11 @@ how much each used.
 - The standing charge and export income are left out. They belong to the house as a whole.
 - Without battery charge and discharge readings, each day's import cost is shared out by
   how much of that day's electricity each device used instead.
+- Device figures start from the first whole day every device counter was being read. If
+  the smart load sensor was switched on later than the others, earlier days would
+  otherwise show the heat pump as using nothing and count its use as the house's. History
+  from before then can only come from Home Assistant's long-term statistics (see **Older
+  history**).
 
 ## Heat pump and the weather
 

@@ -1365,7 +1365,10 @@ function renderByDevice(boxId, split) {
   const carried = document.getElementById(boxId + "-carried");
   const amount = split.carried_gbp ?? 0;
   const period = boxId === "cost-devices" ? "today" : "this month";
-  carried.textContent = !split.followed || Math.abs(amount) < 0.05 ? ""
+  carried.textContent = split.from
+    ? "From " + new Date(split.from + "T00:00").toLocaleDateString([], { day: "numeric", month: "long" }) +
+      ", when the device readings begin, so these do not add up to the whole month's import."
+    : !split.followed || Math.abs(amount) < 0.05 ? ""
     : amount > 0
       ? money(amount) + " of the import " + period + " is not counted against a device yet: it is still in the battery, or was lost charging it."
       : "Includes " + money(-amount) + " of electricity bought before " + period + ", used from the battery.";

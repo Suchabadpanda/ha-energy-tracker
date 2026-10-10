@@ -122,7 +122,7 @@ async def lifespan(_: FastAPI):
         await asyncio.to_thread(thread.join, 10)
 
 
-app = FastAPI(title="Energy Tracker", version="0.31.5", lifespan=lifespan)
+app = FastAPI(title="Energy Tracker", version="0.31.6", lifespan=lifespan)
 # The page and its chart data are mostly text: sent compressed, they are a quarter the size.
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
@@ -308,6 +308,14 @@ def cost_by_device(
         return None
     if not counters[devices.CIRCUIT] and not counters[devices.EV]:
         return None
+    # Only from when every device was being read; before that a device's use would be
+    # counted as the house's.
+    begun = devices.readings_start(counters)
+    partial = None
+    if begun and begun > start:
+        if begun >= end:
+            return None
+        start, partial = begun, begun.astimezone(local_timezone()).date()
     days = devices.daily(
         counters, start, end, local_timezone(), schedule(), settings().ev_on_smart_load
     )
@@ -317,8 +325,11 @@ def cost_by_device(
     followed = all(row.get("followed") for row in days.values())
     # Followed through the battery, the parts are what the energy each used cost, which
     # differs from the period's import by energy still in the battery or bought before.
-    # Shared by day, they are scaled to add up to the import exactly.
-    scale = 1.0 if followed else (cost["import_gbp"] / worked_out if worked_out > 0 else 0.0)
+    # Shared by day, they are scaled to add up to the import exactly (unless they cover
+    # only part of the period, when they are left as they are).
+    scale = (
+        1.0 if followed or partial else (cost["import_gbp"] / worked_out if worked_out > 0 else 0.0)
+    )
     valued = any(f"{part}_solar_gbp" in row for row in days.values() for part in devices.PARTS)
 
     parts = {}
@@ -379,7 +390,9 @@ def cost_by_device(
         "followed": followed,
         # Import paid for in the period but not yet used (still in the battery, or lost
         # charging it); below zero when the period used energy bought before it.
-        "carried_gbp": round(cost["import_gbp"] - worked_out * scale, 2),
+        "carried_gbp": None if partial else round(cost["import_gbp"] - worked_out * scale, 2),
+        # Set when the device readings began part-way through the period.
+        "from": partial,
     }
 
 
@@ -1153,6 +1166,13 @@ def device_costs() -> dict:
         start = max(firsts).astimezone(zone)
         samples = counter_samples(devices.ALL_COUNTERS, start - timedelta(days=1), HALF_HOURLY, now)
         counters = {name: Counter(series, HALF_HOURLY_GAP) for name, series in samples.items()}
+        # From the first whole day every device counter was being read.
+        begun = devices.readings_start(counters)
+        if begun and begun > start:
+            midnight = local_midnight(begun, zone)
+            start = (midnight if midnight == begun else midnight + timedelta(days=1)).astimezone(
+                zone
+            )
         days = devices.daily(counters, start, now, zone, schedule(), settings().ev_on_smart_load)
         today_local = now.astimezone(zone).date()
         if days:
