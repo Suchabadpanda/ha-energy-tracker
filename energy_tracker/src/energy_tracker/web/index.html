@@ -275,9 +275,7 @@
       grid power at that half hour's price, and battery power at what charging the battery cost. So a car
       charged overnight costs the night rate, and the house run from the battery by day carries the cost of
       charging it. The standing charge and export credit belong to the house as a whole and are left out. See
-      "Running costs by device" for earlier months. The heat pump's true cost adds what the solar it used
-      (straight away or through the battery) would have earned if exported: solar is free to use, but using
-      it gives up that payment. Its heating and hot water are told apart once "Heat pump and the weather" has
+      "Running costs by device" for earlier months. The heat pump's heating and hot water are told apart once "Heat pump and the weather" has
       a few warm days to go on: up to its usual warm-day use each day counts as hot water, and the rest as
       heating. Hot water takes more energy in winter, so in cold months it is likely to be a little more
       than shown.</div>
@@ -1340,7 +1338,6 @@ function renderByDevice(boxId, split) {
     const part = split.parts[key];
     tiles.push({ metric: key, label: names[key], prefix: "£", color: colours[key] });
     const lines = [part.kwh.toFixed(1) + " kWh, " + part.share_percent + "% of the devices' cost"];
-    if (key === "heat_pump" && part.true_gbp != null) lines.push("True cost " + money(part.true_gbp));
     readings[key] = { value: part.gbp, note: lines.join("\n") };
   }
   const row = document.getElementById(boxId + "-tiles");
@@ -1359,8 +1356,7 @@ function renderByDevice(boxId, split) {
       half.append(
         Object.assign(document.createElement("div"), { className: "label", textContent: label }),
         Object.assign(document.createElement("div"), { className: "value", textContent: money(piece.gbp) }),
-        Object.assign(document.createElement("div"), { className: "note", textContent: piece.kwh.toFixed(1) + " kWh" +
-          (piece.true_gbp != null ? "\nTrue cost " + money(piece.true_gbp) : "") }));
+        Object.assign(document.createElement("div"), { className: "note", textContent: piece.kwh.toFixed(1) + " kWh" }));
       halves.append(half);
     }
     tile.append(halves);

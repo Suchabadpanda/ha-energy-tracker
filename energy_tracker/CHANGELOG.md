@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.31.5
+
+- Removed the "true cost" figures from the heat pump tiles, to keep cost by device simple.
+
 ## 0.31.4
 
 - "Rest of house" is now called "House load" throughout.

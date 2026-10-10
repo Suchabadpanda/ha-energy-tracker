@@ -134,10 +134,6 @@ stored readings and reconnect on their own.
   device** below, following the energy through the battery. A line underneath says how much
   of the period's import is still in the battery, or how much was bought before it. The
   standing charge and export credit are left out, as they belong to the house as a whole.
-- The heat pump's tile also shows its **true cost**: the import cost plus what the solar it
-  used would have earned if it had been exported, at your export rate, whether it used the
-  solar straight away or later from the battery. Solar is free to use, but using it gives
-  up that payment, so this is what running the heat pump really costs you.
 - After the devices, a **split** tile divides the heat pump's cost into **Heating** and
   **Hot water**. Hot water is
   taken as up to the heat pump's usual use on warm days (worked out under **Heat pump and
