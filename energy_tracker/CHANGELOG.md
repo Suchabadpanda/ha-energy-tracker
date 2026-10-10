@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.31.4
+
+- "Rest of house" is now called "House load" throughout.
+- Cost by device runs house load, EV charger, heat pump, then the heat pump split.
+
 ## 0.31.3
 
 - Cost by device: the heat pump, EV charger and rest of the house tiles come first, then

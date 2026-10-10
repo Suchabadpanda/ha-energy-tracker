@@ -42,7 +42,7 @@ background tab.
 ## Colours
 
 Energy colours follow Sigenergy's own app and mean the same everywhere on the page: yellow
-for solar, purple for consumption (and the rest of the house), lilac-blue for the grid and
+for solar, purple for consumption (and the house load), lilac-blue for the grid and
 import, cyan for the battery, green for export, orange for the heat pump and blue for the
 EV charger. Each tile has a stripe in the colour of what it measures. Green and red on
 their own mean cheaper or better, and dearer or a problem.
@@ -127,8 +127,9 @@ stored readings and reconnect on their own.
   set VAT to 0. VAT is added to import and the standing charge, not to export.
 - "Saved by off-peak" is what the same import would have cost at the dearest rate, minus
   what it did cost. On half-hourly prices it is measured against each day's average price.
-- **Cost by device**, under Cost today and the month's cost, gives what the heat pump (or
-  other smart load), the EV charger and the rest of the house cost. It is shown when a smart
+- **Cost by device**, under Cost today and the month's cost, gives what the house load
+  (everything except the heat pump and EV charger), the EV charger and the heat pump (or
+  other smart load) cost, in that order. It is shown when a smart
   load or an EV charger is fitted, and worked out the same way as **Running costs by
   device** below, following the energy through the battery. A line underneath says how much
   of the period's import is still in the battery, or how much was bought before it. The

@@ -952,7 +952,7 @@ const NOW_TILES = [
 ];
 const USAGE_TILES = [
   { metric: "load_power", label: "Total consumption", unit: "kW", color: "var(--load)" },
-  { metric: "rest_power", label: "Rest of house", unit: "kW", needs: "any", color: "var(--house)" },
+  { metric: "rest_power", label: "House load", unit: "kW", needs: "any", color: "var(--house)" },
   { metric: "heat_pump_power", label: "Heat pump", unit: "kW", needs: "smart_load", color: "var(--heatpump)" },
   { metric: "ev_charger_power", label: "EV charger", unit: "kW", needs: "ev_charger", color: "var(--ev)" },
 ];
@@ -965,7 +965,7 @@ const TODAY_TILES = [
 const DEVICE_TILES = [
   { metric: "heat_pump_kwh", label: "Heat pump", unit: "kWh", digits: 1, needs: "smart_load", color: "var(--heatpump)" },
   { metric: "ev_charger_kwh", label: "EV charger", unit: "kWh", digits: 1, needs: "ev_charger", color: "var(--ev)" },
-  { metric: "rest_kwh", label: "Rest of house", unit: "kWh", digits: 1, color: "var(--house)" },
+  { metric: "rest_kwh", label: "House load", unit: "kWh", digits: 1, color: "var(--house)" },
 ];
 const COST_TILES = [
   { metric: "net_gbp", label: "Net cost so far", prefix: "£" },
@@ -1009,7 +1009,7 @@ function seriesLegend(el, chart, items, redraw) {
 }
 // Bottom layer first.
 const USAGE_LAYERS = [
-  { metric: "rest_power", color: "var(--house)", label: "Rest of house" },
+  { metric: "rest_power", color: "var(--house)", label: "House load" },
   { metric: "heat_pump_power", color: "var(--heatpump)", label: "Heat pump", needs: "smart_load" },
   { metric: "ev_charger_power", color: "var(--ev)", label: "EV charger", needs: "ev_charger" },
 ];
@@ -1332,10 +1332,12 @@ function renderByDevice(boxId, split) {
   const box = document.getElementById(boxId);
   box.hidden = !split;
   if (!split) return;
-  const names = { heat_pump: split.smart_load_label || "Heat pump", ev_charger: "EV charger", rest: "Rest of house" };
+  const names = { heat_pump: split.smart_load_label || "Heat pump", ev_charger: "EV charger", rest: "House load" };
   const colours = { heat_pump: "var(--heatpump)", ev_charger: "var(--ev)", rest: "var(--house)" };
   const tiles = [], readings = {};
-  for (const [key, part] of Object.entries(split.parts)) {
+  // House load first, then the EV charger, then the heat pump (and its split, after).
+  for (const key of ["rest", "ev_charger", "heat_pump"].filter(k => split.parts[k])) {
+    const part = split.parts[key];
     tiles.push({ metric: key, label: names[key], prefix: "£", color: colours[key] });
     const lines = [part.kwh.toFixed(1) + " kWh, " + part.share_percent + "% of the devices' cost"];
     if (key === "heat_pump" && part.true_gbp != null) lines.push("True cost " + money(part.true_gbp));
@@ -3037,7 +3039,7 @@ function renderDeviceCosts(data) {
   const parts = [
     ...(data.heat_pump ? [["heat_pump", data.smart_load_label]] : []),
     ...(data.ev_charger ? [["ev_charger", "EV charger"]] : []),
-    ["rest", "Rest of house"],
+    ["rest", "House load"],
   ];
   const th = (text, className) => Object.assign(document.createElement("th"), { textContent: text, className: className ?? "" });
   const head = document.createElement("tr");
