@@ -1,10 +1,15 @@
 # Changelog
 
+## 0.32.4
+
+- The note shown when a tariff has no VAT now just says so, without suggesting 5%: VAT on
+  electricity can be 0%.
+
 ## 0.32.3
 
 - The cost tiles have coloured stripes: net cost, import, export credit, standing charge
   and saved by off-peak.
-- When a tariff has no VAT set, the cost sections say so, in case its prices are before VAT.
+- When a tariff has no VAT set, the cost sections say so.
 
 ## 0.32.2
 

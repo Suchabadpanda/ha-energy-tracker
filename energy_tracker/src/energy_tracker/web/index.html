@@ -1322,8 +1322,7 @@ function renderCost(tilesId, hintId, cost, finished = false) {
   document.getElementById(hintId).textContent = cost
     ? [cost.tariff + ".",
        cost.vat_percent ? "Costs include " + cost.vat_percent + "% VAT; prices shown are before VAT."
-         : "No VAT is being added, so the prices are taken as already including it. If the rates under " +
-           "Tariff rates are before VAT, set VAT to 5% there.",
+         : "No VAT is added on this tariff (set to 0% under Tariff rates).",
        cost.standing_charge_gbp ? "" : "Standing charge not set: add it under Tariff rates.",
        coverageHint(cost)].filter(Boolean).join(" ")
     : "";
