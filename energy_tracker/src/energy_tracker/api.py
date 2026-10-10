@@ -122,7 +122,7 @@ async def lifespan(_: FastAPI):
         await asyncio.to_thread(thread.join, 10)
 
 
-app = FastAPI(title="Energy Tracker", version="0.32.0", lifespan=lifespan)
+app = FastAPI(title="Energy Tracker", version="0.32.1", lifespan=lifespan)
 # The page and its chart data are mostly text: sent compressed, they are a quarter the size.
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
@@ -321,7 +321,11 @@ def cost_by_device(
     )
     if not days:
         return None
-    worked_out = sum(row.get(f"{part}_gbp", 0.0) for row in days.values() for part in devices.PARTS)
+    worked_out = sum(
+        row.get(f"{part}_gbp", 0.0)
+        for row in days.values()
+        for part in (*devices.PARTS, "battery_export")
+    )
     followed = all(row.get("followed") for row in days.values())
     # Followed through the battery, the parts are what the energy each used cost, which
     # differs from the period's import by energy still in the battery or bought before.
@@ -347,6 +351,19 @@ def cost_by_device(
             "true_gbp": round(gbp + solar, 2) if valued else None,
             "solar_gbp": round(solar, 2) if valued else None,
         }
+
+    # Electricity stored in the battery and sold back to the grid: no device's cost.
+    sold_kwh = sum(row.get("battery_export_kwh", 0.0) for row in days.values())
+    sold_gbp = sum(row.get("battery_export_gbp", 0.0) for row in days.values()) * scale
+    battery_export = (
+        {
+            "kwh": round(sold_kwh, 1),
+            "gbp": round(sold_gbp, 2),
+            "share_percent": round(sold_gbp / (worked_out * scale) * 100) if worked_out > 0 else 0,
+        }
+        if sold_kwh >= 0.05
+        else None
+    )
 
     heat_pump = parts.get("heat_pump")
     hot_water_per_day = None
@@ -386,6 +403,7 @@ def cost_by_device(
         heat_pump["hot_water_per_day_kwh"] = hot_water_per_day
     return {
         "parts": parts,
+        "battery_export": battery_export,
         "smart_load_label": settings().smart_load_label,
         "followed": followed,
         # Import paid for in the period but not yet used (still in the battery, or lost
@@ -1182,6 +1200,10 @@ def device_costs() -> dict:
                 "from": min(days),
                 "heat_pump": bool(counters[devices.CIRCUIT] or counters[devices.HEAT_PUMP]),
                 "ev_charger": bool(counters[devices.EV]),
+                # Electricity stored in the battery and sold back to the grid.
+                "battery_export": any(
+                    row.get("battery_export_kwh", 0.0) >= 0.05 for row in days.values()
+                ),
                 "today": devices.total([days[today_local]]) if today_local in days else None,
                 **devices.by_month_and_year(days),
             }

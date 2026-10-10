@@ -129,3 +129,19 @@ def test_the_heat_pump_meter_option_adds_its_sensor():
     added = {m.name: m for m in load_metrics(heat_pump_entity="sensor.heat_pump_energy")}
     assert added[devices.HEAT_PUMP].entity == "sensor.heat_pump_energy"
     assert added[devices.HEAT_PUMP].kind == "energy"
+
+
+def test_battery_energy_sold_back_to_the_grid_is_costed_apart():
+    def export_event(hour):
+        if hour < 6:  # 12 half hours: the battery is filled from the grid, 1 kWh each
+            return {"import": 1.0, "charge": 1.0}
+        if 17 <= hour < 18:  # 2 half hours: an export event empties it to the grid
+            return {"discharge": 6.0, "export": 6.0}
+        return {}
+
+    day = devices.daily(counters_for(export_event), DAY, DAY + timedelta(days=1), LONDON, RATES)[
+        date(2026, 1, 12)
+    ]
+    assert day["battery_export_kwh"] == pytest.approx(12)
+    assert day["battery_export_gbp"] == pytest.approx(12 * 0.07)  # what storing it cost
+    assert day["import_gbp"] == pytest.approx(12 * 0.07)

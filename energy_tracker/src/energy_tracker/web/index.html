@@ -274,7 +274,9 @@
     <div class="hint">Each device pays for the electricity that actually supplied it, half hour by half hour:
       grid power at that half hour's price, and battery power at what charging the battery cost. So a car
       charged overnight costs the night rate, and the house run from the battery by day carries the cost of
-      charging it. The standing charge and export credit belong to the house as a whole and are left out. See
+      charging it. Battery export is electricity stored in the battery and later sold back to the grid: what
+      it cost to store is no device's, and the payment for it is in Export credit. The standing charge and
+      export credit belong to the house as a whole and are left out. See
       "Running costs by device" for earlier months. The heat pump's heating and hot water are told apart once "Heat pump and the weather" has
       a few warm days to go on: up to its usual warm-day use each day counts as hot water, and the rest as
       heating. Hot water takes more energy in winter, so in cold months it is likely to be a little more
@@ -1337,7 +1339,7 @@ function renderByDevice(boxId, split) {
   for (const key of ["rest", "ev_charger", "heat_pump"].filter(k => split.parts[k])) {
     const part = split.parts[key];
     tiles.push({ metric: key, label: names[key], prefix: "£", color: colours[key] });
-    const lines = [part.kwh.toFixed(1) + " kWh, " + part.share_percent + "% of the devices' cost"];
+    const lines = [part.kwh.toFixed(1) + " kWh, " + part.share_percent + "% of the total"];
     readings[key] = { value: part.gbp, note: lines.join("\n") };
   }
   const row = document.getElementById(boxId + "-tiles");
@@ -1360,6 +1362,20 @@ function renderByDevice(boxId, split) {
       halves.append(half);
     }
     tile.append(halves);
+    row.append(tile);
+  }
+  // Electricity stored in the battery and sold back to the grid: no device used it.
+  const sold = split.battery_export;
+  if (sold) {
+    const tile = Object.assign(document.createElement("div"), { className: "tile tinted",
+      title: "Electricity stored in the battery, then sold back to the grid (in an export event, say). " +
+             "What it cost to store it is not any device's; the payment for it is in Export credit." });
+    tile.style.setProperty("--c", "var(--battery)");
+    tile.append(
+      Object.assign(document.createElement("div"), { className: "label", textContent: "Battery export" }),
+      Object.assign(document.createElement("div"), { className: "value", textContent: money(sold.gbp) }),
+      Object.assign(document.createElement("div"), { className: "note",
+        textContent: sold.kwh.toFixed(1) + " kWh sold from the battery, " + sold.share_percent + "% of the total" }));
     row.append(tile);
   }
   const carried = document.getElementById(boxId + "-carried");
@@ -3036,9 +3052,10 @@ function renderDeviceCosts(data) {
   section.hidden = !any;
   if (!any) return;
   const parts = [
-    ...(data.heat_pump ? [["heat_pump", data.smart_load_label]] : []),
-    ...(data.ev_charger ? [["ev_charger", "EV charger"]] : []),
     ["rest", "House load"],
+    ...(data.ev_charger ? [["ev_charger", "EV charger"]] : []),
+    ...(data.heat_pump ? [["heat_pump", data.smart_load_label]] : []),
+    ...(data.battery_export ? [["battery_export", "Battery export"]] : []),
   ];
   const th = (text, className) => Object.assign(document.createElement("th"), { textContent: text, className: className ?? "" });
   const head = document.createElement("tr");

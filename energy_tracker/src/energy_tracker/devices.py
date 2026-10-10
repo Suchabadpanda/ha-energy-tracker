@@ -10,6 +10,9 @@ it. Solar costs nothing to use, but using it gives up the export payment; the "t
 counts it at the export rate, for solar used straight away and for solar stored in the
 battery alike.
 
+Electricity stored in the battery and later sold back to the grid (during an export event,
+say) is no device's: its cost is given separately as "battery export".
+
 Without battery readings, each day's import cost is shared out by how much of that day's
 electricity each device used instead.
 
@@ -191,7 +194,8 @@ def _followed(
 
         cheap = tariff.cheap_rate(local) / 100
         battery_cost, battery_cost_true = battery.take(battery_used, cheap)
-        battery.take(battery_sold, cheap)
+        # Battery energy sold back to the grid: what it cost to store is no device's cost.
+        sold_cost, _ = battery.take(battery_sold, cheap)
         battery.put(grid_stored, price, price)
         battery.put(sun_stored, 0.0, export_price)
 
@@ -211,6 +215,8 @@ def _followed(
         row = days.setdefault(local.date(), {"total_kwh": 0.0, "import_gbp": 0.0, "followed": True})
         row["total_kwh"] += total
         row["import_gbp"] += bought * price
+        row["battery_export_kwh"] = row.get("battery_export_kwh", 0.0) + battery_sold
+        row["battery_export_gbp"] = row.get("battery_export_gbp", 0.0) + sold_cost
         # Share the half hour's supply cost by use. Readings rarely balance exactly, so
         # this goes by shares of the house's use rather than kWh for kWh.
         for name, kwh in parts.items():

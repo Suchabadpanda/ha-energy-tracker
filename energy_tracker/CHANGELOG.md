@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.32.1
+
+- New **Battery export** in cost by device and Running costs by device: what it cost to
+  store electricity that was later sold back to the grid from the battery. Before, that
+  cost was counted against nothing, so the devices fell well short of the import cost in
+  months with export events.
+- Cost by device percentages are now of the total, battery export included.
+- Running costs by device lists house load, EV charger, heat pump, then battery export, in
+  the same order as the tiles.
+
 ## 0.32.0
 
 - New option `heat_pump_energy_entity`: the heat pump's own energy meter (such as a

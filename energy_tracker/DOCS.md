@@ -186,8 +186,11 @@ So a car charged overnight costs the night rate, and the house run from the batt
 the day carries the cost of charging it overnight. Within each half hour, devices share by
 how much each used.
 
-- The devices add up to the import cost, give or take energy still in the battery at the
-  end of the period, or bought before it and used from the battery.
+- **Battery export**: electricity stored in the battery and later sold back to the grid,
+  during an export event say, is no device's. What it cost to store is shown on its own,
+  as Battery export; the payment for it is in Export credit.
+- The devices and battery export add up to the import cost, give or take energy still in
+  the battery at the end of the period, or bought before it and used from the battery.
 - Export: solar is exported before anything is stored, and the battery is charged from
   solar before the grid.
 - The standing charge and export income are left out. They belong to the house as a whole.
