@@ -30,7 +30,9 @@ EV = "ev_charger_energy_total"
 IMPORT = "import_energy_total"
 SOLAR = "pv_energy_total"
 EXPORT = "export_energy_total"
-COUNTERS = [LOAD, CIRCUIT, EV, IMPORT]
+# The heat pump's own meter, if one is set up: preferred to the smart load circuit.
+HEAT_PUMP = "heat_pump_energy_total"
+COUNTERS = [LOAD, CIRCUIT, EV, IMPORT, HEAT_PUMP]
 # Optional: with these, the solar each device used is valued at the export rate.
 SOLAR_COUNTERS = [SOLAR, EXPORT]
 CHARGE = "battery_charge_energy_total"
@@ -51,7 +53,9 @@ def readings_start(counters: dict[str, Counter]) -> datetime | None:
     as the house's, so device figures start here.
     """
     firsts = [
-        counters[name].first_time for name in (LOAD, IMPORT, CIRCUIT, EV) if counters.get(name)
+        counters[name].first_time
+        for name in (LOAD, IMPORT, HEAT_PUMP if counters.get(HEAT_PUMP) else CIRCUIT, EV)
+        if counters.get(name)
     ]
     return max(firsts) if firsts else None
 
@@ -77,11 +81,23 @@ def daily(
     return _shared_by_day(counters, start, end, timezone, schedule, ev_on_smart_load)
 
 
-def _split(load: float, circuit: float, ev: float, has: tuple, ev_on_smart_load: bool):
-    """kWh used by the heat pump, the EV charger and the rest of the house."""
+def _split(
+    load: float,
+    circuit: float,
+    ev: float,
+    has: tuple,
+    ev_on_smart_load: bool,
+    meter: float | None = None,
+):
+    """kWh used by the heat pump, the EV charger and the rest of the house.
+
+    `meter` is the heat pump's own meter reading, if it has one; the circuit is then not
+    needed."""
     has_circuit, has_ev = has
     ev_kwh, smart_kwh = ev, circuit
-    if has_circuit and has_ev and ev_on_smart_load:
+    if meter is not None:
+        smart_kwh, has_circuit = meter, True
+    elif has_circuit and has_ev and ev_on_smart_load:
         ev_kwh = min(ev_kwh, smart_kwh)  # the charger cannot use more than its circuit
         smart_kwh -= ev_kwh
     total = max(load, smart_kwh + ev_kwh)
@@ -140,7 +156,7 @@ def _followed(
     ev_on_smart_load: bool,
 ) -> dict[date, dict]:
     """Costs following the energy through the battery, half hour by half hour."""
-    load, circuit, ev, imports = (counters.get(name) for name in COUNTERS)
+    load, circuit, ev, imports, meter = (counters.get(name) for name in COUNTERS)
     solar, exports = (counters[name] for name in SOLAR_COUNTERS)
     charge, discharge = (counters[name] for name in BATTERY_COUNTERS)
     has = (bool(circuit), bool(ev))
@@ -190,6 +206,7 @@ def _followed(
             _kwh(ev, piece_start, piece_end) if ev else 0.0,
             has,
             ev_on_smart_load,
+            _kwh(meter, piece_start, piece_end) if meter else None,
         )
         row = days.setdefault(local.date(), {"total_kwh": 0.0, "import_gbp": 0.0, "followed": True})
         row["total_kwh"] += total
@@ -215,7 +232,7 @@ def _shared_by_day(
     ev_on_smart_load: bool,
 ) -> dict[date, dict]:
     """Without battery readings: each day's import cost shared by each device's use."""
-    load, circuit, ev, imports = (counters.get(name) for name in COUNTERS)
+    load, circuit, ev, imports, meter = (counters.get(name) for name in COUNTERS)
     solar, exports = (counters.get(name) for name in SOLAR_COUNTERS)
     valued = bool(solar) and bool(exports)
     raw: dict[date, dict] = {}
@@ -223,28 +240,35 @@ def _shared_by_day(
         local = piece_start.astimezone(timezone)
         day = raw.setdefault(
             local.date(),
-            {"load": 0.0, "circuit": 0.0, "ev": 0.0, "pence": 0.0, "solar": 0.0, "export": 0.0},
+            {
+                "load": 0.0,
+                "circuit": 0.0,
+                "ev": 0.0,
+                "meter": 0.0,
+                "pence": 0.0,
+                "solar": 0.0,
+                "export": 0.0,
+            },
         )
         if valued:
-            day["solar"] += solar.between(piece_start, piece_end)
-            day["export"] += exports.between(piece_start, piece_end)
-        day["load"] += load.between(piece_start, piece_end)
-        if circuit:
-            day["circuit"] += circuit.between(piece_start, piece_end)
-        if ev:
-            day["ev"] += ev.between(piece_start, piece_end)
-        imported = imports.between(piece_start, piece_end)
+            day["solar"] += _kwh(solar, piece_start, piece_end)
+            day["export"] += _kwh(exports, piece_start, piece_end)
+        for key, counter in (("load", load), ("circuit", circuit), ("ev", ev), ("meter", meter)):
+            if counter:
+                day[key] += _kwh(counter, piece_start, piece_end)
+        imported = _kwh(imports, piece_start, piece_end)
         day["pence"] += imported * schedule.on(local.date()).import_price(local)
 
     days: dict[date, dict] = {}
     for when, day in raw.items():
-        ev_kwh = day["ev"]
-        smart_kwh = day["circuit"]
-        if circuit and ev and ev_on_smart_load:
-            ev_kwh = min(ev_kwh, smart_kwh)  # the charger cannot use more than its circuit
-            smart_kwh -= ev_kwh
-        total = max(day["load"], smart_kwh + ev_kwh)
-        rest_kwh = total - smart_kwh - ev_kwh
+        total, parts = _split(
+            day["load"],
+            day["circuit"],
+            day["ev"],
+            (bool(circuit), bool(ev)),
+            ev_on_smart_load,
+            day["meter"] if meter else None,
+        )
         row: dict = {"total_kwh": total, "import_gbp": day["pence"] / 100}
         # Solar the house kept (used straight away or stored), at what exporting it would
         # have paid. A battery sending grid power back out can make export exceed solar.
@@ -253,17 +277,12 @@ def _shared_by_day(
             kept = max(0.0, day["solar"] - day["export"])
             solar_value = kept * schedule.on(when).export_p_per_kwh / 100
             row.update(solar_used_kwh=kept, solar_value_gbp=solar_value)
-        for name, kwh, present in (
-            ("heat_pump", smart_kwh, bool(circuit)),
-            ("ev_charger", ev_kwh, bool(ev)),
-            ("rest", rest_kwh, True),
-        ):
-            if present:
-                share = kwh / total if total > 0 else 0.0
-                row[f"{name}_kwh"] = kwh
-                row[f"{name}_gbp"] = day["pence"] / 100 * share
-                if valued:
-                    row[f"{name}_solar_gbp"] = solar_value * share
+        for name, kwh in parts.items():
+            share = kwh / total if total > 0 else 0.0
+            row[f"{name}_kwh"] = kwh
+            row[f"{name}_gbp"] = day["pence"] / 100 * share
+            if valued:
+                row[f"{name}_solar_gbp"] = solar_value * share
         days[when] = row
     return days
 

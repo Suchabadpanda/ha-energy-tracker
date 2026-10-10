@@ -15,7 +15,8 @@ CIRCUIT = "smart_load_energy_total"  # heat pump + EV charger circuit
 EV = "ev_charger_energy_total"
 IMPORT = "import_energy_total"
 EXPORT = "export_energy_total"
-DEVICE_COUNTERS = [LOAD, CIRCUIT, EV]
+HEAT_PUMP = "heat_pump_energy_total"  # the heat pump's own meter, if set up
+DEVICE_COUNTERS = [LOAD, CIRCUIT, EV, HEAT_PUMP]
 COST_COUNTERS = [IMPORT, EXPORT]
 
 
@@ -40,7 +41,9 @@ def energy_by_device(
     across periods when nothing was collected, so it is preferred for the total when the
     whole day is being reported.
     """
-    load, circuit, ev = (Counter(samples.get(name, [])) for name in DEVICE_COUNTERS)
+    load, circuit, ev, meter = (Counter(samples.get(name, [])) for name in DEVICE_COUNTERS)
+    if meter:
+        circuit = meter  # the heat pump's own meter: only the heat pump, no EV charger
     midnight = local_midnight(now, timezone)
     present = [c for c in (load, circuit, ev) if c]
     start = window_start(present, midnight) if load else None
@@ -55,7 +58,7 @@ def energy_by_device(
     ev_kwh = ev.between(start, now) if ev else None
 
     smart_load_kwh, measured = circuit_kwh, (circuit_kwh or 0.0)
-    if circuit and ev and ev_on_smart_load:
+    if circuit and ev and ev_on_smart_load and not meter:
         ev_kwh = min(ev_kwh, circuit_kwh)  # the charger cannot use more than its circuit
         smart_load_kwh = circuit_kwh - ev_kwh
     elif ev:

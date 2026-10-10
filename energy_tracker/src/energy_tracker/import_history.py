@@ -285,7 +285,11 @@ def run(
     if not settings.collecting:
         raise RuntimeError("No Home Assistant connection is configured")
     timezone = settings.timezone
-    counters = [m for m in load_metrics() if m.kind == "energy" and m.name.endswith("_total")]
+    counters = [
+        m
+        for m in load_metrics(heat_pump_entity=settings.heat_pump_energy_entity)
+        if m.kind == "energy" and m.name.endswith("_total")
+    ]
     metric_by_entity = {m.entity: m.name for m in counters}
 
     result = asyncio.run(

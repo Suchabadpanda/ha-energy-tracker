@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.32.0
+
+- New option `heat_pump_energy_entity`: the heat pump's own energy meter (such as a
+  Samsung heat pump's, through SmartThings). The heat pump's use is then taken from it
+  rather than the smart load circuit, everywhere device figures appear, and **Import older
+  history** brings in its past readings from Home Assistant.
+
 ## 0.31.6
 
 - Device figures now start from when every device counter was being read. Before, months

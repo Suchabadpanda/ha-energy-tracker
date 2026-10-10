@@ -42,8 +42,14 @@ def metrics_file() -> Path:
     return BUNDLED_METRICS_FILE
 
 
-def load_metrics(path: Path | None = None) -> list[Metric]:
-    """Read and validate the metric definitions."""
+HEAT_PUMP_METRIC = "heat_pump_energy_total"
+
+
+def load_metrics(path: Path | None = None, heat_pump_entity: str = "") -> list[Metric]:
+    """Read and validate the metric definitions.
+
+    `heat_pump_entity`, if given, adds the heat pump's own lifetime energy meter.
+    """
     path = path or metrics_file()
     with path.open("rb") as fh:
         raw = tomllib.load(fh)
@@ -60,6 +66,10 @@ def load_metrics(path: Path | None = None) -> list[Metric]:
     for m in metrics:
         if m.kind not in VALID_KINDS:
             raise ValueError(f"Metric '{m.name}' has unknown kind '{m.kind}'")
+    if heat_pump_entity and HEAT_PUMP_METRIC not in names:
+        metrics.append(
+            Metric(HEAT_PUMP_METRIC, heat_pump_entity, "energy", "Heat pump meter (lifetime)")
+        )
     return metrics
 
 
@@ -89,6 +99,9 @@ class Settings:
     # Outdoor temperature, for the heat pump against the weather. Empty: the first weather
     # entity Home Assistant has.
     outdoor_temperature_entity: str = ""
+    # The heat pump's own lifetime energy meter (such as Samsung's, through SmartThings).
+    # When set, the heat pump's use comes from it rather than the smart load circuit.
+    heat_pump_energy_entity: str = ""
     # What the Sigenergy "smart load 1" port feeds, as shown on the dashboard.
     smart_load_label: str = "Heat pump"
     # True if the EV charger is wired through the smart load port, so its use is taken off
@@ -147,6 +160,7 @@ def load_settings() -> Settings:
             currency_minor=_text(options.get("currency_minor"), "p")[:4],
             axle_event_entity=str(options.get("axle_event_entity") or "sensor.axle_event").strip(),
             outdoor_temperature_entity=str(options.get("outdoor_temperature_entity") or "").strip(),
+            heat_pump_energy_entity=str(options.get("heat_pump_energy_entity") or "").strip(),
             ev_on_smart_load=_flag(options.get("ev_on_smart_load"), True),
         )
 
@@ -169,5 +183,6 @@ def load_settings() -> Settings:
         currency_minor=_text(env.get("CURRENCY_MINOR"), "p")[:4],
         axle_event_entity=(env.get("AXLE_EVENT_ENTITY") or "sensor.axle_event").strip(),
         outdoor_temperature_entity=(env.get("OUTDOOR_TEMPERATURE_ENTITY") or "").strip(),
+        heat_pump_energy_entity=(env.get("HEAT_PUMP_ENERGY_ENTITY") or "").strip(),
         ev_on_smart_load=_flag(env.get("EV_ON_SMART_LOAD"), True),
     )

@@ -71,7 +71,7 @@ def database() -> Database:
 
 @lru_cache
 def metrics_by_name() -> dict[str, Metric]:
-    return {m.name: m for m in load_metrics()}
+    return {m.name: m for m in load_metrics(heat_pump_entity=settings().heat_pump_energy_entity)}
 
 
 def local_timezone():
@@ -122,7 +122,7 @@ async def lifespan(_: FastAPI):
         await asyncio.to_thread(thread.join, 10)
 
 
-app = FastAPI(title="Energy Tracker", version="0.31.6", lifespan=lifespan)
+app = FastAPI(title="Energy Tracker", version="0.32.0", lifespan=lifespan)
 # The page and its chart data are mostly text: sent compressed, they are a quarter the size.
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
@@ -198,7 +198,7 @@ def setup() -> dict:
         "keep_years": settings().keep_years,
         # Until the first poll there is nothing to judge by, so assume the best.
         "sigenergy_found": not collector.polled or any(found(name) for name in CORE_METRICS),
-        "smart_load": found("smart_load_power"),
+        "smart_load": found("smart_load_power") or found(devices.HEAT_PUMP),
         "smart_load_label": settings().smart_load_label,
         "ev_charger": found("ev_charger_power"),
         "ev_on_smart_load": settings().ev_on_smart_load,
@@ -306,7 +306,7 @@ def cost_by_device(
     }
     if not counters[devices.LOAD] or not counters[devices.IMPORT]:
         return None
-    if not counters[devices.CIRCUIT] and not counters[devices.EV]:
+    if not any(counters[name] for name in (devices.CIRCUIT, devices.HEAT_PUMP, devices.EV)):
         return None
     # Only from when every device was being read; before that a device's use would be
     # counted as the house's.
@@ -1129,7 +1129,7 @@ def heat_pump_and_weather() -> dict:
         "entity": weather.entity_in_use or settings().outdoor_temperature_entity or None,
         "smart_load_label": settings().smart_load_label,
     }
-    first_heat = database().first_time(devices.CIRCUIT)
+    first_heat = database().first_time(devices.HEAT_PUMP) or database().first_time(devices.CIRCUIT)
     first_temperature = database().first_time(weather.METRIC)
     result.update(has_heat_pump=bool(first_heat), has_temperature=bool(first_temperature))
     if not first_heat or not first_temperature:
@@ -1180,7 +1180,7 @@ def device_costs() -> dict:
                 **result,
                 "has_data": True,
                 "from": min(days),
-                "heat_pump": bool(counters[devices.CIRCUIT]),
+                "heat_pump": bool(counters[devices.CIRCUIT] or counters[devices.HEAT_PUMP]),
                 "ev_charger": bool(counters[devices.EV]),
                 "today": devices.total([days[today_local]]) if today_local in days else None,
                 **devices.by_month_and_year(days),

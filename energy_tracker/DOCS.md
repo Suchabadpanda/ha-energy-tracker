@@ -82,6 +82,7 @@ their own mean cheaper or better, and dearer or a problem.
 | `axle_event_entity` | sensor.axle_event | Only for the manual Axle set-up with a differently named sensor. The HACS "Axle VPP" integration is found without it. |
 | `smart_load_label` | Heat pump | What is connected to the gateway's smart load port 1, as named on the dashboard. |
 | `outdoor_temperature_entity` | (empty) | A temperature sensor outside, for the heat pump and the weather. Left empty, the first weather entity is used (Home Assistant sets one up for your home). |
+| `heat_pump_energy_entity` | (empty) | The heat pump's own lifetime energy meter, if it has one in Home Assistant (a Samsung heat pump through SmartThings, say). When set, the heat pump's use comes from it instead of the smart load circuit, and **Import older history** can bring in its past readings. |
 | `ev_on_smart_load` | true | On if the EV charger is wired through smart load port 1. Its use is then taken off the smart load figure. Turn off if the charger is on its own circuit. |
 
 ## Optional equipment
@@ -192,6 +193,11 @@ how much each used.
 - The standing charge and export income are left out. They belong to the house as a whole.
 - Without battery charge and discharge readings, each day's import cost is shared out by
   how much of that day's electricity each device used instead.
+- If the heat pump has its own energy meter in Home Assistant, name it in the
+  `heat_pump_energy_entity` option. The heat pump's use is then taken from that meter, the
+  EV charger from its own counter, and the house load is what is left. The smart load
+  circuit is not needed. After setting it, restart the app and run **Import older
+  history** to bring in the meter's past readings.
 - Device figures start from the first whole day every device counter was being read. If
   the smart load sensor was switched on later than the others, earlier days would
   otherwise show the heat pump as using nothing and count its use as the house's. History

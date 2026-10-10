@@ -96,3 +96,36 @@ def test_without_battery_readings_each_day_is_shared_by_use():
     day = devices.daily(found, DAY, DAY + timedelta(days=1), LONDON, RATES)[date(2026, 1, 12)]
     assert not day.get("followed")
     assert day["ev_charger_gbp"] + day["rest_gbp"] == pytest.approx(day["import_gbp"])
+
+
+def test_the_heat_pump_meter_is_used_in_place_of_the_circuit():
+    def with_meter(hour):
+        # The circuit carries the car overnight; the heat pump's own meter reads 0.5 a slot.
+        flows = {"load": 1.0, "import": 1.0}
+        if hour < 6:
+            flows.update(ev=2.0, circuit=2.5, load=3.0, **{"import": 3.0})
+        return flows
+
+    found = counters_for(with_meter)
+    # counters_for knows nothing of the meter: build it the same way.
+    series, total, t = [], 0.0, DAY - timedelta(days=1)
+    while t <= DAY + timedelta(days=1):
+        series.append((t, total))
+        total += 0.5
+        t += timedelta(minutes=30)
+    found[devices.HEAT_PUMP] = Counter(series, timedelta(minutes=75))
+    day = devices.daily(found, DAY, DAY + timedelta(days=1), LONDON, RATES)[date(2026, 1, 12)]
+    assert day["heat_pump_kwh"] == pytest.approx(24)  # 48 half hours at 0.5
+    assert day["ev_charger_kwh"] == pytest.approx(24)  # 12 half hours at 2
+    # 72 kWh in all (12 half hours at 3, 36 at 1), less the heat pump and the car.
+    assert day["rest_kwh"] == pytest.approx(72 - 24 - 24)
+
+
+def test_the_heat_pump_meter_option_adds_its_sensor():
+    from energy_tracker.config import load_metrics
+
+    plain = {m.name for m in load_metrics()}
+    assert devices.HEAT_PUMP not in plain
+    added = {m.name: m for m in load_metrics(heat_pump_entity="sensor.heat_pump_energy")}
+    assert added[devices.HEAT_PUMP].entity == "sensor.heat_pump_energy"
+    assert added[devices.HEAT_PUMP].kind == "energy"
