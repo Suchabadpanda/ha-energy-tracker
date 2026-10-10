@@ -127,11 +127,12 @@ stored readings and reconnect on their own.
   set VAT to 0. VAT is added to import and the standing charge, not to export.
 - "Saved by off-peak" is what the same import would have cost at the dearest rate, minus
   what it did cost. On half-hourly prices it is measured against each day's average price.
-- **Import cost by device**, under Cost today and the month's cost, shares the import cost
-  between the heat pump (or other smart load), the EV charger and the rest of the house.
-  It is shown when a smart load or an EV charger is fitted, adds up to the Import figure,
-  and is worked out the same way as **Running costs by device** below. The standing charge
-  and export credit are left out, as they belong to the house as a whole.
+- **Cost by device**, under Cost today and the month's cost, gives what the heat pump (or
+  other smart load), the EV charger and the rest of the house cost. It is shown when a smart
+  load or an EV charger is fitted, and worked out the same way as **Running costs by
+  device** below, following the energy through the battery. A line underneath says how much
+  of the period's import is still in the battery, or how much was bought before it. The
+  standing charge and export credit are left out, as they belong to the house as a whole.
 - Below it, the **heat pump** has a table of its own:
   - **Heating and hot water**: hot water is taken as up to the heat pump's usual use on
     warm days (worked out under **Heat pump and the weather**); anything above that on a
@@ -139,9 +140,9 @@ stored readings and reconnect on their own.
     to be a little more than shown. Until there are a few warm days to go on, only the
     total is shown.
   - **True cost**: the import cost plus what the solar it used would have earned if it had
-    been exported, at your export rate. Solar is free to use, but using it gives up that
-    payment, so this is what running the heat pump really costs you. Its share of the solar
-    is worked out the same way as its share of the import.
+    been exported, at your export rate, whether it used the solar straight away or later
+    from the battery. Solar is free to use, but using it gives up that payment, so this is
+    what running the heat pump really costs you.
 
 ### Time windows
 
@@ -170,17 +171,30 @@ published for it, so past price changes are included.
 ## Running costs by device
 
 Shown when a smart load or an EV charger is fitted. For today, and for each month and year,
-it gives the energy each device used and its share of the import cost. Click a year to show
-or hide its months.
+it gives the energy each device used and what it cost. Click a year to show or hide its
+months.
 
-Each day's import cost is shared out by how much of that day's electricity each device
-used: a heat pump that used 40% of the day's consumption carries 40% of what was paid for
-import that day. This spreads cheap overnight battery charging across whatever the battery
-later powered, without following each unit through the battery. As a result:
+The energy is followed to where it came from. In every half hour the house is supplied by
+solar, the grid and the battery, and each device pays its share of that half hour's
+supply:
 
-- A device run mostly from solar still carries a share of the day's import, and a car
-  charged overnight is costed at the day's average price, not purely the night rate.
+- **Grid power** at that half hour's price, with VAT.
+- **Battery power** at what putting the energy into the battery cost. The app keeps a
+  running account of the battery: grid charging adds its cost, solar charging adds
+  nothing, and losses charging and discharging it are allowed for.
+- **Solar** used straight away costs nothing.
+
+So a car charged overnight costs the night rate, and the house run from the battery during
+the day carries the cost of charging it overnight. Within each half hour, devices share by
+how much each used.
+
+- The devices add up to the import cost, give or take energy still in the battery at the
+  end of the period, or bought before it and used from the battery.
+- Export: solar is exported before anything is stored, and the battery is charged from
+  solar before the grid.
 - The standing charge and export income are left out. They belong to the house as a whole.
+- Without battery charge and discharge readings, each day's import cost is shared out by
+  how much of that day's electricity each device used instead.
 
 ## Heat pump and the weather
 

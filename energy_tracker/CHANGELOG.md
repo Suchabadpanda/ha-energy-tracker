@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.31.0
+
+- Device costs now follow the energy through the battery, half hour by half hour: grid
+  power at that half hour's price, battery power at what charging the battery cost, solar
+  free. A car charged overnight costs the night rate, and the house run from the battery by
+  day carries the cost of charging it. Used for cost by device, Running costs by device and
+  the heat pump's true cost (which now counts solar stored in the battery too).
+- Without battery readings, the old way (each day's import cost shared by use) is used.
+
 ## 0.30.0
 
 - The heat pump's cost, under today's and the month's cost, is split into heating and hot

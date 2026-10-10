@@ -1,6 +1,6 @@
 # Home Assistant add-on definition. Home Assistant reads this to know how to run the app.
 name: Energy Tracker
-version: "0.30.0"
+version: "0.31.0"
 slug: energy_tracker
 url: https://github.com/Suchabadpanda/ha-energy-tracker
 description: For Sigenergy solar and battery systems. Live energy use and running costs on your tariff

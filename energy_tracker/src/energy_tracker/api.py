@@ -122,7 +122,7 @@ async def lifespan(_: FastAPI):
         await asyncio.to_thread(thread.join, 10)
 
 
-app = FastAPI(title="Energy Tracker", version="0.30.0", lifespan=lifespan)
+app = FastAPI(title="Energy Tracker", version="0.31.0", lifespan=lifespan)
 # The page and its chart data are mostly text: sent compressed, they are a quarter the size.
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
@@ -261,7 +261,9 @@ def today() -> dict:
     # Reaching back a day before midnight lets the midnight value be worked out even if
     # nothing was being collected at midnight itself.
     samples = counter_samples(
-        [*DEVICE_COUNTERS, *COST_COUNTERS, devices.SOLAR], midnight - timedelta(days=1), 5
+        sorted({*DEVICE_COUNTERS, *COST_COUNTERS, *devices.ALL_COUNTERS}),
+        midnight - timedelta(days=1),
+        5,
     )
     used = database().latest(["load_energy_today"], midnight).get("load_energy_today")
     cost = cost_since(samples, midnight, now, local_timezone(), schedule())
@@ -300,7 +302,7 @@ def cost_by_device(
         return None
     counters = {
         name: Counter(samples.get(name, []), *([gap] if gap else []))
-        for name in [*devices.COUNTERS, *devices.SOLAR_COUNTERS]
+        for name in devices.ALL_COUNTERS
     }
     if not counters[devices.LOAD] or not counters[devices.IMPORT]:
         return None
@@ -312,8 +314,12 @@ def cost_by_device(
     if not days:
         return None
     worked_out = sum(row.get(f"{part}_gbp", 0.0) for row in days.values() for part in devices.PARTS)
-    scale = cost["import_gbp"] / worked_out if worked_out > 0 else 0.0
-    valued = any("solar_value_gbp" in row for row in days.values())
+    followed = all(row.get("followed") for row in days.values())
+    # Followed through the battery, the parts are what the energy each used cost, which
+    # differs from the period's import by energy still in the battery or bought before.
+    # Shared by day, they are scaled to add up to the import exactly.
+    scale = 1.0 if followed else (cost["import_gbp"] / worked_out if worked_out > 0 else 0.0)
+    valued = any(f"{part}_solar_gbp" in row for row in days.values() for part in devices.PARTS)
 
     parts = {}
     for part in devices.PARTS:
@@ -325,7 +331,7 @@ def cost_by_device(
         parts[part] = {
             "kwh": round(kwh, 1),
             "gbp": round(gbp, 2),
-            "share_percent": round(gbp / cost["import_gbp"] * 100) if cost["import_gbp"] else 0,
+            "share_percent": round(gbp / (worked_out * scale) * 100) if worked_out > 0 else 0,
             # Import cost plus the export payment given up on the solar it used.
             "true_gbp": round(gbp + solar, 2) if valued else None,
             "solar_gbp": round(solar, 2) if valued else None,
@@ -367,7 +373,14 @@ def cost_by_device(
         heat_pump["hot_water"] = rounded(hot, valued)
         heat_pump["heating"] = rounded(heating, valued)
         heat_pump["hot_water_per_day_kwh"] = hot_water_per_day
-    return {"parts": parts, "smart_load_label": settings().smart_load_label}
+    return {
+        "parts": parts,
+        "smart_load_label": settings().smart_load_label,
+        "followed": followed,
+        # Import paid for in the period but not yet used (still in the battery, or lost
+        # charging it); below zero when the period used energy bought before it.
+        "carried_gbp": round(cost["import_gbp"] - worked_out * scale, 2),
+    }
 
 
 # --- Costs by month and by year ---------------------------------------------------------------
@@ -419,7 +432,7 @@ def month(
         raise HTTPException(status_code=404, detail="That month has not started yet")
 
     samples = counter_samples(
-        [*COST_COUNTERS, *DEVICE_COUNTERS, devices.SOLAR],
+        sorted({*COST_COUNTERS, *DEVICE_COUNTERS, *devices.ALL_COUNTERS}),
         start - timedelta(days=1),
         HALF_HOURLY,
         following_month(start) + timedelta(days=1),
@@ -1112,6 +1125,7 @@ def heat_pump_and_weather() -> dict:
     start = max(end - timedelta(days=3 * 365), first_heat, first_temperature).astimezone(zone)
     if start >= end:
         return result
+    # Only the energy each device used matters here, so the quicker costing will do.
     samples = counter_samples(devices.COUNTERS, start - timedelta(days=1), HALF_HOURLY, end)
     counters = {name: Counter(series, HALF_HOURLY_GAP) for name, series in samples.items()}
     if not counters[devices.LOAD] or not counters[devices.IMPORT]:
@@ -1137,7 +1151,7 @@ def device_costs() -> dict:
     firsts = [database().first_time(name) for name in (devices.LOAD, devices.IMPORT)]
     if all(firsts):
         start = max(firsts).astimezone(zone)
-        samples = counter_samples(devices.COUNTERS, start - timedelta(days=1), HALF_HOURLY, now)
+        samples = counter_samples(devices.ALL_COUNTERS, start - timedelta(days=1), HALF_HOURLY, now)
         counters = {name: Counter(series, HALF_HOURLY_GAP) for name, series in samples.items()}
         days = devices.daily(counters, start, now, zone, schedule(), settings().ev_on_smart_load)
         today_local = now.astimezone(zone).date()

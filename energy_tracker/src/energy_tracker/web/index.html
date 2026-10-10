@@ -249,8 +249,9 @@
   <div class="tiles" id="cost"></div>
   <div class="hint" id="cost-hint"></div>
   <div class="by-device" id="cost-devices" hidden>
-    <div class="group-title">Import cost by device</div>
+    <div class="group-title">Cost by device</div>
     <div class="tiles" id="cost-devices-tiles"></div>
+    <div class="hint" id="cost-devices-carried"></div>
     <div class="chart heat-detail" id="cost-devices-heat" hidden>
       <div class="table-scroll"><table><thead></thead><tbody></tbody></table></div>
       <div class="hint"></div>
@@ -268,18 +269,21 @@
   <div class="tiles" id="month"></div>
   <div class="hint" id="month-hint"></div>
   <div class="by-device" id="month-devices" hidden>
-    <div class="group-title">Import cost by device</div>
+    <div class="group-title">Cost by device</div>
     <div class="tiles" id="month-devices-tiles"></div>
+    <div class="hint" id="month-devices-carried"></div>
     <div class="chart heat-detail" id="month-devices-heat" hidden>
       <div class="table-scroll"><table><thead></thead><tbody></tbody></table></div>
       <div class="hint"></div>
     </div>
-    <div class="hint">Each day's import cost is shared out by how much of that day's electricity each used,
-      so solar and battery power are spread fairly across everything. The standing charge and export credit
-      belong to the house as a whole and are left out. See "Running costs by device" for earlier months.
-      The heat pump's true cost adds what the solar it used would have earned if exported: solar is free to
-      use, but using it gives up that payment. Hot water takes more energy in winter (colder mains water, and
-      the heat pump works harder), so in cold months it is likely to be a little more than shown.</div>
+    <div class="hint">Each device pays for the electricity that actually supplied it, half hour by half hour:
+      grid power at that half hour's price, and battery power at what charging the battery cost. So a car
+      charged overnight costs the night rate, and the house run from the battery by day carries the cost of
+      charging it. The standing charge and export credit belong to the house as a whole and are left out. See
+      "Running costs by device" for earlier months. The heat pump's true cost adds what the solar it used
+      (straight away or through the battery) would have earned if exported: solar is free to use, but using
+      it gives up that payment. Hot water takes more energy in winter (colder mains water, and the heat pump
+      works harder), so in cold months it is likely to be a little more than shown.</div>
   </div>
 
   <div class="filters">
@@ -1326,7 +1330,7 @@ function renderCost(tilesId, hintId, cost, finished = false) {
     : "";
 }
 
-// The import cost shared between the heat pump, the EV charger and the rest of the house.
+// What the heat pump, the EV charger and the rest of the house cost, following the energy.
 function renderByDevice(boxId, split) {
   const box = document.getElementById(boxId);
   box.hidden = !split;
@@ -1335,11 +1339,18 @@ function renderByDevice(boxId, split) {
   const colours = { heat_pump: "var(--heatpump)", ev_charger: "var(--ev)", rest: "var(--house)" };
   const tiles = Object.keys(split.parts).map(key => ({ metric: key, label: names[key], prefix: "£", color: colours[key] }));
   const readings = Object.fromEntries(Object.entries(split.parts).map(([key, part]) => {
-    const lines = [part.kwh.toFixed(1) + " kWh, " + part.share_percent + "% of the import cost"];
+    const lines = [part.kwh.toFixed(1) + " kWh, " + part.share_percent + "% of the devices' cost"];
     if (key === "heat_pump" && part.true_gbp != null) lines.push("True cost " + money(part.true_gbp));
     return [key, { value: part.gbp, note: lines.join("\n") }];
   }));
   renderTiles(document.getElementById(boxId + "-tiles"), tiles, readings);
+  const carried = document.getElementById(boxId + "-carried");
+  const amount = split.carried_gbp ?? 0;
+  const period = boxId === "cost-devices" ? "today" : "this month";
+  carried.textContent = !split.followed || Math.abs(amount) < 0.05 ? ""
+    : amount > 0
+      ? money(amount) + " of the import " + period + " is not counted against a device yet: it is still in the battery, or was lost charging it."
+      : "Includes " + money(-amount) + " of electricity bought before " + period + ", used from the battery.";
 
   // The heat pump in more detail: heating against hot water, and its true cost.
   const hp = split.parts.heat_pump;
@@ -2199,7 +2210,7 @@ function renderYearly(data) {
     ? "Costs and anything about money are hidden, so this can be shared. Press \"Hide costs\" again to show them."
     : (partial.length ? partial.join("; ") + ", so no change is worked out between them. " : "") +
     "Whole days up to yesterday. Costs are the tracker's estimate at your tariff rates. Device costs are each " +
-    "device's share of the import cost.";
+    "device's cost, following the energy through the battery.";
 }
 async function refreshYearly() {
   if (!sectionOpen("yearly-heading")) return;  // fetched when the section is opened
@@ -3079,8 +3090,10 @@ function renderDeviceCosts(data) {
   }
   document.getElementById("device-costs-rows").replaceChildren(...rows);
   document.getElementById("device-costs-hint").textContent =
-    "Each day's import cost (with VAT, without the standing charge or export income) is shared out by how much of " +
-    "that day's electricity each device used. Counted from " + dayText(data.from) + ". Click a year to show its months.";
+    "Each device pays for the electricity that supplied it, half hour by half hour: grid power at that half hour's " +
+    "price (with VAT) and battery power at what charging the battery cost. The standing charge and export income are " +
+    "left out. The devices add up to the import cost give or take what was still in the battery. Counted from " +
+    dayText(data.from) + ". Click a year to show its months.";
 }
 async function refreshDeviceCosts() {
   if (!sectionOpen("device-costs-heading")) return;  // fetched when the section is opened
