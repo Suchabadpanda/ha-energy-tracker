@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.32.3
+
+- The cost tiles have coloured stripes: net cost, import, export credit, standing charge
+  and saved by off-peak.
+- When a tariff has no VAT set, the cost sections say so, in case its prices are before VAT.
+
 ## 0.32.2
 
 - Cost by device: each device's kWh is now worked out over the whole day, so the house load

@@ -968,11 +968,11 @@ const DEVICE_TILES = [
   { metric: "rest_kwh", label: "House load", unit: "kWh", digits: 1, color: "var(--house)" },
 ];
 const COST_TILES = [
-  { metric: "net_gbp", label: "Net cost so far", prefix: "£" },
-  { metric: "import_gbp", label: "Import", prefix: "£" },
-  { metric: "export_credit_gbp", label: "Export credit", prefix: "£" },
-  { metric: "standing_charge_gbp", label: "Standing charge", prefix: "£" },
-  { metric: "saved_gbp", label: "Saved by off-peak", prefix: "£" },
+  { metric: "net_gbp", label: "Net cost so far", prefix: "£", color: "var(--accent)" },
+  { metric: "import_gbp", label: "Import", prefix: "£", color: "var(--grid)" },
+  { metric: "export_credit_gbp", label: "Export credit", prefix: "£", color: "var(--export)" },
+  { metric: "standing_charge_gbp", label: "Standing charge", prefix: "£", color: "var(--muted)" },
+  { metric: "saved_gbp", label: "Saved by off-peak", prefix: "£", color: "var(--good)" },
 ];
 const FLOW_LINES = [
   { metric: "pv_power", color: "var(--solar)", label: "Solar" },
@@ -1321,7 +1321,9 @@ function renderCost(tilesId, hintId, cost, finished = false) {
   }));
   document.getElementById(hintId).textContent = cost
     ? [cost.tariff + ".",
-       cost.vat_percent ? "Costs include " + cost.vat_percent + "% VAT; prices shown are before VAT." : "",
+       cost.vat_percent ? "Costs include " + cost.vat_percent + "% VAT; prices shown are before VAT."
+         : "No VAT is being added, so the prices are taken as already including it. If the rates under " +
+           "Tariff rates are before VAT, set VAT to 5% there.",
        cost.standing_charge_gbp ? "" : "Standing charge not set: add it under Tariff rates.",
        coverageHint(cost)].filter(Boolean).join(" ")
     : "";
