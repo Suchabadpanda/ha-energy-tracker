@@ -204,7 +204,6 @@
 .by-device { margin-top: 14px; }
 .by-device .group-title { margin-bottom: 8px; }
 .by-device .note { white-space: pre-line; }
-.by-device .heat-detail { margin-top: 12px; }
 .section-marker { height: 1px; margin-bottom: -1px; }
 </style>
 </head>
@@ -252,10 +251,6 @@
     <div class="group-title">Cost by device</div>
     <div class="tiles" id="cost-devices-tiles"></div>
     <div class="hint" id="cost-devices-carried"></div>
-    <div class="chart heat-detail" id="cost-devices-heat" hidden>
-      <div class="table-scroll"><table><thead></thead><tbody></tbody></table></div>
-      <div class="hint"></div>
-    </div>
   </div>
 
   <div class="section-head">
@@ -272,18 +267,13 @@
     <div class="group-title">Cost by device</div>
     <div class="tiles" id="month-devices-tiles"></div>
     <div class="hint" id="month-devices-carried"></div>
-    <div class="chart heat-detail" id="month-devices-heat" hidden>
-      <div class="table-scroll"><table><thead></thead><tbody></tbody></table></div>
-      <div class="hint"></div>
-    </div>
     <div class="hint">Each device pays for the electricity that actually supplied it, half hour by half hour:
       grid power at that half hour's price, and battery power at what charging the battery cost. So a car
       charged overnight costs the night rate, and the house run from the battery by day carries the cost of
       charging it. The standing charge and export credit belong to the house as a whole and are left out. See
       "Running costs by device" for earlier months. The heat pump's true cost adds what the solar it used
       (straight away or through the battery) would have earned if exported: solar is free to use, but using
-      it gives up that payment. Hot water takes more energy in winter (colder mains water, and the heat pump
-      works harder), so in cold months it is likely to be a little more than shown.</div>
+      it gives up that payment.</div>
   </div>
 
   <div class="filters">
@@ -1352,33 +1342,6 @@ function renderByDevice(boxId, split) {
       ? money(amount) + " of the import " + period + " is not counted against a device yet: it is still in the battery, or was lost charging it."
       : "Includes " + money(-amount) + " of electricity bought before " + period + ", used from the battery.";
 
-  // The heat pump in more detail: heating against hot water, and its true cost.
-  const hp = split.parts.heat_pump;
-  const detail = document.getElementById(boxId + "-heat");
-  detail.hidden = !hp || (hp.true_gbp == null && !hp.heating);
-  if (detail.hidden) return;
-  const withTrue = hp.true_gbp != null;
-  const cell = (text, cls = "num") => Object.assign(document.createElement("td"), { textContent: text, className: cls });
-  const head = document.createElement("tr");
-  head.append(...[names.heat_pump, "Used", "Import cost", ...(withTrue ? ["Solar it used", "True cost"] : [])]
-    .map((text, i) => Object.assign(document.createElement("th"), { textContent: text, className: i ? "num" : "" })));
-  const line = (label, row, solar, cls) => {
-    const tr = document.createElement("tr");
-    if (cls) tr.className = cls;
-    tr.append(cell(label, ""), cell(row.kwh.toFixed(1) + " kWh"), cell(money(row.gbp)),
-              ...(withTrue ? [cell(money(solar)), cell(money(row.true_gbp))] : []));
-    return tr;
-  };
-  const rows = hp.heating
-    ? [line("Heating", hp.heating, hp.heating.true_gbp - hp.heating.gbp),
-       line("Hot water", hp.hot_water, hp.hot_water.true_gbp - hp.hot_water.gbp)]
-    : [];
-  rows.push(line("Total", hp, hp.solar_gbp ?? 0, "year-row"));
-  detail.querySelector("thead").replaceChildren(head);
-  detail.querySelector("tbody").replaceChildren(...rows);
-  detail.querySelector(".hint").textContent = hp.heating
-    ? "Hot water is taken as up to " + hp.hot_water_per_day_kwh.toFixed(1) + " kWh a day, the heat pump's usual use on warm days; the rest is heating."
-    : "Heating and hot water are told apart once \"Heat pump and the weather\" has a few warm days to go on.";
 }
 
 function renderToday(today, month) {

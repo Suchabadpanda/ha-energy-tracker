@@ -133,16 +133,10 @@ stored readings and reconnect on their own.
   device** below, following the energy through the battery. A line underneath says how much
   of the period's import is still in the battery, or how much was bought before it. The
   standing charge and export credit are left out, as they belong to the house as a whole.
-- Below it, the **heat pump** has a table of its own:
-  - **Heating and hot water**: hot water is taken as up to the heat pump's usual use on
-    warm days (worked out under **Heat pump and the weather**); anything above that on a
-    day is heating. Hot water takes more energy in winter, so in cold months it is likely
-    to be a little more than shown. Until there are a few warm days to go on, only the
-    total is shown.
-  - **True cost**: the import cost plus what the solar it used would have earned if it had
-    been exported, at your export rate, whether it used the solar straight away or later
-    from the battery. Solar is free to use, but using it gives up that payment, so this is
-    what running the heat pump really costs you.
+- The heat pump's tile also shows its **true cost**: the import cost plus what the solar it
+  used would have earned if it had been exported, at your export rate, whether it used the
+  solar straight away or later from the battery. Solar is free to use, but using it gives
+  up that payment, so this is what running the heat pump really costs you.
 
 ### Time windows
 

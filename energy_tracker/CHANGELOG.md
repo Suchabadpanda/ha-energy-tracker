@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.31.1
+
+- Removed the heat pump table (heating, hot water and true cost) from under today's and
+  the month's cost. The heat pump's tile still shows its true cost.
+
 ## 0.31.0
 
 - Device costs now follow the energy through the battery, half hour by half hour: grid
