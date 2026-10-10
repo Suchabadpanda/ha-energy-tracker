@@ -859,7 +859,8 @@ def test_cost_today_and_this_month_are_shared_between_devices():
     assert checked or now - midnight < timedelta(minutes=10)
 
 
-def test_heat_pump_true_cost():
+def test_heat_pump_true_cost_and_hot_water_split(monkeypatch):
+    monkeypatch.setattr(api, "heat_pump_and_weather", lambda: {"warm_day_kwh": 0.5})
     now = datetime.now(UTC).replace(second=0, microsecond=0)
     midnight = api.local_midnight(now, api.local_timezone())
     if now - midnight < timedelta(minutes=30):
@@ -893,4 +894,6 @@ def test_heat_pump_true_cost():
     kept_kwh = (now - midnight) / timedelta(minutes=5) * 0.1
     assert hp["solar_gbp"] == pytest.approx(kept_kwh / 2 * 0.10, rel=0.1)
     assert hp["true_gbp"] == pytest.approx(hp["gbp"] + hp["solar_gbp"], abs=0.01)
-    assert "heating" not in hp
+    assert hp["hot_water"]["kwh"] == pytest.approx(min(0.5, hp["kwh"]), abs=0.05)
+    assert hp["heating"]["kwh"] + hp["hot_water"]["kwh"] == pytest.approx(hp["kwh"], abs=0.1)
+    assert hp["heating"]["gbp"] + hp["hot_water"]["gbp"] == pytest.approx(hp["gbp"], abs=0.02)

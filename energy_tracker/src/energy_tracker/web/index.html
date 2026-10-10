@@ -273,7 +273,10 @@
       charging it. The standing charge and export credit belong to the house as a whole and are left out. See
       "Running costs by device" for earlier months. The heat pump's true cost adds what the solar it used
       (straight away or through the battery) would have earned if exported: solar is free to use, but using
-      it gives up that payment.</div>
+      it gives up that payment. Its heating and hot water are told apart once "Heat pump and the weather" has
+      a few warm days to go on: up to its usual warm-day use each day counts as hot water, and the rest as
+      heating. Hot water takes more energy in winter, so in cold months it is likely to be a little more
+      than shown.</div>
   </div>
 
   <div class="filters">
@@ -1327,12 +1330,22 @@ function renderByDevice(boxId, split) {
   if (!split) return;
   const names = { heat_pump: split.smart_load_label || "Heat pump", ev_charger: "EV charger", rest: "Rest of house" };
   const colours = { heat_pump: "var(--heatpump)", ev_charger: "var(--ev)", rest: "var(--house)" };
-  const tiles = Object.keys(split.parts).map(key => ({ metric: key, label: names[key], prefix: "£", color: colours[key] }));
-  const readings = Object.fromEntries(Object.entries(split.parts).map(([key, part]) => {
+  const tiles = [], readings = {};
+  for (const [key, part] of Object.entries(split.parts)) {
+    tiles.push({ metric: key, label: names[key], prefix: "£", color: colours[key] });
     const lines = [part.kwh.toFixed(1) + " kWh, " + part.share_percent + "% of the devices' cost"];
     if (key === "heat_pump" && part.true_gbp != null) lines.push("True cost " + money(part.true_gbp));
-    return [key, { value: part.gbp, note: lines.join("\n") }];
-  }));
+    readings[key] = { value: part.gbp, note: lines.join("\n") };
+    // The heat pump's use split into heating and hot water, beside it.
+    if (key === "heat_pump" && part.heating) {
+      for (const [sub, label] of [["heating", "Heating"], ["hot_water", "Hot water"]]) {
+        const piece = part[sub];
+        tiles.push({ metric: sub, label: label, prefix: "£", color: colours.heat_pump });
+        readings[sub] = { value: piece.gbp, note: [piece.kwh.toFixed(1) + " kWh",
+          ...(piece.true_gbp != null ? ["True cost " + money(piece.true_gbp)] : [])].join("\n") };
+      }
+    }
+  }
   renderTiles(document.getElementById(boxId + "-tiles"), tiles, readings);
   const carried = document.getElementById(boxId + "-carried");
   const amount = split.carried_gbp ?? 0;

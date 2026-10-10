@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.31.2
+
+- Heating and Hot water are back under today's and the month's cost, as tiles beside the
+  heat pump, each with its energy and true cost.
+
 ## 0.31.1
 
 - Removed the heat pump table (heating, hot water and true cost) from under today's and
