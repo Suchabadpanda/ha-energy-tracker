@@ -145,3 +145,24 @@ def test_battery_energy_sold_back_to_the_grid_is_costed_apart():
     assert day["battery_export_kwh"] == pytest.approx(12)
     assert day["battery_export_gbp"] == pytest.approx(12 * 0.07)  # what storing it cost
     assert day["import_gbp"] == pytest.approx(12 * 0.07)
+
+
+def test_house_load_is_the_days_use_less_the_devices_whatever_the_half_hours_show():
+    def lumpy(hour):
+        # The house uses 1 kWh every half hour, the heat pump all of it in the morning;
+        # its meter reports the same energy spread evenly over the day.
+        return {"load": 1.0, "import": 1.0, "circuit": 0.5}
+
+    found = counters_for(lumpy)
+    day = devices.daily(found, DAY, DAY + timedelta(days=1), LONDON, RATES)[date(2026, 1, 12)]
+    assert day["heat_pump_kwh"] + day["rest_kwh"] == pytest.approx(48)
+
+    def bursty(hour):  # half hours where the circuit reads more than the house used
+        return {"load": 1.0, "import": 1.0, "circuit": 2.0 if hour < 6 else 0.0}
+
+    day = devices.daily(counters_for(bursty), DAY, DAY + timedelta(days=1), LONDON, RATES)[
+        date(2026, 1, 12)
+    ]
+    # 48 used in all, 24 of it by the heat pump: 24 left for the house, not 36.
+    assert day["heat_pump_kwh"] == pytest.approx(24)
+    assert day["rest_kwh"] == pytest.approx(24)

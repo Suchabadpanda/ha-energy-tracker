@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.32.2
+
+- Cost by device: each device's kWh is now worked out over the whole day, so the house load
+  matches Today by device. Before, half hours where a slowly reporting meter (such as a
+  heat pump's through SmartThings) seemed to use more than the house did could add about a
+  kWh a day to the house load.
+
 ## 0.32.1
 
 - New **Battery export** in cost by device and Running costs by device: what it cost to

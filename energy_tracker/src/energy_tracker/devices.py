@@ -172,6 +172,7 @@ def _followed(
 
     battery = _Battery(efficiency)
     days: dict[date, dict] = {}
+    raw: dict[date, dict] = {}  # kWh each counter moved, by day
     for piece_start, piece_end in half_hour_slots(first, end):
         local = piece_start.astimezone(timezone)
         tariff = schedule.on(local.date())
@@ -204,16 +205,24 @@ def _followed(
         house_cost = grid_used * price + battery_cost
         house_true = grid_used * price + sun_used * export_price + battery_cost_true
 
+        used = {
+            "load": _kwh(load, piece_start, piece_end),
+            "circuit": _kwh(circuit, piece_start, piece_end) if circuit else 0.0,
+            "ev": _kwh(ev, piece_start, piece_end) if ev else 0.0,
+            "meter": _kwh(meter, piece_start, piece_end) if meter else 0.0,
+        }
         total, parts = _split(
-            _kwh(load, piece_start, piece_end),
-            _kwh(circuit, piece_start, piece_end) if circuit else 0.0,
-            _kwh(ev, piece_start, piece_end) if ev else 0.0,
+            used["load"],
+            used["circuit"],
+            used["ev"],
             has,
             ev_on_smart_load,
-            _kwh(meter, piece_start, piece_end) if meter else None,
+            used["meter"] if meter else None,
         )
         row = days.setdefault(local.date(), {"total_kwh": 0.0, "import_gbp": 0.0, "followed": True})
-        row["total_kwh"] += total
+        day_used = raw.setdefault(local.date(), dict.fromkeys(used, 0.0))
+        for key, kwh in used.items():
+            day_used[key] += kwh
         row["import_gbp"] += bought * price
         row["battery_export_kwh"] = row.get("battery_export_kwh", 0.0) + battery_sold
         row["battery_export_gbp"] = row.get("battery_export_gbp", 0.0) + sold_cost
@@ -221,11 +230,28 @@ def _followed(
         # this goes by shares of the house's use rather than kWh for kWh.
         for name, kwh in parts.items():
             share = kwh / total if total > 0 else 0.0
-            row[f"{name}_kwh"] = row.get(f"{name}_kwh", 0.0) + kwh
             row[f"{name}_gbp"] = row.get(f"{name}_gbp", 0.0) + house_cost * share
             row[f"{name}_solar_gbp"] = (
                 row.get(f"{name}_solar_gbp", 0.0) + (house_true - house_cost) * share
             )
+
+    # The energy each used is worked out over the whole day, not added up half hour by half
+    # hour. Meters that report now and then (a heat pump's, through its maker's cloud) are
+    # spread evenly between reports, so in some half hours the devices seem to use more
+    # than the house did; adding those up would overstate the house load.
+    for when, row in days.items():
+        day = raw[when]
+        total, parts = _split(
+            day["load"],
+            day["circuit"],
+            day["ev"],
+            has,
+            ev_on_smart_load,
+            day["meter"] if meter else None,
+        )
+        row["total_kwh"] = total
+        for name, kwh in parts.items():
+            row[f"{name}_kwh"] = kwh
     return days
 
 
