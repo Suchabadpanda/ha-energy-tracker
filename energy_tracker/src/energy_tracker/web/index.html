@@ -953,8 +953,8 @@ const NOW_TILES = [
 const USAGE_TILES = [
   { metric: "load_power", label: "Total consumption", unit: "kW", color: "var(--load)" },
   { metric: "rest_power", label: "House load", unit: "kW", needs: "any", color: "var(--house)" },
-  { metric: "heat_pump_power", label: "Heat pump", unit: "kW", needs: "smart_load", color: "var(--heatpump)" },
   { metric: "ev_charger_power", label: "EV charger", unit: "kW", needs: "ev_charger", color: "var(--ev)" },
+  { metric: "heat_pump_power", label: "Heat pump", unit: "kW", needs: "smart_load", color: "var(--heatpump)" },
 ];
 const TODAY_TILES = [
   { metric: "pv_energy_today", label: "Solar generated", unit: "kWh", digits: 1, color: "var(--solar)" },
@@ -962,10 +962,11 @@ const TODAY_TILES = [
   { metric: "import_energy_today", label: "Imported", unit: "kWh", digits: 1, color: "var(--grid)" },
   { metric: "export_energy_today", label: "Exported", unit: "kWh", digits: 1, color: "var(--export)" },
 ];
+// House load first, then the EV charger and the heat pump, as under Cost by device.
 const DEVICE_TILES = [
-  { metric: "heat_pump_kwh", label: "Heat pump", unit: "kWh", digits: 1, needs: "smart_load", color: "var(--heatpump)" },
-  { metric: "ev_charger_kwh", label: "EV charger", unit: "kWh", digits: 1, needs: "ev_charger", color: "var(--ev)" },
   { metric: "rest_kwh", label: "House load", unit: "kWh", digits: 1, color: "var(--house)" },
+  { metric: "ev_charger_kwh", label: "EV charger", unit: "kWh", digits: 1, needs: "ev_charger", color: "var(--ev)" },
+  { metric: "heat_pump_kwh", label: "Heat pump", unit: "kWh", digits: 1, needs: "smart_load", color: "var(--heatpump)" },
 ];
 const COST_TILES = [
   { metric: "net_gbp", label: "Net cost so far", prefix: "£", color: "var(--accent)" },

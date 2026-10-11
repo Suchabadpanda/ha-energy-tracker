@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.32.5
+
+- "Where it's going" and "Today by device" now list house load, EV charger, then heat pump,
+  the same order as Cost by device.
+
 ## 0.32.4
 
 - The note shown when a tariff has no VAT now just says so, without suggesting 5%: VAT on
