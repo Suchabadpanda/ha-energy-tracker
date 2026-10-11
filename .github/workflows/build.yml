@@ -1,0 +1,59 @@
+# Builds the add-on's image for each kind of processor and publishes it to GitHub's
+# container registry, so Home Assistant downloads a finished image instead of building it.
+name: Build add-on images
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "energy_tracker/**"
+      - ".github/workflows/build.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+          - arch: aarch64
+            platform: linux/arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read the version
+        id: version
+        run: echo "version=$(grep -m1 '^version:' energy_tracker/config.yaml | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: energy_tracker
+          platforms: ${{ matrix.platform }}
+          push: true
+          provenance: false
+          tags: |
+            ghcr.io/suchabadpanda/${{ matrix.arch }}-energy-tracker:${{ steps.version.outputs.version }}
+            ghcr.io/suchabadpanda/${{ matrix.arch }}-energy-tracker:latest
+          labels: |
+            io.hass.version=${{ steps.version.outputs.version }}
+            io.hass.arch=${{ matrix.arch }}
+            io.hass.type=addon
+            org.opencontainers.image.source=https://github.com/Suchabadpanda/ha-energy-tracker
+          cache-from: type=gha,scope=${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.arch }}
