@@ -122,7 +122,7 @@ async def lifespan(_: FastAPI):
         await asyncio.to_thread(thread.join, 10)
 
 
-app = FastAPI(title="Energy Tracker", version="0.32.5", lifespan=lifespan)
+app = FastAPI(title="Energy Tracker", version="0.32.6", lifespan=lifespan)
 # The page and its chart data are mostly text: sent compressed, they are a quarter the size.
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
@@ -202,6 +202,8 @@ def setup() -> dict:
         "smart_load_label": settings().smart_load_label,
         "ev_charger": found("ev_charger_power"),
         "ev_on_smart_load": settings().ev_on_smart_load,
+        # Usable size of the battery, for showing how much energy is left in it.
+        "battery_kwh": battery_size().get("kwh"),
     }
 
 
@@ -594,6 +596,7 @@ def keep_figures_ready(stop: threading.Event) -> None:
     after anything they depend on has changed; and any served while old."""
     # In the order they appear on the page, so the top of it is ready first.
     opening = (
+        (battery_size, ()),
         (years, ()),
         (monthly_summary, (None,)),
         (yearly_report, (None,)),
@@ -925,6 +928,23 @@ class PlannerIn(BaseModel):
 
     battery_kwh: float | None = Field(default=None, ge=1, le=500)
     charge_kw: float | None = Field(default=None, ge=0.5, le=100)
+
+
+@kept
+def battery_size() -> dict:
+    """The battery's usable size: as entered for the planner, or else worked out from the
+    last 90 days of charging."""
+    stored = json.loads(database().get_setting("planner") or "{}")
+    if stored.get("battery_kwh"):
+        return {"kwh": stored["battery_kwh"], "source": "entered"}
+    end = datetime.now(UTC)
+    start = end - timedelta(days=90)
+    names = [PLAN_COUNTERS["charge"], PLAN_COUNTERS["discharge"]]
+    samples = counter_samples(names, start, HALF_HOURLY, end)
+    charge, discharge = (Counter(samples[name], HALF_HOURLY_GAP) for name in names)
+    levels = database().last_in_buckets(["battery_soc"], start, end, 1800)["battery_soc"]
+    capacity, _ = planner.estimate_battery(levels, charge, discharge)
+    return {"kwh": capacity, "source": "estimated"} if capacity else {}
 
 
 @app.post("/api/planner/settings")

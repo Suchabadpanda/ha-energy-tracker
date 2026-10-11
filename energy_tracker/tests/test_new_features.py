@@ -919,3 +919,9 @@ def test_device_figures_start_when_the_heat_pump_readings_do():
     month = client.get("/api/month").json()["by_device"]
     if month and heat_from.astimezone(zone).day > 1:
         assert month["from"] and month["carried_gbp"] is None
+
+
+def test_setup_gives_the_battery_size_as_entered_or_worked_out():
+    assert client.get("/api/setup").json()["battery_kwh"] is None  # nothing to go on yet
+    assert client.post("/api/planner/settings", json={"battery_kwh": 16}).json()["saved"]
+    assert client.get("/api/setup").json()["battery_kwh"] == 16

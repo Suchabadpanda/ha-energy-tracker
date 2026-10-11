@@ -119,6 +119,11 @@ totals, costs) still comes from the readings stored every `poll_seconds`. If the
 connection drops, for example while Home Assistant restarts, the tiles carry on from the
 stored readings and reconnect on their own.
 
+The **Battery charge** tile also shows how many kWh are left in the battery and a bar of how
+full it is. The kWh come from the battery's usable size: the size entered under **Battery
+used for the plan** in the Tariff switch planner, or else the size worked out from the last
+90 days of charging.
+
 ## Costs
 
 - Costs come from the inverter's lifetime import and export counters, split into half-hour

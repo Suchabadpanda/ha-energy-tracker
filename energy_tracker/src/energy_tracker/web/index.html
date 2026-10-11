@@ -148,6 +148,8 @@
   .progress { height: 14px; border-radius: 7px; background: var(--bg); border: 1px solid var(--line); overflow: hidden; }
   .progress .bar { height: 100%; width: 0; background: var(--good); border-radius: 7px 0 0 7px;
                    transition: width .4s ease; }
+  .progress.soc { height: 8px; margin-top: 8px; }
+  .progress.soc .bar { background: var(--battery); border-radius: 4px; transition: none; }
   .progress-labels { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 4px 16px; margin-top: 8px;
                      font-size: 14px; }
   .progress-labels span:first-child { font-weight: 600; }
@@ -948,7 +950,26 @@ const NOW_TILES = [
     note: v => Math.abs(v) < 0.02 ? "Idle" : v > 0 ? "Importing" : "Exporting" },
   { metric: "battery_power", label: "Battery", unit: "kW", abs: true, color: "var(--battery)",
     note: v => Math.abs(v) < 0.02 ? "Idle" : v > 0 ? "Charging" : "Discharging" },
-  { metric: "battery_soc", label: "Battery charge", unit: "%", digits: 0, color: "var(--battery)" },
+  { metric: "battery_soc", label: "Battery charge", unit: "%", digits: 0, color: "var(--battery)",
+    // Energy left in kWh, from the battery's usable size, and a bar showing how full it is.
+    extra: (tile, percent) => {
+      if (percent == null) return;
+      const size = setup.battery_kwh;
+      if (size) {
+        tile.querySelector(".note").textContent =
+          (size * percent / 100).toFixed(1) + " of " + size.toFixed(1) + " kWh left";
+      }
+      const gauge = Object.assign(document.createElement("div"), { className: "progress soc" });
+      gauge.setAttribute("role", "progressbar");
+      gauge.setAttribute("aria-valuemin", "0");
+      gauge.setAttribute("aria-valuemax", "100");
+      gauge.setAttribute("aria-valuenow", String(Math.round(percent)));
+      gauge.setAttribute("aria-label", "Battery charge");
+      const bar = Object.assign(document.createElement("div"), { className: "bar" });
+      bar.style.width = Math.max(0, Math.min(100, percent)) + "%";
+      gauge.append(bar);
+      tile.append(gauge);
+    } },
 ];
 const USAGE_TILES = [
   { metric: "load_power", label: "Total consumption", unit: "kW", color: "var(--load)" },
@@ -1054,6 +1075,7 @@ function renderTiles(el, tiles, latest) {
       note.textContent = "No data";
     }
     tile.append(label, value, note);
+    if (t.extra) t.extra(tile, reading ? reading.value : null);
     return tile;
   }));
 }

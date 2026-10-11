@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.32.6
+
+- The Battery charge tile shows the kWh left in the battery and a bar of how full it is.
+
 ## 0.32.5
 
 - "Where it's going" and "Today by device" now list house load, EV charger, then heat pump,
