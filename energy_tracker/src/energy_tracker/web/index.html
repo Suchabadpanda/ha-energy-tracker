@@ -540,7 +540,7 @@
     </div>
   </div>
 
-  <div id="heating-section" hidden>
+  <div id="heating-section">
     <h2 id="heating-heading">Heat pump and the weather</h2>
     <div class="tiles" id="heating-tiles"></div>
     <div class="chart" style="margin-top: 12px;">
@@ -3391,7 +3391,11 @@ function renderHeating(data) {
 async function refreshHeating() {
   if (!sectionOpen("heating-heading")) return;  // fetched when the section is opened
   try { renderHeating(await getJson("api/heating")); }
-  catch (err) { document.getElementById("heating-hint").textContent = "Could not compare with the weather (" + err.message + ")."; }
+  catch (err) {
+    // Show the section, so the problem can be seen rather than the section going missing.
+    document.getElementById("heating-section").hidden = false;
+    document.getElementById("heating-hint").textContent = "Could not compare with the weather (" + err.message + ").";
+  }
 }
 
 // --- Payback -------------------------------------------------------------------------------

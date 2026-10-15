@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.33.1
+
+- Heat pump and the weather could disappear for good if it had been folded, as it stayed
+  hidden until opened but could not be opened while hidden. It is now shown until it is
+  known that there is no heat pump, and shows any error rather than vanishing.
+
 ## 0.33.0
 
 - New **Averages** section: everything per day, by month or by year, so periods of any
