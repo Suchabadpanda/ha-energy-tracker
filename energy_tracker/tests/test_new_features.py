@@ -746,7 +746,7 @@ def test_planner_endpoint_gives_months_totals_and_a_charging_plan():
     totals = data["totals"]
     assert totals["replayed_gbp"] > totals["moved_gbp"] and totals["planned_gbp"] is not None
     # A three-hour window at 2.5 kW cannot carry a 1 kW house for the other 21 hours.
-    assert data["shortfall"]["short_days"] == 39 and data["shortfall"]["dear_kwh"] > 0
+    assert data["shortfall"]["short_days"] == data["days"] and data["shortfall"]["dear_kwh"] > 0
 
     # A bigger, faster battery entered by hand lasts, and the plan gets cheaper.
     assert client.post("/api/planner/settings", json={"battery_kwh": 30, "charge_kw": 10}).json()
