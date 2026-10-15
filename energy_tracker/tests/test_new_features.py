@@ -739,7 +739,8 @@ def test_planner_endpoint_gives_months_totals_and_a_charging_plan():
         "name": "Cheap afternoons",
         "dynamic": False,
     }
-    assert data["days"] == 39 and sum(m["days"] for m in data["months"]) == 39
+    # 39 whole days, or 40 when run in the hour after midnight (the first day starts on it).
+    assert data["days"] in (39, 40) and sum(m["days"] for m in data["months"]) == data["days"]
     assert data["cheap_times"] == [{"start": "13:00", "end": "16:00", "p_per_kwh": 5.0}]
     assert 9 < data["battery"]["estimated_kwh"] < 11 and data["battery"]["estimated_kw"] == 2.5
     totals = data["totals"]
