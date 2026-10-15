@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.33.0
+
+- New **Averages** section: everything per day, by month or by year, so periods of any
+  length compare fairly. Used, house load, EV charger, heat pump, solar, import, export,
+  self-sufficiency, net cost and outdoor temperature. Tiles compare the last 30 days with
+  the 30 before and the same time last year, with weekdays against weekends and the
+  busiest and quietest days.
+
 ## 0.32.6
 
 - The Battery charge tile shows the kWh left in the battery and a bar of how full it is.

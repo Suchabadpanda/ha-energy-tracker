@@ -27,6 +27,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 
 from . import (
+    averages,
     billcheck,
     billreader,
     collector,
@@ -122,7 +123,7 @@ async def lifespan(_: FastAPI):
         await asyncio.to_thread(thread.join, 10)
 
 
-app = FastAPI(title="Energy Tracker", version="0.32.6", lifespan=lifespan)
+app = FastAPI(title="Energy Tracker", version="0.33.0", lifespan=lifespan)
 # The page and its chart data are mostly text: sent compressed, they are a quarter the size.
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
@@ -601,6 +602,7 @@ def keep_figures_ready(stop: threading.Event) -> None:
         (monthly_summary, (None,)),
         (yearly_report, (None,)),
         (device_costs, ()),
+        (daily_averages, ()),
         (heat_pump_and_weather, ()),
         (system_performance, ("12m",)),
         (more_panels, ()),
@@ -1228,6 +1230,68 @@ def device_costs() -> dict:
                 **devices.by_month_and_year(days),
             }
     return result
+
+
+# --- Averages per day ---------------------------------------------------------------------------
+
+
+@app.get("/api/averages")
+@kept
+def daily_averages() -> dict:
+    """Averages per day by month and by year, with the devices, costs and the weather."""
+    zone = local_timezone()
+    now = datetime.now(UTC)
+    firsts = [database().first_time(name) for name in (averages.LOAD, averages.IMPORT)]
+    if not all(firsts):
+        return {"has_data": False}
+    end = local_midnight(now, zone)  # whole days, up to the end of yesterday
+    start = local_midnight(max(firsts), zone) + timedelta(days=1)
+    if start >= end:
+        return {"has_data": False}
+    samples = counter_samples(averages.COUNTERS, start - timedelta(days=1), HALF_HOURLY, end)
+    counters = {name: Counter(series, HALF_HOURLY_GAP) for name, series in samples.items()}
+    last_day = (end - timedelta(days=1)).date()
+    days = averages.daily_energy(counters, start.date(), last_day, zone)
+    # Net cost of each day: import at its price, less export credit, plus standing charge.
+    for day, gbp in roi.daily_costs(
+        counters[averages.IMPORT], counters[averages.EXPORT] or None, start, end, zone, schedule()
+    ).items():
+        if day in days:
+            days[day]["net_gbp"] = gbp
+    # The devices, from when every device counter was being read.
+    found = device_costs()
+    if found.get("has_data"):
+        device_samples = counter_samples(
+            devices.ALL_COUNTERS, start - timedelta(days=1), HALF_HOURLY, end
+        )
+        device_counters = {
+            name: Counter(series, HALF_HOURLY_GAP) for name, series in device_samples.items()
+        }
+        begun = devices.readings_start(device_counters)
+        device_start = (
+            max(start, local_midnight(begun, zone) + timedelta(days=1)) if begun else start
+        )
+        if device_start < end:
+            for day, row in devices.daily(
+                device_counters, device_start, end, zone, schedule(), settings().ev_on_smart_load
+            ).items():
+                if day in days:
+                    days[day].update(
+                        house_kwh=row.get("rest_kwh"),
+                        ev_kwh=row.get("ev_charger_kwh"),
+                        heat_pump_kwh=row.get("heat_pump_kwh"),
+                    )
+    # The outdoor temperature, where it has been recorded.
+    hourly = database().series([weather.METRIC], start, 3600).get(weather.METRIC, [])
+    for day, value in heating.daily_means(hourly, zone).items():
+        if day in days:
+            days[day]["temperature"] = value
+    return {
+        **averages.build(days, end.date()),
+        "smart_load_label": settings().smart_load_label,
+        "heat_pump": bool(found.get("heat_pump")),
+        "ev_charger": bool(found.get("ev_charger")),
+    }
 
 
 # --- Performance and battery sizing --------------------------------------------------------------

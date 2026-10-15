@@ -212,6 +212,23 @@ how much each used.
   from before then can only come from Home Assistant's long-term statistics (see **Older
   history**).
 
+## Averages
+
+Every figure here is an average per day, so a 28-day month, a 31-day month or a month only
+partly recorded (marked *) can be compared fairly. Choose **By month** or **By year**.
+
+- **Tiles**: the last 30 days, against the 30 days before and, once there is a year of
+  readings, the same 30 days last year. Energy changes are shown as a percentage, the net
+  cost as an amount per day.
+- **Table**: used, house load, EV charger, heat pump, solar, imported and exported, all in
+  kWh a day; **self-sufficient**, the share of the electricity used that did not have to be
+  bought; **net cost** a day (import less export credit, with the standing charge); and the
+  average outdoor temperature where it was recorded.
+- Below the tiles: weekdays against weekends over the last 90 days, and the busiest and
+  quietest days of the last year.
+
+Device figures start from when every device meter was being read, so earlier months show –.
+
 ## Heat pump and the weather
 
 Shown when a smart load is fitted. Each dot on the chart is a day: the heat pump's use

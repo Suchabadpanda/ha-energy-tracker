@@ -77,6 +77,8 @@ The figures shown are made-up example data.
 - **Where it's going**: smart load (such as a heat pump), EV charger and the rest of the house, where those are fitted.
 - **Running costs by device**: what the smart load, the EV charger and the rest of the house
   cost to run, by month and year.
+- **Averages**: everything per day, by month or year, with the last 30 days compared with the
+  30 before and the same time last year.
 - **Heat pump and the weather**: each day's heat pump use against the outdoor temperature,
   extra use per degree colder, and kWh per degree day so winters can be compared fairly.
 - **Today**: energy generated, used, imported and exported, and use by device.

@@ -519,6 +519,27 @@
     </div>
   </div>
 
+  <div class="filters">
+    <h2 id="averages-heading">Averages</h2>
+    <select id="averages-by" aria-label="Show averages by month or by year">
+      <option value="months" selected>By month</option>
+      <option value="years">By year</option>
+    </select>
+  </div>
+  <div id="averages-section">
+    <div class="tiles" id="averages-tiles"></div>
+    <div class="hint" id="averages-highlights"></div>
+    <div class="chart" style="margin-top: 12px;">
+      <div class="table-scroll">
+        <table>
+          <thead id="averages-head"></thead>
+          <tbody id="averages-rows"></tbody>
+        </table>
+      </div>
+      <div class="hint" id="averages-hint"></div>
+    </div>
+  </div>
+
   <div id="heating-section" hidden>
     <h2 id="heating-heading">Heat pump and the weather</h2>
     <div class="tiles" id="heating-tiles"></div>
@@ -3136,6 +3157,124 @@ async function refreshDeviceCosts() {
   catch (err) { document.getElementById("device-costs-hint").textContent = "Could not work out device costs (" + err.message + ")."; }
 }
 
+// --- Averages per day ------------------------------------------------------------------------------
+
+let lastAverages = null;
+function renderAverages(data) {
+  lastAverages = data;
+  const tiles = document.getElementById("averages-tiles");
+  if (!data.has_data) {
+    tiles.replaceChildren();
+    document.getElementById("averages-rows").replaceChildren();
+    document.getElementById("averages-hint").textContent = "Averages appear after the first full day of readings.";
+    return;
+  }
+  const kwh = v => v == null ? "–" : v.toFixed(1) + " kWh";
+  const cash = v => v == null ? "–" : money(v);
+  const recent = data.last_30, before = data.previous_30, lastYear = data.year_ago_30;
+  // Change against the 30 days before, and the same time last year where there is one.
+  // Energy changes as a percentage; money as an amount, as a percentage of a small or
+  // negative cost means little.
+  const change = (key, now) => {
+    const parts = [];
+    for (const [other, name] of [[before, "the 30 days before"], [lastYear, "this time last year"]]) {
+      const was = other?.[key];
+      if (now == null || was == null) continue;
+      if (key === "net_gbp") {
+        const diff = now - was;
+        parts.push(Math.abs(diff) < 0.005 ? "Same as " + name
+          : money(Math.abs(diff)) + (diff > 0 ? " more" : " less") + " a day than " + name);
+        continue;
+      }
+      if (Math.abs(was) < 0.05) continue;
+      const pct = Math.round((now / was - 1) * 100);
+      parts.push((pct === 0 ? "Same as " : Math.abs(pct) + "% " + (pct > 0 ? "more" : "less") + " than ") + name);
+    }
+    return parts.join("; ");
+  };
+  const tile = (label, value, unit, note, colour) => {
+    const el = Object.assign(document.createElement("div"), { className: "tile tinted" });
+    el.style.setProperty("--c", colour);
+    const shown = Object.assign(document.createElement("div"), { className: "value", textContent: value });
+    if (unit) shown.append(Object.assign(document.createElement("small"), { textContent: unit }));
+    el.append(Object.assign(document.createElement("div"), { className: "label", textContent: label }), shown,
+              Object.assign(document.createElement("div"), { className: "note", textContent: note }));
+    return el;
+  };
+  const label = data.smart_load_label || "Heat pump";
+  const list = [
+    ["used", "Used a day", kwh, "var(--load)"],
+    ["house_kwh", "House load a day", kwh, "var(--house)"],
+    ...(data.ev_charger ? [["ev_kwh", "EV charger a day", kwh, "var(--ev)"]] : []),
+    ...(data.heat_pump ? [["heat_pump_kwh", label + " a day", kwh, "var(--heatpump)"]] : []),
+    ["solar", "Solar a day", kwh, "var(--solar)"],
+    ["net_gbp", "Net cost a day", cash, "var(--accent)"],
+  ];
+  tiles.replaceChildren(...(recent ? list.filter(([key]) => recent[key] != null).map(([key, name, show, colour]) =>
+    key === "net_gbp"
+      ? tile(name, show(recent[key]), "", change(key, recent[key]) || "Last 30 days", colour)
+      : tile(name, recent[key].toFixed(1), "kWh", change(key, recent[key]) || "Last 30 days", colour)) : []));
+
+  const notes = [];
+  if (recent?.self_sufficiency_percent != null) {
+    notes.push("Over the last 30 days " + recent.self_sufficiency_percent + "% of the electricity used did not have to be bought.");
+  }
+  if (data.weekday?.used != null && data.weekend?.used != null) {
+    notes.push("Over the last 90 days you used " + kwh(data.weekday.used) + " on an average weekday and " +
+               kwh(data.weekend.used) + " at weekends.");
+  }
+  const dayName = d => new Date(d + "T00:00").toLocaleDateString([], { weekday: "short", day: "numeric", month: "short", year: "numeric" });
+  if (data.busiest_day && data.quietest_day) {
+    notes.push("In the last year the busiest day was " + dayName(data.busiest_day.day) + " (" + kwh(data.busiest_day.used) +
+               ") and the quietest " + dayName(data.quietest_day.day) + " (" + kwh(data.quietest_day.used) + ").");
+  }
+  document.getElementById("averages-highlights").textContent = notes.join(" ");
+
+  // The table: every figure is a day's average for the month or year.
+  const by = document.getElementById("averages-by").value;
+  const rows = [...data[by]].reverse();
+  const hasTemp = rows.some(r => r.temperature != null);
+  const columns = [
+    ["used", "Used", kwh],
+    ["house_kwh", "House load", kwh],
+    ...(data.ev_charger ? [["ev_kwh", "EV charger", kwh]] : []),
+    ...(data.heat_pump ? [["heat_pump_kwh", label, kwh]] : []),
+    ["solar", "Solar", kwh],
+    ["imported", "Imported", kwh],
+    ["exported", "Exported", kwh],
+    ["self_sufficiency_percent", "Self-sufficient", v => v == null ? "–" : v + "%"],
+    ["net_gbp", "Net cost", cash],
+    ...(hasTemp ? [["temperature", "Outside", v => v == null ? "–" : v.toFixed(1) + " °C"]] : []),
+  ];
+  const th = (text, cls) => Object.assign(document.createElement("th"), { textContent: text, className: cls ?? "" });
+  const head = document.createElement("tr");
+  head.append(th(by === "months" ? "Month" : "Year"), ...columns.map(([, name]) => th(name, "num")));
+  document.getElementById("averages-head").replaceChildren(head);
+  const periodName = r => by === "months"
+    ? new Date(r.name + "-01T00:00").toLocaleDateString([], { month: "short", year: "numeric" })
+    : r.name;
+  document.getElementById("averages-rows").replaceChildren(...rows.map(r => {
+    const tr = document.createElement("tr");
+    const first = Object.assign(document.createElement("td"), { textContent: periodName(r) + (r.complete ? "" : " *") });
+    if (!r.complete) first.title = r.days + " days counted";
+    tr.append(first, ...columns.map(([key, , show]) =>
+      Object.assign(document.createElement("td"), { textContent: show(r[key]), className: "num" })));
+    return tr;
+  }));
+  document.getElementById("averages-hint").textContent =
+    "Every figure is an average per day, so months and years of any length compare fairly. * means only part of " +
+    "the period was recorded. Self-sufficient is the share of the electricity used that did not have to be bought. " +
+    "Net cost is import less export credit, with the standing charge. Device figures start when every device " +
+    "meter was being read; earlier periods show –.";
+}
+
+async function refreshAverages() {
+  if (!sectionOpen("averages-heading")) return;  // fetched when the section is opened
+  try { renderAverages(await getJson("api/averages")); }
+  catch (err) { document.getElementById("averages-hint").textContent = "Could not work out the averages (" + err.message + ")."; }
+}
+document.getElementById("averages-by").addEventListener("change", () => lastAverages && renderAverages(lastAverages));
+
 // --- Heat pump and the weather -------------------------------------------------------------------
 
 function renderHeating(data) {
@@ -3988,6 +4127,7 @@ function refreshEverything() {
   refreshBills();
   refreshDeviceCosts();
   refreshHeating();
+  refreshAverages();
 }
 
 // The page is refreshed in three parts, each as often as it is worth: the tiles and today's
@@ -4100,6 +4240,7 @@ const SECTION_LOADERS = {
   "compare-heading": () => refreshCompare(), "planner-heading": () => refreshPlanner(),
 
   "yearly-heading": () => refreshYearly(), "heating-heading": () => refreshHeating(),
+  "averages-heading": () => refreshAverages(),
 };
 function setFolded(h2, fold) {
   const wasFolded = h2.getAttribute("aria-expanded") === "false";
@@ -4243,6 +4384,8 @@ async function start() {
   every(10 * MINUTE, refreshDeviceCosts);
   refreshHeating();
   every(10 * MINUTE, refreshHeating);
+  refreshAverages();
+  every(10 * MINUTE, refreshAverages);
   refreshPayback();
   every(30 * MINUTE, refreshPayback);
   refreshIncome();
