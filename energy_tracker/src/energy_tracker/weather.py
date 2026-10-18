@@ -40,7 +40,8 @@ def celsius(value: object, unit: str | None) -> float | None:
         degrees = (degrees - 32) * 5 / 9
     elif unit not in (None, "°C", "C"):
         return None
-    return round(degrees, 2) if -60 <= degrees <= 60 else None
+    # Up to boiling, for a hot water tank as well as the weather.
+    return round(degrees, 2) if -60 <= degrees <= 100 else None
 
 
 def reading(state: dict | None) -> float | None:
@@ -131,23 +132,32 @@ def backfill(
     entity: str,
     now: datetime,
     days: int,
+    metric: str = METRIC,
+    detail_first: bool = False,
 ) -> int:
     """Bring in the temperatures Home Assistant already has, once for each entity.
 
     A sensor's long-term statistics can go back years; a weather entity only has recent
-    history. Returns how many readings were stored.
+    history. With `detail_first`, recent detailed history is preferred to hourly averages
+    (for a hot water tank, whose reheats are shorter than an hour). Returns how many
+    readings were stored.
     """
     done = f"weather_backfilled:{entity}"
     if db.get_setting(done):
         return 0
     found: list[tuple[datetime, float]] = []
-    if not entity.startswith("weather."):
+    if detail_first and days:
+        try:
+            found = recent_history(client, entity, now - timedelta(days=days), now)
+        except httpx.HTTPError as exc:
+            log.info("No recent history for %s (%s)", entity, exc)
+    if not found and not entity.startswith("weather."):
         try:
             found = statistics(websocket_url, token, entity)
         except Exception as exc:  # noqa: BLE001 - recent history is still worth having
             log.info("No long-term temperature statistics for %s (%s)", entity, exc)
     if not found and days:
         found = recent_history(client, entity, now - timedelta(days=days), now)
-    added = db.insert_readings((when, METRIC, value) for when, value in found)
+    added = db.insert_readings((when, metric, value) for when, value in found)
     db.set_setting(done, now.isoformat())
     return added

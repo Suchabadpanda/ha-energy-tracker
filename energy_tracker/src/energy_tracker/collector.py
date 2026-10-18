@@ -12,7 +12,7 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 
-from . import backfill, income, live, weather
+from . import backfill, hotwater, income, live, weather
 from .config import Metric, Settings
 from .db import Database
 from .normalise import normalise
@@ -102,6 +102,7 @@ def run(settings: Settings, db: Database, metrics: list[Metric], stop: threading
         last_stored = datetime.now(UTC)
         last_thinned: datetime | None = None
         weather_checked = False
+        tank_checked = False
 
         while not stop.is_set():
             try:
@@ -129,6 +130,29 @@ def run(settings: Settings, db: Database, metrics: list[Metric], stop: threading
                             log.info("Brought in %d earlier outdoor temperatures", found)
                     except (httpx.HTTPError, sqlite3.Error, ValueError, OSError) as exc:
                         log.info("Could not bring in earlier outdoor temperatures: %s", exc)
+                # The hot water cylinder's temperature, if one is named.
+                if settings.hot_water_tank_entity:
+                    tank = weather.reading(states.get(settings.hot_water_tank_entity))
+                    if tank is not None:
+                        rows.append((now, hotwater.TANK, tank))
+                    if not tank_checked:
+                        tank_checked = True
+                        try:
+                            found = weather.backfill(
+                                db,
+                                client,
+                                settings.ha_websocket_url,
+                                settings.ha_token,
+                                settings.hot_water_tank_entity,
+                                now,
+                                settings.backfill_days,
+                                metric=hotwater.TANK,
+                                detail_first=True,
+                            )
+                            if found:
+                                log.info("Brought in %d earlier tank temperatures", found)
+                        except (httpx.HTTPError, sqlite3.Error, ValueError, OSError) as exc:
+                            log.info("Could not bring in earlier tank temperatures: %s", exc)
                 if rows:
                     db.insert_readings(rows)
                     last_stored = now
@@ -146,7 +170,8 @@ def run(settings: Settings, db: Database, metrics: list[Metric], stop: threading
                 # Once a day, thin old readings so the database stays small.
                 if last_thinned is None or now - last_thinned > THIN_EVERY:
                     removed = db.thin(
-                        [*names, weather.METRIC], now - timedelta(days=settings.detail_days)
+                        [*names, weather.METRIC, hotwater.TANK],
+                        now - timedelta(days=settings.detail_days),
                     )
                     # ...and drop whatever has passed the age limit. Run daily, this removes
                     # a day's worth at a time.

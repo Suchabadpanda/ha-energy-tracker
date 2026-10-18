@@ -34,6 +34,7 @@ from . import (
     devices,
     heating,
     history,
+    hotwater,
     import_history,
     income,
     live,
@@ -123,7 +124,7 @@ async def lifespan(_: FastAPI):
         await asyncio.to_thread(thread.join, 10)
 
 
-app = FastAPI(title="Energy Tracker", version="0.34.0", lifespan=lifespan)
+app = FastAPI(title="Energy Tracker", version="0.35.0", lifespan=lifespan)
 # The page and its chart data are mostly text: sent compressed, they are a quarter the size.
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
@@ -264,7 +265,7 @@ def today() -> dict:
     # Reaching back a day before midnight lets the midnight value be worked out even if
     # nothing was being collected at midnight itself.
     samples = counter_samples(
-        sorted({*DEVICE_COUNTERS, *COST_COUNTERS, *devices.ALL_COUNTERS}),
+        sorted({*DEVICE_COUNTERS, *COST_COUNTERS, *devices.ALL_COUNTERS, hotwater.TANK}),
         midnight - timedelta(days=1),
         5,
     )
@@ -369,41 +370,8 @@ def cost_by_device(
     )
 
     heat_pump = parts.get("heat_pump")
-    hot_water_per_day = None
     if heat_pump:
-        try:
-            hot_water_per_day = heat_pump_and_weather().get("warm_day_kwh")
-        except Exception:  # noqa: BLE001 - the split is a nice extra; the costs stand without it
-            log.exception("Could not work out hot-water use")
-    if heat_pump and hot_water_per_day:
-        # Each day, up to the usual warm-day use is hot water; anything above it is heating.
-        hot = {"kwh": 0.0, "gbp": 0.0, "true_gbp": 0.0}
-        for row in days.values():
-            used = row.get("heat_pump_kwh", 0.0)
-            if used <= 0:
-                continue
-            fraction = min(used, hot_water_per_day) / used
-            hot["kwh"] += used * fraction
-            hot["gbp"] += row.get("heat_pump_gbp", 0.0) * scale * fraction
-            hot["true_gbp"] += (
-                row.get("heat_pump_gbp", 0.0) * scale + row.get("heat_pump_solar_gbp", 0.0)
-            ) * fraction
-
-        def rounded(values: dict, true: bool) -> dict:
-            return {
-                "kwh": round(values["kwh"], 1),
-                "gbp": round(values["gbp"], 2),
-                "true_gbp": round(values["true_gbp"], 2) if true else None,
-            }
-
-        heating = {
-            "kwh": heat_pump["kwh"] - hot["kwh"],
-            "gbp": heat_pump["gbp"] - hot["gbp"],
-            "true_gbp": (heat_pump["true_gbp"] or 0.0) - hot["true_gbp"],
-        }
-        heat_pump["hot_water"] = rounded(hot, valued)
-        heat_pump["heating"] = rounded(heating, valued)
-        heat_pump["hot_water_per_day_kwh"] = hot_water_per_day
+        heat_pump.update(hot_water_split(days, samples, start, end, gap, scale, valued))
     return {
         "parts": parts,
         "battery_export": battery_export,
@@ -414,6 +382,83 @@ def cost_by_device(
         "carried_gbp": None if partial else round(cost["import_gbp"] - worked_out * scale, 2),
         # Set when the device readings began part-way through the period.
         "from": partial,
+    }
+
+
+def hot_water_split(
+    days: dict[date, dict],
+    samples: dict[str, list],
+    start: datetime,
+    end: datetime,
+    gap: timedelta | None,
+    scale: float,
+    valued: bool,
+) -> dict:
+    """The heat pump's use and cost split into heating and hot water, day by day.
+
+    Measured from the cylinder's reheats where the tank temperature was recorded. Other days
+    use the share the measured days had or, without any, the heat pump's usual use on warm
+    days as hot water. Empty when there is nothing to go on.
+    """
+    measured = hotwater.measured_hot_water(
+        samples,
+        start,
+        end,
+        local_timezone(),
+        devices.CIRCUIT,
+        devices.EV,
+        devices.HEAT_PUMP,
+        settings().ev_on_smart_load,
+        gap,
+    )
+    measured = {day: kwh for day, kwh in measured.items() if day in days}
+    used_on_measured = sum(days[day].get("heat_pump_kwh", 0.0) for day in measured)
+    share = sum(measured.values()) / used_on_measured if used_on_measured > 0.5 else None
+    warm_day = None
+    if share is None:
+        try:
+            warm_day = heat_pump_and_weather().get("warm_day_kwh")
+        except Exception:  # noqa: BLE001 - the split is a nice extra; the costs stand without it
+            log.exception("Could not work out hot-water use")
+        if not warm_day:
+            return {}
+    hot = {"kwh": 0.0, "gbp": 0.0, "true_gbp": 0.0}
+    total = {"kwh": 0.0, "gbp": 0.0, "true_gbp": 0.0}
+    for day, row in days.items():
+        used = row.get("heat_pump_kwh", 0.0)
+        gbp = row.get("heat_pump_gbp", 0.0) * scale
+        true = gbp + row.get("heat_pump_solar_gbp", 0.0)
+        total["kwh"] += used
+        total["gbp"] += gbp
+        total["true_gbp"] += true
+        if used <= 0:
+            continue
+        if day in measured:
+            water = min(used, measured[day])
+        elif share is not None:
+            water = used * share
+        else:
+            water = min(used, warm_day)
+        fraction = water / used
+        hot["kwh"] += water
+        hot["gbp"] += gbp * fraction
+        hot["true_gbp"] += true * fraction
+
+    def rounded(values: dict) -> dict:
+        return {
+            "kwh": round(values["kwh"], 1),
+            "gbp": round(values["gbp"], 2),
+            "true_gbp": round(values["true_gbp"], 2) if valued else None,
+        }
+
+    heating = {key: total[key] - hot[key] for key in total}
+    return {
+        "hot_water": rounded(hot),
+        "heating": rounded(heating),
+        # How the split was made: days measured from the tank, and the rest.
+        "split_measured_days": len(measured),
+        "split_days": len(days),
+        "hot_water_per_day_kwh": warm_day,
     }
 
 
@@ -466,7 +511,7 @@ def month(
         raise HTTPException(status_code=404, detail="That month has not started yet")
 
     samples = counter_samples(
-        sorted({*COST_COUNTERS, *DEVICE_COUNTERS, *devices.ALL_COUNTERS}),
+        sorted({*COST_COUNTERS, *DEVICE_COUNTERS, *devices.ALL_COUNTERS, hotwater.TANK}),
         start - timedelta(days=1),
         HALF_HOURLY,
         following_month(start) + timedelta(days=1),
@@ -1215,7 +1260,9 @@ def heat_pump_and_weather() -> dict:
     if start >= end:
         return result
     # Only the energy each device used matters here, so the quicker costing will do.
-    samples = counter_samples(devices.COUNTERS, start - timedelta(days=1), HALF_HOURLY, end)
+    samples = counter_samples(
+        [*devices.COUNTERS, hotwater.TANK], start - timedelta(days=1), HALF_HOURLY, end
+    )
     counters = {name: Counter(series, HALF_HOURLY_GAP) for name, series in samples.items()}
     if not counters[devices.LOAD] or not counters[devices.IMPORT]:
         return result
@@ -1224,7 +1271,18 @@ def heat_pump_and_weather() -> dict:
     hourly = database().series([weather.METRIC], start, 3600)[weather.METRIC]
     result.update(heating.analyse(used, heating.daily_means(hourly, zone)))
     if design:
-        result["scop"] = heating.scop(result, design, (end - timedelta(days=1)).date())
+        measured = hotwater.measured_hot_water(
+            samples,
+            start,
+            end,
+            zone,
+            devices.CIRCUIT,
+            devices.EV,
+            devices.HEAT_PUMP,
+            settings().ev_on_smart_load,
+            HALF_HOURLY_GAP,
+        )
+        result["scop"] = heating.scop(result, design, (end - timedelta(days=1)).date(), measured)
     return result
 
 

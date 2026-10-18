@@ -102,6 +102,8 @@ class Settings:
     # The heat pump's own lifetime energy meter (such as Samsung's, through SmartThings).
     # When set, the heat pump's use comes from it rather than the smart load circuit.
     heat_pump_energy_entity: str = ""
+    # The hot water cylinder's temperature: its reheats tell hot water from heating.
+    hot_water_tank_entity: str = ""
     # What the Sigenergy "smart load 1" port feeds, as shown on the dashboard.
     smart_load_label: str = "Heat pump"
     # True if the EV charger is wired through the smart load port, so its use is taken off
@@ -161,6 +163,7 @@ def load_settings() -> Settings:
             axle_event_entity=str(options.get("axle_event_entity") or "sensor.axle_event").strip(),
             outdoor_temperature_entity=str(options.get("outdoor_temperature_entity") or "").strip(),
             heat_pump_energy_entity=str(options.get("heat_pump_energy_entity") or "").strip(),
+            hot_water_tank_entity=str(options.get("hot_water_tank_entity") or "").strip(),
             ev_on_smart_load=_flag(options.get("ev_on_smart_load"), True),
         )
 
@@ -184,5 +187,6 @@ def load_settings() -> Settings:
         axle_event_entity=(env.get("AXLE_EVENT_ENTITY") or "sensor.axle_event").strip(),
         outdoor_temperature_entity=(env.get("OUTDOOR_TEMPERATURE_ENTITY") or "").strip(),
         heat_pump_energy_entity=(env.get("HEAT_PUMP_ENERGY_ENTITY") or "").strip(),
+        hot_water_tank_entity=(env.get("HOT_WATER_TANK_ENTITY") or "").strip(),
         ev_on_smart_load=_flag(env.get("EV_ON_SMART_LOAD"), True),
     )

@@ -126,10 +126,14 @@ def kw_per_degree(design: dict) -> float | None:
     return design["heat_loss_kw"] / spread
 
 
-def scop(found: dict, design: dict, today: date) -> dict | None:
+def scop(
+    found: dict, design: dict, today: date, hot_water: dict[date, float] | None = None
+) -> dict | None:
     """Estimated heating efficiency by month and winter, from `analyse`'s results.
 
-    Each day's heating electricity is its use less the usual warm-day (hot water) use. Each
+    Each day's heating electricity is its use less its hot water: as measured from the
+    cylinder's reheats (`hot_water`, kWh by day) where there is that, or else the usual
+    warm-day use. Each
     day's heat is kW per degree × 24 hours × degree days below `base_c`; the base, lower than
     the indoor temperature, allows for free heat from people, appliances and the sun.
     """
@@ -137,10 +141,12 @@ def scop(found: dict, design: dict, today: date) -> dict | None:
     if per_degree is None or not found.get("has_data"):
         return None
     base = design.get("base_c") or BASE_C
-    hot_water = found.get("warm_day_kwh") or 0.0
+    usual = found.get("warm_day_kwh") or 0.0
+    measured = hot_water or {}
     days = []
     for row in found["points"]:
-        heating = max(0.0, row["kwh"] - min(row["kwh"], hot_water))
+        water = measured.get(row["day"], usual)
+        heating = max(0.0, row["kwh"] - min(row["kwh"], water))
         heat = per_degree * 24 * max(0.0, base - row["temperature"])
         days.append((row["day"], heat, heating))
 
@@ -171,7 +177,8 @@ def scop(found: dict, design: dict, today: date) -> dict | None:
     result = {
         "kw_per_degree": round(per_degree, 3),
         "base_c": base,
-        "hot_water_kwh_a_day": hot_water or None,
+        "hot_water_kwh_a_day": usual or None,
+        "measured_days": sum(1 for row in found["points"] if row["day"] in measured),
         "months": grouped(lambda d: f"{d:%Y-%m}"),
         "seasons": grouped(season_of),
         "last_30_days": summary("Last 30 days", recent) if recent else None,

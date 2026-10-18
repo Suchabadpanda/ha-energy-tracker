@@ -16,7 +16,8 @@ client = TestClient(api.app)
 def test_temperatures_are_read_in_celsius_from_weather_entities_and_sensors():
     assert weather.celsius("50", "°F") == 10.0
     assert weather.celsius("unavailable", "°C") is None
-    assert weather.celsius(12, "%") is None and weather.celsius(99, "°C") is None
+    assert weather.celsius(12, "%") is None and weather.celsius(120, "°C") is None
+    assert weather.celsius(65, "°C") == 65  # a hot water tank
     forecast = {
         "entity_id": "weather.home",
         "state": "rainy",

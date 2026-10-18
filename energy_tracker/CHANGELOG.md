@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.35.0
+
+- Heating and hot water are now **measured** when the hot water cylinder's temperature
+  sensor is named in the new `hot_water_tank_entity` option: half hours in which the tank
+  heats up count as hot water. Used by the Heat pump split tile and the estimated SCOP. Days
+  the tank readings don't cover are estimated as before. The tank's recent history is
+  brought in from Home Assistant on start.
+- Today by device shows the heat pump's heating and hot water in kWh.
+- Temperatures up to 100 °C are accepted, for a hot water tank.
+
 ## 0.34.0
 
 - **Estimated SCOP** under Heat pump and the weather: enter the figures from your heat loss

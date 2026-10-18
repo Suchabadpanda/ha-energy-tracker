@@ -209,6 +209,7 @@
 .tile.split { grid-column: span 2; }
 .tile.split > .label { margin-bottom: 4px; }
 .tile.split .halves { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.tile.split > .note { margin-top: 8px; }
 .tile.split .halves > div + div { border-left: 1px solid var(--line); padding-left: 12px; }
 .section-marker { height: 1px; margin-bottom: -1px; }
 </style>
@@ -279,10 +280,10 @@
       charging it. Battery export is electricity stored in the battery and later sold back to the grid: what
       it cost to store is no device's, and the payment for it is in Export credit. The standing charge and
       export credit belong to the house as a whole and are left out. See
-      "Running costs by device" for earlier months. The heat pump's heating and hot water are told apart once "Heat pump and the weather" has
-      a few warm days to go on: up to its usual warm-day use each day counts as hot water, and the rest as
-      heating. Hot water takes more energy in winter, so in cold months it is likely to be a little more
-      than shown.</div>
+      "Running costs by device" for earlier months. The heat pump's heating and hot water are measured from the hot water
+      tank's reheats wherever its temperature is recorded (name the tank sensor in the hot_water_tank_entity
+      option); on other days, up to the heat pump's usual warm-day use counts as hot water and the rest as
+      heating.</div>
   </div>
 
   <div class="filters">
@@ -1427,6 +1428,12 @@ function renderByDevice(boxId, split) {
       halves.append(half);
     }
     tile.append(halves);
+    // Say how the split was made: measured from the tank's reheats, or estimated.
+    const measuredDays = hp.split_measured_days ?? 0;
+    tile.append(Object.assign(document.createElement("div"), { className: "note",
+      textContent: measuredDays >= hp.split_days ? "Measured from the hot water tank's reheats"
+        : measuredDays ? "Measured from the tank on " + measuredDays + " of " + hp.split_days + " days; the rest estimated"
+        : "Estimated from the heat pump's use on warm days" }));
     row.append(tile);
   }
   // Electricity stored in the battery and sold back to the grid: no device used it.
@@ -1458,7 +1465,12 @@ function renderByDevice(boxId, split) {
 
 function renderToday(today, month) {
   const energy = today?.energy;
-  renderTiles(document.getElementById("devices"), installed(DEVICE_TILES), asReadings(energy));
+  // The heat pump's tile also says how much was heating and how much hot water.
+  const hpSplit = today?.by_device?.parts?.heat_pump;
+  const readings = asReadings(energy, hpSplit?.heating ? {
+    heat_pump_kwh: "Heating " + hpSplit.heating.kwh.toFixed(1) + ", hot water " + hpSplit.hot_water.kwh.toFixed(1) + " kWh",
+  } : {});
+  renderTiles(document.getElementById("devices"), installed(DEVICE_TILES), readings);
   document.getElementById("devices-hint").textContent = energy ? coverageHint(energy) : "";
   renderCost("cost", "cost-hint", today?.cost);
   renderCost("month", "month-hint", month?.cost, month ? !month.is_current : false);

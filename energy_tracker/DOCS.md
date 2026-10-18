@@ -83,6 +83,7 @@ their own mean cheaper or better, and dearer or a problem.
 | `smart_load_label` | Heat pump | What is connected to the gateway's smart load port 1, as named on the dashboard. |
 | `outdoor_temperature_entity` | (empty) | A temperature sensor outside, for the heat pump and the weather. Left empty, the first weather entity is used (Home Assistant sets one up for your home). |
 | `heat_pump_energy_entity` | (empty) | The heat pump's own lifetime energy meter, if it has one in Home Assistant (a Samsung heat pump through SmartThings, say). When set, the heat pump's use comes from it instead of the smart load circuit, and **Import older history** can bring in its past readings. |
+| `hot_water_tank_entity` | (empty) | The hot water cylinder's temperature sensor. Its reheats tell the heat pump's hot water from its heating. |
 | `ev_on_smart_load` | true | On if the EV charger is wired through smart load port 1. Its use is then taken off the smart load figure. Turn off if the charger is on its own circuit. |
 
 ## Optional equipment
@@ -141,11 +142,12 @@ used for the plan** in the Tariff switch planner, or else the size worked out fr
   of the period's import is still in the battery, or how much was bought before it. The
   standing charge and export credit are left out, as they belong to the house as a whole.
 - After the devices, a **split** tile divides the heat pump's cost into **Heating** and
-  **Hot water**. Hot water is
-  taken as up to the heat pump's usual use on warm days (worked out under **Heat pump and
-  the weather**); anything above that on a day is heating. Hot water takes more energy in
-  winter, so in cold months it is likely to be a little more than shown. The tile appears
-  once there are a few warm days to go on.
+  **Hot water**. Name the hot water cylinder's temperature sensor in the
+  `hot_water_tank_entity` option and it is **measured**: whenever the tank temperature rises
+  by a degree or more in half an hour, the cylinder is being reheated, and the heat pump's
+  electricity in that half hour counts as hot water. Without a tank sensor, or on days its
+  readings do not cover, it is estimated: up to the heat pump's usual use on warm days
+  counts as hot water. The tile says which. Today by device shows the same split in kWh.
 
 ### Time windows
 
