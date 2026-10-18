@@ -244,6 +244,25 @@ to need heating.
   October to April, and months with little heating are left blank, as hot water would
   swamp the figure.
 
+### Estimated SCOP
+
+Under **Heat loss survey**, enter the figures from the heat loss survey done for the heat
+pump (an MCS heat loss report, say): the total heat loss in kW, and the outdoor and indoor
+temperatures it was worked out for. Optionally add the survey's heating degree days a year
+and its design SCOP, to compare against.
+
+The tracker then works out how many kW the home loses for each degree colder outside (heat
+loss ÷ the difference between the two temperatures), estimates the heat needed each day
+from how far that day's average fell below 15.5 °C, and divides it by the electricity the
+heat pump used for heating that day (its use less the usual warm-day hot-water use). Added
+up over a month or a winter, that is an **estimated SCOP**, shown in a tile and a table
+column. Months with little heating are left blank.
+
+Treat it as a guide. Heat loss surveys tend to overstate the heat loss, which makes the
+SCOP look better than it is, and keeping the home cooler than the survey assumed makes it
+look worse. It is most useful for comparing one month or winter with another. Only a heat
+meter measures it exactly.
+
 The outdoor temperature comes from Home Assistant's weather entity (a forecast service,
 which reports the temperature near you), or from your own outdoor sensor if you name it in
 the `outdoor_temperature_entity` option. A sensor outside, out of the sun, is more accurate.

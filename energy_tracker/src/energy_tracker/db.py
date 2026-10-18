@@ -419,6 +419,10 @@ class Database:
             row = conn.execute("SELECT value FROM meta WHERE key = ?", (key,)).fetchone()
         return row[0] if row else None
 
+    def delete_setting(self, key: str) -> None:
+        with closing(self._connect()) as conn, conn:
+            conn.execute("DELETE FROM meta WHERE key = ?", (key,))
+
     def set_setting(self, key: str, value: str) -> None:
         with closing(self._connect()) as conn, conn:
             conn.execute(

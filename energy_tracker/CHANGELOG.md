@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.34.0
+
+- **Estimated SCOP** under Heat pump and the weather: enter the figures from your heat loss
+  survey and the tracker estimates the heat your home needed from how cold each day was,
+  divided by the electricity the heat pump used for heating, by month and winter. With the
+  survey's degree days and design SCOP, it also shows the yearly heat need and the
+  electricity that would take.
+- The heat pump tiles show their units small, so the figures fit.
+
 ## 0.33.1
 
 - Heat pump and the weather could disappear for good if it had been folded, as it stayed

@@ -553,7 +553,7 @@
       <div class="table-scroll">
         <table>
           <thead><tr><th>Period</th><th class="num">Days</th><th class="num">Average outside</th>
-            <th class="num">Heat pump</th><th class="num">Degree days</th><th class="num">kWh per degree day</th></tr></thead>
+            <th class="num">Heat pump</th><th class="num">Degree days</th><th class="num">kWh per degree day</th><th class="num" id="heating-scop-head" hidden>Estimated SCOP</th></tr></thead>
           <tbody id="heating-rows"></tbody>
         </table>
       </div>
@@ -563,6 +563,26 @@
         little heating are left blank, as hot water would swamp the figure.</div>
     </div>
     <div class="hint" id="heating-hint"></div>
+    <details id="heating-editor">
+      <summary>Heat loss survey (for the estimated SCOP)</summary>
+      <div class="hint">From the heat loss survey done for the heat pump (an MCS heat loss report, say). With it, the
+        tracker estimates the heat your home needed each day from how cold it was, and divides it by the electricity
+        the heat pump used for heating: an estimated SCOP. Surveys tend to overstate heat loss, so treat it as a
+        guide, best for comparing one month or winter with another.</div>
+      <form id="heating-form">
+        <label>Total heat loss (kW) <input type="number" name="heat_loss_kw" min="0.1" max="50" step="0.01" required placeholder="4.42"></label>
+        <label>Design outdoor temperature (°C) <input type="number" name="outdoor_c" min="-25" max="10" step="0.1" required placeholder="-3.4"></label>
+        <label>Indoor temperature (°C) <input type="number" name="indoor_c" min="12" max="26" step="0.1" required placeholder="21"></label>
+        <label>Heating degree days a year <small>(optional)</small> <input type="number" name="degree_days" min="100" max="6000" step="1" placeholder="2224"></label>
+        <label>Design SCOP <small>(optional)</small> <input type="number" name="design_scop" min="1" max="8" step="0.01" placeholder="3.78"></label>
+        <label>Heating needed below (°C) <input type="number" name="base_c" min="10" max="20" step="0.1" value="15.5"></label>
+        <div class="actions">
+          <button class="primary" type="submit">Save</button>
+          <button type="button" id="heating-clear">Clear</button>
+        </div>
+        <div id="heating-message" style="grid-column: 1 / -1; font-size: 13px; min-height: 18px; color: var(--muted);"></div>
+      </form>
+    </details>
   </div>
 
   <h2 id="roi-heading">Return on investment</h2>
@@ -3281,6 +3301,7 @@ function renderHeating(data) {
   const section = document.getElementById("heating-section");
   section.hidden = !data.has_heat_pump;
   if (!data.has_heat_pump) return;
+  fillHeatingForm(data.design);
   const label = data.smart_load_label || "Heat pump";
   const source = data.entity
     ? "Outdoor temperature from " + data.entity + ". To use a different sensor, set outdoor_temperature_entity in the add-on's options."
@@ -3305,7 +3326,14 @@ function renderHeating(data) {
     const el = document.createElement("div");
     el.className = "tile";
     for (const [cls, text] of [["label", name], ["value", value], ["note", note ?? ""]]) {
-      el.append(Object.assign(document.createElement("div"), { className: cls, textContent: text }));
+      const part = Object.assign(document.createElement("div"), { className: cls, textContent: text });
+      // A unit on the end is shown small, as on the other tiles, so the figure fits.
+      const unit = cls === "value" && /^(.*) (kWh|°C)$/.exec(text);
+      if (unit) {
+        part.textContent = unit[1];
+        part.append(Object.assign(document.createElement("small"), { textContent: unit[2] }));
+      }
+      el.append(part);
     }
     return el;
   };
@@ -3324,7 +3352,8 @@ function renderHeating(data) {
          data.warm_day_kwh == null ? "Not enough warm days yet" : "A day: mostly hot water"),
     tile(latest ? "Per degree day, " + latest.name : "Per degree day", rate(latest),
          change || (latest ? latest.degree_days + " degree days so far" : "Needs a colder spell")),
-    tile("Days compared", String(data.days), "With both readings"));
+    tile("Days compared", String(data.days), "With both readings"),
+    ...scopTiles(data, tile));
 
   // Scatter: each day's use against its average temperature, with the fitted line.
   const NS = "http://www.w3.org/2000/svg";
@@ -3374,19 +3403,88 @@ function renderHeating(data) {
 
   const rows = document.getElementById("heating-rows");
   const cell = (text, cls) => Object.assign(document.createElement("td"), { textContent: text, className: cls ?? "" });
-  const line = (name, r, cls) => {
+  const scopBy = data.scop ? new Map([
+    ...data.scop.seasons.map(x => ["season:" + x.name, x]),
+    ...data.scop.months.map(x => ["month:" + x.name, x])]) : null;
+  document.getElementById("heating-scop-head").hidden = !scopBy;
+  const line = (name, r, cls, key) => {
     const tr = document.createElement("tr");
     if (cls) tr.className = cls;
     tr.append(cell(name), cell(String(r.days), "num"), cell(r.mean_temperature.toFixed(1) + " °C", "num"),
               cell(r.kwh.toFixed(0) + " kWh", "num"), cell(String(r.degree_days), "num"),
               cell(r.kwh_per_degree_day == null ? "" : r.kwh_per_degree_day.toFixed(2), "num"));
+    if (scopBy) {
+      const est = scopBy.get(key)?.scop;
+      tr.append(cell(est == null ? "" : est.toFixed(1), "num"));
+    }
     return tr;
   };
   const monthName = key => new Date(key + "-01T00:00").toLocaleDateString([], { month: "long", year: "numeric" });
   rows.replaceChildren(
-    ...[...seasons].reverse().map(s => line("Winter " + s.name, s, "year-row")),
-    ...[...data.months].reverse().map(m => line(monthName(m.name), m)));
+    ...[...seasons].reverse().map(s => line("Winter " + s.name, s, "year-row", "season:" + s.name)),
+    ...[...data.months].reverse().map(m => line(monthName(m.name), m, "", "month:" + m.name)));
 }
+
+// The estimated SCOP: a tile, and how it compares with what the survey expected.
+function scopTiles(data, tile) {
+  const est = data.scop;
+  if (!est) return [];
+  const design = data.design ?? {};
+  const latest = [est.last_30_days, est.overall].find(x => x?.scop != null);
+  const notes = [];
+  if (design.design_scop) notes.push("Design: " + design.design_scop.toFixed(2));
+  if (latest?.name) notes.push(latest.name.toLowerCase());
+  const winter = [...est.seasons].reverse().find(s => s.scop != null);
+  return [
+    tile("Estimated SCOP (heating)", latest ? latest.scop.toFixed(1) : "–",
+         latest ? notes.join(", ") : "Needs more days that need heating"),
+    ...(winter ? [tile("Estimated SCOP, winter " + winter.name, winter.scop.toFixed(1),
+                       winter.heat_kwh.toLocaleString() + " kWh of heat from " + winter.heating_kwh.toFixed(0) + " kWh")] : []),
+    ...(est.expected_heat_kwh ? [tile("Yearly heat need (survey)", est.expected_heat_kwh.toLocaleString() + " kWh",
+         est.expected_heating_kwh ? "About " + est.expected_heating_kwh.toLocaleString() + " kWh of electricity at the design SCOP" : "From its degree days")] : []),
+  ];
+}
+
+// The heat loss survey form.
+const heatingForm = document.getElementById("heating-form");
+let heatingFormFilled = false;
+function fillHeatingForm(design) {
+  if (heatingFormFilled) return;
+  heatingFormFilled = true;
+  if (!design) return;
+  for (const name of ["heat_loss_kw", "outdoor_c", "indoor_c", "degree_days", "design_scop", "base_c"]) {
+    if (design[name] != null) heatingForm.elements[name].value = design[name];
+  }
+}
+function heatingMessage(text, isError = false) {
+  const el = document.getElementById("heating-message");
+  el.textContent = text;
+  el.style.color = isError ? "var(--danger)" : "";
+}
+heatingForm.addEventListener("submit", async event => {
+  event.preventDefault();
+  const f = heatingForm.elements;
+  const number = name => f[name].value === "" ? null : Number(f[name].value);
+  try {
+    const data = await sendTariff("api/heating/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ heat_loss_kw: number("heat_loss_kw"), outdoor_c: number("outdoor_c"),
+                             indoor_c: number("indoor_c"), base_c: number("base_c") ?? 15.5,
+                             degree_days: number("degree_days"), design_scop: number("design_scop") }),
+    });
+    heatingMessage("Saved.");
+    renderHeating(data);
+  } catch (err) { heatingMessage(err.message, true); }
+});
+document.getElementById("heating-clear").addEventListener("click", async () => {
+  try {
+    const data = await sendTariff("api/heating/settings", { method: "DELETE" });
+    heatingForm.reset();
+    heatingMessage("Cleared.");
+    renderHeating(data);
+  } catch (err) { heatingMessage(err.message, true); }
+});
 
 async function refreshHeating() {
   if (!sectionOpen("heating-heading")) return;  // fetched when the section is opened

@@ -126,3 +126,44 @@ def test_heating_endpoint_reports_what_is_missing_then_the_figures():
     assert data["has_data"] and data["days"] >= 35
     assert data["per_degree_colder_kwh"] == pytest.approx(0.5, abs=0.05)
     assert data["points"][0]["degree_days"] > 0 and data["months"]
+
+
+def test_estimated_scop_from_the_heat_loss_survey():
+    design = {
+        "heat_loss_kw": 4.42,
+        "outdoor_c": -3.4,
+        "indoor_c": 21.0,
+        "base_c": 15.5,
+        "degree_days": 2224,
+        "design_scop": 3.78,
+    }
+    per_degree = heating.kw_per_degree(design)
+    assert per_degree == pytest.approx(4.42 / 24.4)
+    used, temperature = {}, {}
+    day = date(2025, 11, 1)
+    for n in range(120):
+        t = 12.0 - (n % 14)
+        heat = per_degree * 24 * (15.5 - t)
+        temperature[day + timedelta(days=n)] = t
+        used[day + timedelta(days=n)] = 2.0 + heat / 3.0  # hot water, plus heating at a SCOP of 3
+    for n in range(10):
+        temperature[date(2025, 8, 1) + timedelta(days=n)] = 19.0
+        used[date(2025, 8, 1) + timedelta(days=n)] = 2.0
+    found = heating.analyse(used, temperature)
+    est = heating.scop(found, design, date(2026, 2, 28))
+    assert est["seasons"][0]["scop"] == pytest.approx(3.0, abs=0.05)
+    assert est["overall"]["scop"] == pytest.approx(3.0, abs=0.05)
+    assert est["expected_heat_kwh"] == round(per_degree * 24 * 2224)
+    assert est["expected_heating_kwh"] == round(per_degree * 24 * 2224 / 3.78)
+    assert (
+        heating.scop(found, {"heat_loss_kw": 4, "outdoor_c": 21, "indoor_c": 21}, date.today())
+        is None
+    )
+
+
+def test_heat_loss_survey_settings_are_saved_and_cleared():
+    body = {"heat_loss_kw": 4.42, "outdoor_c": -3.4, "indoor_c": 21, "degree_days": 2224}
+    saved = client.post("/api/heating/settings", json=body).json()
+    assert saved["design"]["heat_loss_kw"] == 4.42 and saved["design"]["base_c"] == 15.5
+    assert client.post("/api/heating/settings", json={**body, "indoor_c": -5}).status_code == 422
+    assert client.delete("/api/heating/settings").json()["design"] is None

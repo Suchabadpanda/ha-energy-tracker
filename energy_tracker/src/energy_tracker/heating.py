@@ -105,3 +105,82 @@ def analyse(used: dict[date, float], temperature: dict[date, float]) -> dict:
         "warm_day_kwh": round(sum(warm) / len(warm), 2) if len(warm) >= 5 else None,
         "warm_days": len(warm),
     }
+
+
+# --- Estimated SCOP, from the house's heat loss -----------------------------------------------
+#
+# Without a heat meter, the heat the house needed can be estimated from its heat loss survey:
+# the heat loss at the design temperatures gives how many kW it loses for each degree colder
+# outside, and each day's degree days say how cold the day was. Heat needed divided by the
+# electricity the heat pump used for heating is its efficiency. Survey figures tend to be on
+# the high side, so this is an estimate, best for comparing one period with another.
+
+MIN_HEATING_KWH = 5.0  # below this a period's SCOP means little
+
+
+def kw_per_degree(design: dict) -> float | None:
+    """Heat lost for each degree between inside and outside, in kW."""
+    spread = design.get("indoor_c", 21.0) - design.get("outdoor_c", -3.0)
+    if not design.get("heat_loss_kw") or spread <= 0:
+        return None
+    return design["heat_loss_kw"] / spread
+
+
+def scop(found: dict, design: dict, today: date) -> dict | None:
+    """Estimated heating efficiency by month and winter, from `analyse`'s results.
+
+    Each day's heating electricity is its use less the usual warm-day (hot water) use. Each
+    day's heat is kW per degree × 24 hours × degree days below `base_c`; the base, lower than
+    the indoor temperature, allows for free heat from people, appliances and the sun.
+    """
+    per_degree = kw_per_degree(design)
+    if per_degree is None or not found.get("has_data"):
+        return None
+    base = design.get("base_c") or BASE_C
+    hot_water = found.get("warm_day_kwh") or 0.0
+    days = []
+    for row in found["points"]:
+        heating = max(0.0, row["kwh"] - min(row["kwh"], hot_water))
+        heat = per_degree * 24 * max(0.0, base - row["temperature"])
+        days.append((row["day"], heat, heating))
+
+    def summary(name: str, members: list[tuple]) -> dict:
+        heat = sum(h for _, h, _ in members)
+        used = sum(e for _, _, e in members)
+        degree_days = heat / (per_degree * 24)
+        # Only with enough heating to go on: a few mild days say little.
+        enough = degree_days >= MIN_DEGREE_DAYS and used >= MIN_HEATING_KWH
+        return {
+            "name": name,
+            "days": len(members),
+            "heat_kwh": round(heat),
+            "heating_kwh": round(used, 1),
+            "scop": round(heat / used, 2) if enough else None,
+        }
+
+    def grouped(key) -> list[dict]:
+        found_groups: dict[str, list[tuple]] = {}
+        for item in days:
+            name = key(item[0])
+            if name is not None:
+                found_groups.setdefault(name, []).append(item)
+        return [summary(name, members) for name, members in found_groups.items()]
+
+    recent = [item for item in days if (today - item[0]).days <= 30]
+    cold = [item for item in days if item[1] > 0]
+    result = {
+        "kw_per_degree": round(per_degree, 3),
+        "base_c": base,
+        "hot_water_kwh_a_day": hot_water or None,
+        "months": grouped(lambda d: f"{d:%Y-%m}"),
+        "seasons": grouped(season_of),
+        "last_30_days": summary("Last 30 days", recent) if recent else None,
+        "overall": summary("All days needing heat", cold) if cold else None,
+    }
+    # What the survey expects over a typical year, where it gives the degree days.
+    if design.get("degree_days"):
+        heat = per_degree * 24 * design["degree_days"]
+        result["expected_heat_kwh"] = round(heat)
+        if design.get("design_scop"):
+            result["expected_heating_kwh"] = round(heat / design["design_scop"])
+    return result

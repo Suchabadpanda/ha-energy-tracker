@@ -123,7 +123,7 @@ async def lifespan(_: FastAPI):
         await asyncio.to_thread(thread.join, 10)
 
 
-app = FastAPI(title="Energy Tracker", version="0.33.1", lifespan=lifespan)
+app = FastAPI(title="Energy Tracker", version="0.34.0", lifespan=lifespan)
 # The page and its chart data are mostly text: sent compressed, they are a quarter the size.
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
@@ -1158,16 +1158,52 @@ def more_panels() -> dict:
 # --- The heat pump against the weather ------------------------------------------------------------
 
 
+class HeatingIn(BaseModel):
+    """The house's heat loss survey, for estimating the heat pump's SCOP."""
+
+    heat_loss_kw: float = Field(gt=0, le=50)
+    outdoor_c: float = Field(default=-3.0, ge=-25, le=10)
+    indoor_c: float = Field(default=21.0, ge=12, le=26)
+    # Degree days are counted below this; lower than indoors, for free heat in the house.
+    base_c: float = Field(default=15.5, ge=10, le=20)
+    # Optional, from the survey: a typical year's degree days and the expected SCOP.
+    degree_days: float | None = Field(default=None, ge=100, le=6000)
+    design_scop: float | None = Field(default=None, ge=1, le=8)
+
+
+def heating_design() -> dict | None:
+    stored = database().get_setting("heating_design")
+    return json.loads(stored) if stored else None
+
+
+@app.post("/api/heating/settings")
+def save_heating_design(body: HeatingIn) -> dict:
+    if body.indoor_c <= body.outdoor_c:
+        raise HTTPException(status_code=422, detail="Indoor must be warmer than outdoor")
+    database().set_setting("heating_design", body.model_dump_json())
+    clear_caches()
+    return heat_pump_and_weather()
+
+
+@app.delete("/api/heating/settings")
+def clear_heating_design() -> dict:
+    database().delete_setting("heating_design")
+    clear_caches()
+    return heat_pump_and_weather()
+
+
 @app.get("/api/heating")
 @kept
 def heat_pump_and_weather() -> dict:
     """The heat pump's daily use set against the outdoor temperature."""
+    design = heating_design()
     zone = local_timezone()
     now = datetime.now(UTC)
     result: dict = {
         "has_data": False,
         "entity": weather.entity_in_use or settings().outdoor_temperature_entity or None,
         "smart_load_label": settings().smart_load_label,
+        "design": design,
     }
     first_heat = database().first_time(devices.HEAT_PUMP) or database().first_time(devices.CIRCUIT)
     first_temperature = database().first_time(weather.METRIC)
@@ -1187,6 +1223,8 @@ def heat_pump_and_weather() -> dict:
     used = {day: row["heat_pump_kwh"] for day, row in days.items() if "heat_pump_kwh" in row}
     hourly = database().series([weather.METRIC], start, 3600)[weather.METRIC]
     result.update(heating.analyse(used, heating.daily_means(hourly, zone)))
+    if design:
+        result["scop"] = heating.scop(result, design, (end - timedelta(days=1)).date())
     return result
 
 
@@ -1514,7 +1552,7 @@ def yearly_report(year: Annotated[int | None, Query(ge=2000, le=2200)] = None) -
 
 # Settings worth carrying to another install. Left out: how far old readings have been
 # thinned, which belongs to this install's readings.
-BACKUP_SETTINGS = ("payback", "planner", "layout", "axle_rate_p")
+BACKUP_SETTINGS = ("payback", "planner", "layout", "axle_rate_p", "heating_design")
 BACKUP_FORMAT = 1
 
 
