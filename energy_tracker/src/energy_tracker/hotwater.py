@@ -90,6 +90,37 @@ def split(
     }
 
 
+def electricity(
+    samples: dict[str, list],
+    circuit_name: str,
+    ev_name: str,
+    meter_name: str,
+    ev_on_smart_load: bool,
+    gap: timedelta | None = None,
+):
+    """The heat pump's kWh between two moments: from the smart load circuit (less the EV
+    charger, if it shares the circuit) where that was read, else the heat pump's own meter.
+    None if there is neither."""
+
+    def counter(name: str) -> Counter:
+        return Counter(samples.get(name, []), *([gap] if gap else []))
+
+    circuit, ev, meter = counter(circuit_name), counter(ev_name), counter(meter_name)
+    if not circuit and not meter:
+        return None
+    first = circuit.first_time if circuit else None
+
+    def used(start: datetime, end: datetime) -> float:
+        if circuit and (not meter or (first and start >= first)):
+            kwh = circuit.between(start, end) or 0.0
+            if ev_on_smart_load and ev:
+                kwh -= ev.between(start, end) or 0.0
+            return max(0.0, kwh)
+        return max(0.0, meter.between(start, end) or 0.0)
+
+    return used
+
+
 def measured_hot_water(
     samples: dict[str, list],
     start: datetime,
@@ -100,13 +131,81 @@ def measured_hot_water(
     meter_name: str,
     ev_on_smart_load: bool,
     gap: timedelta | None = None,
+    modes: dict[str, list] | None = None,
+    outdoor: list | None = None,
 ) -> dict[date, float]:
-    """kWh of hot water on each day the tank readings cover, from stored samples.
+    """kWh of hot water on each day it can be measured, from stored samples.
 
-    The smart load circuit is preferred to the heat pump's own meter, as it is read every
-    few seconds; a maker's meter may only report now and then, which would blur when the
-    energy was used.
+    Best is the heat pump's own hot water mode (`modes`), which says exactly when it was
+    heating the cylinder; otherwise the cylinder's temperature rises. The smart load circuit
+    is preferred to the heat pump's own meter, as it is read every few seconds; a maker's
+    meter may only report now and then, which would blur when the energy was used.
     """
+    found = by_tank(
+        samples, start, end, timezone, circuit_name, ev_name, meter_name, ev_on_smart_load, gap
+    )
+    split_by_mode = by_mode(
+        samples,
+        start,
+        end,
+        timezone,
+        circuit_name,
+        ev_name,
+        meter_name,
+        ev_on_smart_load,
+        gap,
+        modes,
+        outdoor,
+    )
+    found.update({day: row["hot_water_kwh"] for day, row in split_by_mode.items()})
+    return found
+
+
+def by_mode(
+    samples: dict[str, list],
+    start: datetime,
+    end: datetime,
+    timezone: ZoneInfo,
+    circuit_name: str,
+    ev_name: str,
+    meter_name: str,
+    ev_on_smart_load: bool,
+    gap: timedelta | None = None,
+    modes: dict[str, list] | None = None,
+    outdoor: list | None = None,
+) -> dict[date, dict]:
+    """The split by the heat pump's own modes, day by day (see heatpump.split)."""
+    from . import heatpump  # it builds on this module
+
+    if not modes or not modes.get(heatpump.HOT_WATER_MODE):
+        return {}
+    used = electricity(samples, circuit_name, ev_name, meter_name, ev_on_smart_load, gap)
+    if used is None:
+        return {}
+    return heatpump.split(
+        heatpump.Steps(modes[heatpump.HOT_WATER_MODE]),
+        heatpump.Steps(modes.get(heatpump.HEATING_MODE, [])),
+        heatpump.Steps(modes.get(heatpump.FLOW, [])),
+        Tank(outdoor or []),
+        used,
+        start,
+        end,
+        timezone,
+    )
+
+
+def by_tank(
+    samples: dict[str, list],
+    start: datetime,
+    end: datetime,
+    timezone: ZoneInfo,
+    circuit_name: str,
+    ev_name: str,
+    meter_name: str,
+    ev_on_smart_load: bool,
+    gap: timedelta | None = None,
+) -> dict[date, float]:
+    """kWh of hot water on each day the tank readings cover, from its temperature rises."""
     tank = Tank(samples.get(TANK, []))
     if not tank:
         return {}

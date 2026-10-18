@@ -12,7 +12,7 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 
-from . import backfill, hotwater, income, live, weather
+from . import backfill, heatpump, hotwater, income, live, weather
 from .config import Metric, Settings
 from .db import Database
 from .normalise import normalise
@@ -103,6 +103,7 @@ def run(settings: Settings, db: Database, metrics: list[Metric], stop: threading
         last_thinned: datetime | None = None
         weather_checked = False
         tank_checked = False
+        modes_checked = False
 
         while not stop.is_set():
             try:
@@ -153,6 +154,22 @@ def run(settings: Settings, db: Database, metrics: list[Metric], stop: threading
                                 log.info("Brought in %d earlier tank temperatures", found)
                         except (httpx.HTTPError, sqlite3.Error, ValueError, OSError) as exc:
                             log.info("Could not bring in earlier tank temperatures: %s", exc)
+                # What the heat pump is doing (hot water or heating), if those are named.
+                mode_entities = (
+                    settings.hot_water_mode_entity,
+                    settings.heating_mode_entity,
+                    settings.flow_temperature_entity,
+                )
+                if any(mode_entities):
+                    rows.extend(heatpump.rows(states, *mode_entities, now))
+                    if not modes_checked:
+                        modes_checked = True
+                        try:
+                            found = heatpump.backfill(db, client, *mode_entities, now)
+                            if found:
+                                log.info("Brought in %d earlier heat pump mode readings", found)
+                        except (httpx.HTTPError, sqlite3.Error, ValueError, OSError) as exc:
+                            log.info("Could not bring in earlier heat pump modes: %s", exc)
                 if rows:
                     db.insert_readings(rows)
                     last_stored = now
@@ -170,7 +187,7 @@ def run(settings: Settings, db: Database, metrics: list[Metric], stop: threading
                 # Once a day, thin old readings so the database stays small.
                 if last_thinned is None or now - last_thinned > THIN_EVERY:
                     removed = db.thin(
-                        [*names, weather.METRIC, hotwater.TANK],
+                        [*names, weather.METRIC, hotwater.TANK, *heatpump.METRICS],
                         now - timedelta(days=settings.detail_days),
                     )
                     # ...and drop whatever has passed the age limit. Run daily, this removes

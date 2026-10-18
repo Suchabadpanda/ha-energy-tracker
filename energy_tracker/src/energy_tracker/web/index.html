@@ -544,6 +544,19 @@
   <div id="heating-section">
     <h2 id="heating-heading">Heat pump and the weather</h2>
     <div class="tiles" id="heating-tiles"></div>
+    <div class="chart" id="efficiency-box" style="margin-top: 12px;" hidden>
+      <h3 style="margin: 0 0 8px; font-size: 15px;">Estimated SCOP</h3>
+      <div class="tiles" id="efficiency-tiles"></div>
+      <div class="table-scroll" style="margin-top: 12px;">
+        <table>
+          <thead><tr><th>Period</th><th class="num">Days</th><th class="num">Electricity</th><th class="num">Hot water</th>
+            <th class="num">Heating</th><th class="num">Standby</th><th class="num">Hot water COP</th>
+            <th class="num">Heating SCOP</th><th class="num">SCOP</th></tr></thead>
+          <tbody id="efficiency-rows"></tbody>
+        </table>
+      </div>
+      <div class="hint" id="efficiency-hint"></div>
+    </div>
     <div class="chart" style="margin-top: 12px;">
       <div class="empty" id="heating-empty" hidden></div>
       <svg id="heating-chart" viewBox="0 0 900 320" role="img"
@@ -554,7 +567,7 @@
       <div class="table-scroll">
         <table>
           <thead><tr><th>Period</th><th class="num">Days</th><th class="num">Average outside</th>
-            <th class="num">Heat pump</th><th class="num">Degree days</th><th class="num">kWh per degree day</th><th class="num" id="heating-scop-head" hidden>Estimated SCOP</th></tr></thead>
+            <th class="num">Heat pump</th><th class="num">Degree days</th><th class="num">kWh per degree day</th><th class="num" id="heating-scop-head" hidden>Survey SCOP</th></tr></thead>
           <tbody id="heating-rows"></tbody>
         </table>
       </div>
@@ -565,15 +578,19 @@
     </div>
     <div class="hint" id="heating-hint"></div>
     <details id="heating-editor">
-      <summary>Heat loss survey (for the estimated SCOP)</summary>
+      <summary>Your heat pump's details (for the estimated SCOP)</summary>
+      <div class="hint">Cylinder size: the litres on the hot water cylinder's label. With the heat pump's modes
+        (the <code>hot_water_mode_entity</code> and <code>heating_mode_entity</code> options), the tracker measures the
+        heat put into the cylinder at each reheat and uses it to estimate the heat pump's SCOP.</div>
       <div class="hint">From the heat loss survey done for the heat pump (an MCS heat loss report, say). With it, the
         tracker estimates the heat your home needed each day from how cold it was, and divides it by the electricity
         the heat pump used for heating: an estimated SCOP. Surveys tend to overstate heat loss, so treat it as a
         guide, best for comparing one month or winter with another.</div>
       <form id="heating-form">
-        <label>Total heat loss (kW) <input type="number" name="heat_loss_kw" min="0.1" max="50" step="0.01" required placeholder="4.42"></label>
-        <label>Design outdoor temperature (°C) <input type="number" name="outdoor_c" min="-25" max="10" step="0.1" required placeholder="-3.4"></label>
-        <label>Indoor temperature (°C) <input type="number" name="indoor_c" min="12" max="26" step="0.1" required placeholder="21"></label>
+        <label>Hot water cylinder (litres) <input type="number" name="cylinder_litres" min="30" max="1000" step="1" placeholder="250"></label>
+        <label>Total heat loss (kW) <small>(survey)</small> <input type="number" name="heat_loss_kw" min="0.1" max="50" step="0.01" placeholder="4.42"></label>
+        <label>Design outdoor temperature (°C) <input type="number" name="outdoor_c" min="-25" max="10" step="0.1" placeholder="-3.4"></label>
+        <label>Indoor temperature (°C) <input type="number" name="indoor_c" min="12" max="26" step="0.1" placeholder="21"></label>
         <label>Heating degree days a year <small>(optional)</small> <input type="number" name="degree_days" min="100" max="6000" step="1" placeholder="2224"></label>
         <label>Design SCOP <small>(optional)</small> <input type="number" name="design_scop" min="1" max="8" step="0.01" placeholder="3.78"></label>
         <label>Heating needed below (°C) <input type="number" name="base_c" min="10" max="20" step="0.1" value="15.5"></label>
@@ -3366,6 +3383,7 @@ function renderHeating(data) {
          change || (latest ? latest.degree_days + " degree days so far" : "Needs a colder spell")),
     tile("Days compared", String(data.days), "With both readings"),
     ...scopTiles(data, tile));
+  renderEfficiency(data.efficiency, tile, data.design);
 
   // Scatter: each day's use against its average temperature, with the fitted line.
   const NS = "http://www.w3.org/2000/svg";
@@ -3437,6 +3455,57 @@ function renderHeating(data) {
     ...[...data.months].reverse().map(m => line(monthName(m.name), m, "", "month:" + m.name)));
 }
 
+// The estimated SCOP from the heat pump's modes: tiles, and a table by year and month.
+function renderEfficiency(eff, tile, design) {
+  const box = document.getElementById("efficiency-box");
+  box.hidden = !eff?.has_data;
+  if (!eff?.has_data) return;
+  const fixed = (v, n = 1) => v == null ? "–" : v.toFixed(n);
+  const month = eff.this_month, year = eff.this_year;
+  const monthName = key => new Date(key + "-01T00:00").toLocaleDateString([], { month: "long", year: "numeric" });
+  const parts = p => p ? "Heating " + fixed(p.heating_scop) + ", hot water " + fixed(p.hot_water_cop) : "";
+  document.getElementById("efficiency-tiles").replaceChildren(
+    tile(month ? "SCOP, " + monthName(month.name) : "SCOP this month", fixed(month?.scop, 2),
+         month ? parts(month) : "No whole days yet this month"),
+    tile(year ? "SCOP, " + year.name + " so far" : "SCOP this year", fixed(year?.scop, 2),
+         year ? year.heat_kwh.toLocaleString() + " kWh of heat from " + year.kwh.toFixed(0) + " kWh" : ""),
+    tile("Hot water COP", fixed(eff.hot_water_cop, 2),
+         eff.hot_water_cop_source === "measured" ? "Measured from " + eff.reheats + " reheats"
+         : eff.hot_water_cop_source === "out of range" ? "Typical figure: the measured " + eff.hot_water_cop_measured + " looks wrong (check the cylinder size)"
+         : "Typical figure, until reheats are measured"),
+    tile("Measured days", String(year?.measured_days ?? 0),
+         eff.modes_from ? "Split by the heat pump's modes since " + new Date(eff.modes_from + "T00:00").toLocaleDateString([], { day: "numeric", month: "short" }) : ""));
+  const cell = (text, cls) => Object.assign(document.createElement("td"), { textContent: text, className: cls ?? "" });
+  const kwh = v => v.toFixed(v < 100 ? 1 : 0) + " kWh";
+  const line = (name, r, cls) => {
+    const tr = document.createElement("tr");
+    if (cls) tr.className = cls;
+    tr.append(cell(name), cell(r.measured_days ? r.days + " (" + r.measured_days + " measured)" : String(r.days), "num"),
+              cell(kwh(r.kwh), "num"), cell(kwh(r.hot_water_kwh), "num"), cell(kwh(r.heating_kwh), "num"),
+              cell(r.other_kwh ? kwh(r.other_kwh) : "", "num"), cell(fixed(r.hot_water_cop, 2), "num"),
+              cell(fixed(r.heating_scop, 2), "num"), cell(fixed(r.scop, 2), "num"));
+    return tr;
+  };
+  document.getElementById("efficiency-rows").replaceChildren(
+    ...[...eff.years].reverse().map(y => line(y.name, y, "year-row")),
+    ...[...eff.months].reverse().map(m => line(monthName(m.name), m)));
+  const notes = [
+    "An estimate: there is no heat meter. On measured days the heat pump's own modes split its electricity "
+      + "exactly into hot water, heating and standby; earlier days are split from the total.",
+    eff.litres
+      ? "Hot water heat is the cylinder's temperature rise × " + eff.litres + " litres, so it errs low (water drawn off during a reheat goes uncounted)."
+      : "Enter the cylinder's size below to measure the hot water heat; until then typical figures are used.",
+    "Heating heat is modelled from the flow and outdoor temperatures, at " + Math.round(eff.eta * 100) + "% of the ideal efficiency"
+      + (eff.eta_source === "measured" ? " (calibrated on the hot water reheats)."
+         : eff.eta_source === "out of range" ? " (a typical figure: the reheats gave " + Math.round(eff.eta_measured * 100) + "%, which is not believable)."
+         : " (a typical figure, until there are enough reheats to calibrate it)."),
+    "Flow temperature curve " + (eff.curve.source === "assumed" ? "(typical)" : "(" + eff.curve.source + ")") + ": "
+      + eff.curve.at_minus_3 + " °C at −3 °C outside, " + eff.curve.at_7 + " °C at 7 °C.",
+  ];
+  if (design?.design_scop) notes.push("Design SCOP: " + design.design_scop.toFixed(2) + ".");
+  document.getElementById("efficiency-hint").textContent = notes.join(" ");
+}
+
 // The estimated SCOP: a tile, and how it compares with what the survey expected.
 function scopTiles(data, tile) {
   const est = data.scop;
@@ -3448,9 +3517,9 @@ function scopTiles(data, tile) {
   if (latest?.name) notes.push(latest.name.toLowerCase());
   const winter = [...est.seasons].reverse().find(s => s.scop != null);
   return [
-    tile("Estimated SCOP (heating)", latest ? latest.scop.toFixed(1) : "–",
+    tile("Survey SCOP (heating)", latest ? latest.scop.toFixed(1) : "–",
          latest ? notes.join(", ") : "Needs more days that need heating"),
-    ...(winter ? [tile("Estimated SCOP, winter " + winter.name, winter.scop.toFixed(1),
+    ...(winter ? [tile("Survey SCOP, winter " + winter.name, winter.scop.toFixed(1),
                        winter.heat_kwh.toLocaleString() + " kWh of heat from " + winter.heating_kwh.toFixed(0) + " kWh")] : []),
     ...(est.expected_heat_kwh ? [tile("Yearly heat need (survey)", est.expected_heat_kwh.toLocaleString() + " kWh",
          est.expected_heating_kwh ? "About " + est.expected_heating_kwh.toLocaleString() + " kWh of electricity at the design SCOP" : "From its degree days")] : []),
@@ -3464,7 +3533,7 @@ function fillHeatingForm(design) {
   if (heatingFormFilled) return;
   heatingFormFilled = true;
   if (!design) return;
-  for (const name of ["heat_loss_kw", "outdoor_c", "indoor_c", "degree_days", "design_scop", "base_c"]) {
+  for (const name of ["cylinder_litres", "heat_loss_kw", "outdoor_c", "indoor_c", "degree_days", "design_scop", "base_c"]) {
     if (design[name] != null) heatingForm.elements[name].value = design[name];
   }
 }
@@ -3481,8 +3550,9 @@ heatingForm.addEventListener("submit", async event => {
     const data = await sendTariff("api/heating/settings", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ heat_loss_kw: number("heat_loss_kw"), outdoor_c: number("outdoor_c"),
-                             indoor_c: number("indoor_c"), base_c: number("base_c") ?? 15.5,
+      body: JSON.stringify({ cylinder_litres: number("cylinder_litres"),
+                             heat_loss_kw: number("heat_loss_kw"), outdoor_c: number("outdoor_c") ?? -3,
+                             indoor_c: number("indoor_c") ?? 21, base_c: number("base_c") ?? 15.5,
                              degree_days: number("degree_days"), design_scop: number("design_scop") }),
     });
     heatingMessage("Saved.");

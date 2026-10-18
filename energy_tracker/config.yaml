@@ -1,6 +1,6 @@
 # Home Assistant add-on definition. Home Assistant reads this to know how to run the app.
 name: Energy Tracker
-version: "0.35.0"
+version: "0.36.0"
 slug: energy_tracker
 url: https://github.com/Suchabadpanda/ha-energy-tracker
 description: For Sigenergy solar and battery systems. Live energy use and running costs on your tariff
@@ -34,6 +34,9 @@ options:
   outdoor_temperature_entity: ""
   heat_pump_energy_entity: ""
   hot_water_tank_entity: ""
+  hot_water_mode_entity: ""
+  heating_mode_entity: ""
+  flow_temperature_entity: ""
   currency_symbol: "£"
   currency_minor: p
 schema:
@@ -47,5 +50,8 @@ schema:
   outdoor_temperature_entity: str?
   heat_pump_energy_entity: str?
   hot_water_tank_entity: str?
+  hot_water_mode_entity: str?
+  heating_mode_entity: str?
+  flow_temperature_entity: str?
   currency_symbol: str
   currency_minor: str

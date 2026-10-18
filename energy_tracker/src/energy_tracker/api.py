@@ -33,6 +33,7 @@ from . import (
     collector,
     devices,
     heating,
+    heatpump,
     history,
     hotwater,
     import_history,
@@ -124,7 +125,7 @@ async def lifespan(_: FastAPI):
         await asyncio.to_thread(thread.join, 10)
 
 
-app = FastAPI(title="Energy Tracker", version="0.35.0", lifespan=lifespan)
+app = FastAPI(title="Energy Tracker", version="0.36.0", lifespan=lifespan)
 # The page and its chart data are mostly text: sent compressed, they are a quarter the size.
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
@@ -385,6 +386,20 @@ def cost_by_device(
     }
 
 
+MODE_BUCKET = 120  # seconds: the heat pump's modes, averaged over two minutes
+
+
+def mode_readings(start: datetime) -> tuple[dict[str, list], list]:
+    """The heat pump's modes and flow temperature, and hourly outdoor temperatures, since
+    `start` (a little before, for the first reading). Empty when no modes are collected."""
+    since = start - timedelta(hours=2)
+    if not database().first_time(heatpump.HOT_WATER_MODE):
+        return {}, []
+    modes = database().series(heatpump.METRICS, since, MODE_BUCKET)
+    outdoor = database().series([weather.METRIC], since, 3600)[weather.METRIC]
+    return modes, outdoor
+
+
 def hot_water_split(
     days: dict[date, dict],
     samples: dict[str, list],
@@ -410,6 +425,7 @@ def hot_water_split(
         devices.HEAT_PUMP,
         settings().ev_on_smart_load,
         gap,
+        *mode_readings(start),
     )
     measured = {day: kwh for day, kwh in measured.items() if day in days}
     used_on_measured = sum(days[day].get("heat_pump_kwh", 0.0) for day in measured)
@@ -1206,7 +1222,7 @@ def more_panels() -> dict:
 class HeatingIn(BaseModel):
     """The house's heat loss survey, for estimating the heat pump's SCOP."""
 
-    heat_loss_kw: float = Field(gt=0, le=50)
+    heat_loss_kw: float | None = Field(default=None, gt=0, le=50)
     outdoor_c: float = Field(default=-3.0, ge=-25, le=10)
     indoor_c: float = Field(default=21.0, ge=12, le=26)
     # Degree days are counted below this; lower than indoors, for free heat in the house.
@@ -1214,6 +1230,8 @@ class HeatingIn(BaseModel):
     # Optional, from the survey: a typical year's degree days and the expected SCOP.
     degree_days: float | None = Field(default=None, ge=100, le=6000)
     design_scop: float | None = Field(default=None, ge=1, le=8)
+    # The hot water cylinder's size, for the heat put into it at each reheat.
+    cylinder_litres: float | None = Field(default=None, ge=30, le=1000)
 
 
 def heating_design() -> dict | None:
@@ -1269,20 +1287,61 @@ def heat_pump_and_weather() -> dict:
     days = devices.daily(counters, start, end, zone, schedule(), settings().ev_on_smart_load)
     used = {day: row["heat_pump_kwh"] for day, row in days.items() if "heat_pump_kwh" in row}
     hourly = database().series([weather.METRIC], start, 3600)[weather.METRIC]
-    result.update(heating.analyse(used, heating.daily_means(hourly, zone)))
-    if design:
-        measured = hotwater.measured_hot_water(
-            samples,
-            start,
+    temperature = heating.daily_means(hourly, zone)
+    result.update(heating.analyse(used, temperature))
+    splitting = (devices.CIRCUIT, devices.EV, devices.HEAT_PUMP, settings().ev_on_smart_load)
+    from_tank = hotwater.by_tank(samples, start, end, zone, *splitting, HALF_HOURLY_GAP)
+    modes, outdoor = mode_readings(start)
+    measured_modes: dict = {}
+    runs: list = []
+    litres = (design or {}).get("cylinder_litres")
+    if modes.get(heatpump.HOT_WATER_MODE):
+        # The modes are recent, and read often: worth finer electricity readings.
+        # From the first whole day of them.
+        first = modes[heatpump.HOT_WATER_MODE][0][0]
+        midnight = local_midnight(first, zone)
+        modes_from = max(start, midnight if midnight == first else midnight + timedelta(days=1))
+        fine = counter_samples(
+            [devices.CIRCUIT, devices.EV, devices.HEAT_PUMP],
+            modes_from - timedelta(hours=1),
+            2,
             end,
-            zone,
-            devices.CIRCUIT,
-            devices.EV,
-            devices.HEAT_PUMP,
-            settings().ev_on_smart_load,
-            HALF_HOURLY_GAP,
         )
-        result["scop"] = heating.scop(result, design, (end - timedelta(days=1)).date(), measured)
+        measured_modes = hotwater.by_mode(
+            fine, modes_from, end, zone, *splitting, HALF_HOURLY_GAP, modes, outdoor
+        )
+        used_by = hotwater.electricity(fine, *splitting, HALF_HOURLY_GAP)
+        if litres and used_by:
+            detail = database().series([hotwater.TANK], modes_from - timedelta(hours=1), 60)
+            runs = heatpump.reheats(
+                heatpump.Steps(modes[heatpump.HOT_WATER_MODE]),
+                heatpump.Steps(detail[hotwater.TANK]),
+                heatpump.Steps(modes.get(heatpump.FLOW, [])),
+                hotwater.Tank(outdoor),
+                used_by,
+                litres,
+                modes_from,
+                end,
+                zone,
+            )
+    yesterday = (end - timedelta(days=1)).astimezone(zone).date()
+    if measured_modes:
+        result["efficiency"] = heatpump.estimate(
+            used,
+            temperature,
+            measured_modes,
+            runs,
+            from_tank,
+            result.get("warm_day_kwh"),
+            yesterday,
+            litres,
+        )
+    if design and design.get("heat_loss_kw"):
+        hot_water = {
+            **from_tank,
+            **{day: row["hot_water_kwh"] for day, row in measured_modes.items()},
+        }
+        result["scop"] = heating.scop(result, design, yesterday, hot_water)
     return result
 
 

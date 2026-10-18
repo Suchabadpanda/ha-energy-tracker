@@ -104,6 +104,13 @@ class Settings:
     heat_pump_energy_entity: str = ""
     # The hot water cylinder's temperature: its reheats tell hot water from heating.
     hot_water_tank_entity: str = ""
+    # What the heat pump is doing: an entity that is on (not "off") while it heats the hot
+    # water, one that is "heat" while space heating is switched on, and the flow temperature
+    # (by default the heating entity's current_temperature attribute). Together they split
+    # its electricity exactly and allow an estimated SCOP.
+    hot_water_mode_entity: str = ""
+    heating_mode_entity: str = ""
+    flow_temperature_entity: str = ""
     # What the Sigenergy "smart load 1" port feeds, as shown on the dashboard.
     smart_load_label: str = "Heat pump"
     # True if the EV charger is wired through the smart load port, so its use is taken off
@@ -164,6 +171,9 @@ def load_settings() -> Settings:
             outdoor_temperature_entity=str(options.get("outdoor_temperature_entity") or "").strip(),
             heat_pump_energy_entity=str(options.get("heat_pump_energy_entity") or "").strip(),
             hot_water_tank_entity=str(options.get("hot_water_tank_entity") or "").strip(),
+            hot_water_mode_entity=str(options.get("hot_water_mode_entity") or "").strip(),
+            heating_mode_entity=str(options.get("heating_mode_entity") or "").strip(),
+            flow_temperature_entity=str(options.get("flow_temperature_entity") or "").strip(),
             ev_on_smart_load=_flag(options.get("ev_on_smart_load"), True),
         )
 
@@ -188,5 +198,8 @@ def load_settings() -> Settings:
         outdoor_temperature_entity=(env.get("OUTDOOR_TEMPERATURE_ENTITY") or "").strip(),
         heat_pump_energy_entity=(env.get("HEAT_PUMP_ENERGY_ENTITY") or "").strip(),
         hot_water_tank_entity=(env.get("HOT_WATER_TANK_ENTITY") or "").strip(),
+        hot_water_mode_entity=(env.get("HOT_WATER_MODE_ENTITY") or "").strip(),
+        heating_mode_entity=(env.get("HEATING_MODE_ENTITY") or "").strip(),
+        flow_temperature_entity=(env.get("FLOW_TEMPERATURE_ENTITY") or "").strip(),
         ev_on_smart_load=_flag(env.get("EV_ON_SMART_LOAD"), True),
     )

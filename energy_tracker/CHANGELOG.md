@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.36.0
+
+- **Estimated SCOP from the heat pump's modes**, for this month and this year, with a table
+  by year and month. Name the entity that shows a hot water run (`hot_water_mode_entity`,
+  such as Samsung's `water_heater.heat_pump`) and the one that shows heating is on
+  (`heating_mode_entity`, such as `climate.heat_pump_indoor1`, whose current temperature is
+  the flow temperature), and enter the cylinder's litres under Your heat pump's details.
+  - The electricity is split exactly into hot water, heating and standby by the mode at
+    the time.
+  - Hot water heat is measured from each reheat's temperature rise; heating heat is
+    modelled from the flow and outdoor temperatures, calibrated on those reheats.
+  - Days before the modes were collected are estimated from the heat pump's total, so the
+    year goes back as far as its readings.
+- The heat pump split tile and Today by device use the modes when they are there.
+- The heat loss survey is now optional; its figures are labelled Survey SCOP.
+
 ## 0.35.0
 
 - Heating and hot water are now **measured** when the hot water cylinder's temperature

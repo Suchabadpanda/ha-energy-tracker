@@ -84,6 +84,9 @@ their own mean cheaper or better, and dearer or a problem.
 | `outdoor_temperature_entity` | (empty) | A temperature sensor outside, for the heat pump and the weather. Left empty, the first weather entity is used (Home Assistant sets one up for your home). |
 | `heat_pump_energy_entity` | (empty) | The heat pump's own lifetime energy meter, if it has one in Home Assistant (a Samsung heat pump through SmartThings, say). When set, the heat pump's use comes from it instead of the smart load circuit, and **Import older history** can bring in its past readings. |
 | `hot_water_tank_entity` | (empty) | The hot water cylinder's temperature sensor. Its reheats tell the heat pump's hot water from its heating. |
+| `hot_water_mode_entity` | (empty) | An entity that is on (anything but `off`) only while the heat pump heats the hot water, such as Samsung's `water_heater.heat_pump`. Splits its electricity into hot water and heating exactly. |
+| `heating_mode_entity` | (empty) | An entity that is `heat` while space heating is switched on, such as `climate.heat_pump_indoor1`. Its `current_temperature` is read as the flow temperature. |
+| `flow_temperature_entity` | (empty) | Only if the flow temperature is a separate sensor rather than the heating entity's current temperature. |
 | `ev_on_smart_load` | true | On if the EV charger is wired through smart load port 1. Its use is then taken off the smart load figure. Turn off if the charger is on its own circuit. |
 
 ## Optional equipment
@@ -145,7 +148,9 @@ used for the plan** in the Tariff switch planner, or else the size worked out fr
   **Hot water**. Name the hot water cylinder's temperature sensor in the
   `hot_water_tank_entity` option and it is **measured**: whenever the tank temperature rises
   by a degree or more in half an hour, the cylinder is being reheated, and the heat pump's
-  electricity in that half hour counts as hot water. Without a tank sensor, or on days its
+  electricity in that half hour counts as hot water. Better still, name the heat pump's hot
+  water mode in `hot_water_mode_entity`: the split then follows exactly when it was heating
+  the cylinder (see Estimated SCOP). Without either, or on days its
   readings do not cover, it is estimated: up to the heat pump's usual use on warm days
   counts as hot water. The tile says which. Today by device shows the same split in kWh.
 
@@ -248,7 +253,37 @@ to need heating.
 
 ### Estimated SCOP
 
-Under **Heat loss survey**, enter the figures from the heat loss survey done for the heat
+There are two ways of estimating it. The first needs no survey and is the better one.
+
+**From the heat pump's modes.** Name the entities that show what the heat pump is doing
+(`hot_water_mode_entity`, `heating_mode_entity`) and the cylinder's temperature
+(`hot_water_tank_entity`) in the add-on's options, and enter the cylinder's size in litres
+under **Your heat pump's details**. Then:
+
+- Each half hour's electricity goes to hot water for the share of it the hot water mode was
+  on; the rest to heating if heating was switched on, otherwise to standby. A heat pump does
+  one job at a time, so this split is exact, give or take the moment it switches.
+- **Hot water heat** is measured at each reheat: the cylinder's temperature rise × its
+  litres × 0.001163 kWh. Water drawn off during a reheat and the tank's own losses go
+  uncounted, so it errs low. The weekly legionella cycle (above 57 °C, partly on the
+  immersion heater) is counted in, as it is a real cost.
+- **Heating heat** has to be modelled, without a heat meter: a heat pump's efficiency
+  follows the lift from the outdoor air to the flow water, as a share of the ideal (Carnot)
+  efficiency. That share is calibrated on the hot water reheats, where both the heat and
+  the electricity are known, so it reflects your own heat pump. A typical 45% is used until
+  there are three reheats to go on.
+- Days before the modes were collected (Home Assistant keeps them for about ten days, so
+  that is how far back they are brought in) are split from the heat pump's total use, and
+  take their flow temperature from your weather compensation curve, as fitted from the
+  measured days. This gives a figure for the whole year, as far back as the heat pump's
+  readings go.
+
+The **Estimated SCOP** box shows this month's and this year's SCOP (all the heat ÷ all the
+electricity, including standby), the hot water COP, and a table by year and month with the
+heating and hot water figures apart. If a measured figure is far outside what a heat pump
+can do (a wrong cylinder size, say), the typical figure is used and the hint says so.
+
+**From the heat loss survey.** Under **Your heat pump's details**, enter the figures from the heat loss survey done for the heat
 pump (an MCS heat loss report, say): the total heat loss in kW, and the outdoor and indoor
 temperatures it was worked out for. Optionally add the survey's heating degree days a year
 and its design SCOP, to compare against.
@@ -258,7 +293,7 @@ loss ÷ the difference between the two temperatures), estimates the heat needed 
 from how far that day's average fell below 15.5 °C, and divides it by the electricity the
 heat pump used for heating that day (its use less the usual warm-day hot-water use). Added
 up over a month or a winter, that is an **estimated SCOP**, shown in a tile and a table
-column. Months with little heating are left blank.
+column headed **Survey SCOP**. Months with little heating are left blank.
 
 Treat it as a guide. Heat loss surveys tend to overstate the heat loss, which makes the
 SCOP look better than it is, and keeping the home cooler than the survey assumed makes it
