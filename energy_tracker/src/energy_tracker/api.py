@@ -125,7 +125,7 @@ async def lifespan(_: FastAPI):
         await asyncio.to_thread(thread.join, 10)
 
 
-app = FastAPI(title="Energy Tracker", version="0.36.0", lifespan=lifespan)
+app = FastAPI(title="Energy Tracker", version="0.37.0", lifespan=lifespan)
 # The page and its chart data are mostly text: sent compressed, they are a quarter the size.
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
@@ -373,6 +373,7 @@ def cost_by_device(
     heat_pump = parts.get("heat_pump")
     if heat_pump:
         heat_pump.update(hot_water_split(days, samples, start, end, gap, scale, valued))
+        heat_pump["efficiency"] = heat_pump_efficiency(start, end)
     return {
         "parts": parts,
         "battery_export": battery_export,
@@ -384,6 +385,99 @@ def cost_by_device(
         # Set when the device readings began part-way through the period.
         "from": partial,
     }
+
+
+def split_by_modes(
+    modes: dict[str, list], outdoor: list, start: datetime, end: datetime, litres: float | None
+) -> tuple[dict, list]:
+    """The heat pump's use split by its modes, day by day, and its hot water reheats."""
+    zone = local_timezone()
+    splitting = (devices.CIRCUIT, devices.EV, devices.HEAT_PUMP, settings().ev_on_smart_load)
+    # The modes are read often: worth finer electricity readings than half hours.
+    fine = counter_samples(
+        [devices.CIRCUIT, devices.EV, devices.HEAT_PUMP], start - timedelta(hours=1), 2, end
+    )
+    measured = hotwater.by_mode(fine, start, end, zone, *splitting, HALF_HOURLY_GAP, modes, outdoor)
+    used_by = hotwater.electricity(fine, *splitting, HALF_HOURLY_GAP)
+    runs: list = []
+    if litres and used_by:
+        detail = database().series([hotwater.TANK], start - timedelta(hours=1), 60)
+        runs = heatpump.reheats(
+            heatpump.Steps(modes[heatpump.HOT_WATER_MODE]),
+            heatpump.Steps(detail[hotwater.TANK]),
+            heatpump.Steps(modes.get(heatpump.FLOW, [])),
+            hotwater.Tank(outdoor),
+            used_by,
+            litres,
+            start,
+            end,
+            zone,
+        )
+    return measured, runs
+
+
+def heat_pump_efficiency(start: datetime, end: datetime) -> dict | None:
+    """The heat pump's estimated COP between two moments: today so far, or a month.
+
+    Whole days come from the figures Heat pump and the weather worked out; today, so far,
+    is worked out here with the same calibration. Kept for five minutes, as the page asks
+    for today every few seconds.
+    """
+    return _kept.get(
+        ("heat_pump_efficiency", start.isoformat(), int(end.timestamp() // 300)),
+        lambda: _heat_pump_efficiency(start, end),
+    )
+
+
+def _heat_pump_efficiency(start: datetime, end: datetime) -> dict | None:
+    try:
+        found = heat_pump_and_weather().get("efficiency")
+    except Exception:  # noqa: BLE001 - the costs stand without it
+        log.exception("Could not work out the heat pump's efficiency")
+        return None
+    if not found or not found.get("has_data"):
+        return None
+    zone = local_timezone()
+    midnight = local_midnight(datetime.now(UTC), zone)
+    first_day = start.astimezone(zone).date()
+    last_day = (end - timedelta(seconds=1)).astimezone(zone).date()
+
+    def as_date(value) -> date:
+        return value if isinstance(value, date) else date.fromisoformat(value)
+
+    days = [
+        item
+        for item in found.get("daily", [])
+        if first_day <= as_date(item["day"]) <= last_day and as_date(item["day"]) < midnight.date()
+    ]
+    if end > midnight and start <= midnight:  # today so far
+        modes, outdoor = mode_readings(midnight)
+        if modes.get(heatpump.HOT_WATER_MODE):
+            litres = found.get("litres")
+            measured, runs = split_by_modes(modes, outdoor, midnight, end, litres)
+            today = midnight.date()
+            outside = [v for t, v in outdoor if t >= midnight]
+            live = heatpump.estimate(
+                {},
+                {today: sum(outside) / len(outside)} if outside else {},
+                measured,
+                runs,
+                {},
+                None,
+                today,
+                litres,
+                calibration=found,
+            )
+            days += live["daily"]
+    if not days:
+        return None
+    one_day = len(days) == 1
+    summary = heatpump.summarise(
+        "", days, heatpump.DAY_MINIMUM if one_day else heatpump.MIN_HEATING_KWH
+    )
+    summary["eta_source"] = found.get("eta_source")
+    summary["hot_water_cop_source"] = found.get("hot_water_cop_source")
+    return summary
 
 
 MODE_BUCKET = 120  # seconds: the heat pump's modes, averaged over two minutes
@@ -1301,29 +1395,7 @@ def heat_pump_and_weather() -> dict:
         first = modes[heatpump.HOT_WATER_MODE][0][0]
         midnight = local_midnight(first, zone)
         modes_from = max(start, midnight if midnight == first else midnight + timedelta(days=1))
-        fine = counter_samples(
-            [devices.CIRCUIT, devices.EV, devices.HEAT_PUMP],
-            modes_from - timedelta(hours=1),
-            2,
-            end,
-        )
-        measured_modes = hotwater.by_mode(
-            fine, modes_from, end, zone, *splitting, HALF_HOURLY_GAP, modes, outdoor
-        )
-        used_by = hotwater.electricity(fine, *splitting, HALF_HOURLY_GAP)
-        if litres and used_by:
-            detail = database().series([hotwater.TANK], modes_from - timedelta(hours=1), 60)
-            runs = heatpump.reheats(
-                heatpump.Steps(modes[heatpump.HOT_WATER_MODE]),
-                heatpump.Steps(detail[hotwater.TANK]),
-                heatpump.Steps(modes.get(heatpump.FLOW, [])),
-                hotwater.Tank(outdoor),
-                used_by,
-                litres,
-                modes_from,
-                end,
-                zone,
-            )
+        measured_modes, runs = split_by_modes(modes, outdoor, modes_from, end, litres)
     yesterday = (end - timedelta(days=1)).astimezone(zone).date()
     if measured_modes:
         result["efficiency"] = heatpump.estimate(

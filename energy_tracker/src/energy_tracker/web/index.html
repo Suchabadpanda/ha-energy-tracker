@@ -280,10 +280,10 @@
       charging it. Battery export is electricity stored in the battery and later sold back to the grid: what
       it cost to store is no device's, and the payment for it is in Export credit. The standing charge and
       export credit belong to the house as a whole and are left out. See
-      "Running costs by device" for earlier months. The heat pump's heating and hot water are measured from the hot water
-      tank's reheats wherever its temperature is recorded (name the tank sensor in the hot_water_tank_entity
-      option); on other days, up to the heat pump's usual warm-day use counts as hot water and the rest as
-      heating.</div>
+      "Running costs by device" for earlier months. The heat pump's heating and hot water are measured from its own modes
+      (the hot_water_mode_entity option) or else the hot water tank's reheats (hot_water_tank_entity); on other
+      days, up to the heat pump's usual warm-day use counts as hot water and the rest as heating. Its COP (today)
+      and SCOP (the month) are estimates: see Estimated SCOP under Heat pump and the weather.</div>
   </div>
 
   <div class="filters">
@@ -1448,9 +1448,29 @@ function renderByDevice(boxId, split) {
     // Say how the split was made: measured from the tank's reheats, or estimated.
     const measuredDays = hp.split_measured_days ?? 0;
     tile.append(Object.assign(document.createElement("div"), { className: "note",
-      textContent: measuredDays >= hp.split_days ? "Measured from the hot water tank's reheats"
-        : measuredDays ? "Measured from the tank on " + measuredDays + " of " + hp.split_days + " days; the rest estimated"
+      textContent: measuredDays >= hp.split_days ? "Measured from the heat pump's hot water runs"
+        : measuredDays ? "Measured on " + measuredDays + " of " + hp.split_days + " days; the rest estimated"
         : "Estimated from the heat pump's use on warm days" }));
+    row.append(tile);
+  }
+  // The heat pump's estimated efficiency: its COP today, or its SCOP over the month.
+  const eff = hp?.efficiency;
+  if (eff) {
+    const today = boxId === "cost-devices";
+    const fixed = v => v == null ? "–" : v.toFixed(2);
+    const tile = Object.assign(document.createElement("div"), { className: "tile tinted",
+      title: "An estimate (there is no heat meter): the heat the heat pump gave out divided by the electricity it used. " +
+             "See Estimated SCOP under Heat pump and the weather for how it is worked out." });
+    tile.style.setProperty("--c", colours.heat_pump);
+    const parts = [eff.heating_scop != null ? "Heating " + fixed(eff.heating_scop) : "",
+                   eff.hot_water_cop != null ? "hot water " + fixed(eff.hot_water_cop) : ""].filter(Boolean).join(", ");
+    const lines = [parts || (today ? "Too little use yet today" : "Too little use yet"),
+                   eff.scop != null ? "Estimate: " + eff.heat_kwh.toLocaleString() + " kWh of heat from " + eff.kwh.toFixed(1) + " kWh" : ""];
+    if (!today && eff.measured_days < eff.days) lines.push(eff.measured_days + " of " + eff.days + " days measured; the rest estimated");
+    tile.append(
+      Object.assign(document.createElement("div"), { className: "label", textContent: names.heat_pump + (today ? " COP today" : " SCOP") }),
+      Object.assign(document.createElement("div"), { className: "value", textContent: fixed(eff.scop) }),
+      Object.assign(document.createElement("div"), { className: "note", textContent: lines.filter(Boolean).join("\n"), style: "white-space: pre-line" }));
     row.append(tile);
   }
   // Electricity stored in the battery and sold back to the grid: no device used it.
@@ -3467,6 +3487,8 @@ function renderEfficiency(eff, tile, design) {
   document.getElementById("efficiency-tiles").replaceChildren(
     tile(month ? "SCOP, " + monthName(month.name) : "SCOP this month", fixed(month?.scop, 2),
          month ? parts(month) : "No whole days yet this month"),
+    tile("COP yesterday", fixed(eff.yesterday?.scop, 2),
+         eff.yesterday ? parts(eff.yesterday) : "No figure for yesterday"),
     tile(year ? "SCOP, " + year.name + " so far" : "SCOP this year", fixed(year?.scop, 2),
          year ? year.heat_kwh.toLocaleString() + " kWh of heat from " + year.kwh.toFixed(0) + " kWh" : ""),
     tile("Hot water COP", fixed(eff.hot_water_cop, 2),

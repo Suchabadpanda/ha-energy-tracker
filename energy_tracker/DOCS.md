@@ -153,6 +153,9 @@ used for the plan** in the Tariff switch planner, or else the size worked out fr
   the cylinder (see Estimated SCOP). Without either, or on days its
   readings do not cover, it is estimated: up to the heat pump's usual use on warm days
   counts as hot water. The tile says which. Today by device shows the same split in kWh.
+- With the heat pump's modes set up (see Estimated SCOP), a last tile gives its estimated
+  **COP today** (so far) under Cost today, and its **SCOP** for the month under the month's
+  cost, with the heating and hot water figures apart.
 
 ### Time windows
 
@@ -278,7 +281,7 @@ under **Your heat pump's details**. Then:
   measured days. This gives a figure for the whole year, as far back as the heat pump's
   readings go.
 
-The **Estimated SCOP** box shows this month's and this year's SCOP (all the heat ÷ all the
+The **Estimated SCOP** box shows yesterday's COP, this month's and this year's SCOP (all the heat ÷ all the
 electricity, including standby), the hot water COP, and a table by year and month with the
 heating and hot water figures apart. If a measured figure is far outside what a heat pump
 can do (a wrong cylinder size, say), the typical figure is used and the hint says so.

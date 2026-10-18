@@ -54,6 +54,7 @@ DEFAULT_HOT_WATER_COP = 2.5
 HOT_WATER_COP_RANGE = (1.0, 5.0)  # outside this, a reading or setting is wrong
 MIN_HEATING_KWH = 5.0  # below this a period's heating SCOP means little
 MIN_HOT_WATER_KWH = 2.0
+DAY_MINIMUM = 1.0  # kWh: a single day's COP needs less behind it
 
 UNKNOWN = {"unavailable", "unknown", ""}
 OFF = {"off", "idle", "standby", "none", "false", "0"}
@@ -414,6 +415,57 @@ def curve(pairs: list[tuple[float, float, float]]) -> dict:
     return {"source": source, "at_minus_3": at(-3), "at_7": at(7), "at_15": at(15), "flow": at}
 
 
+def summarise(name: str, members: list[dict], minimum: float = MIN_HEATING_KWH) -> dict:
+    """Totals and efficiencies over some days (from `estimate`'s daily figures). A figure
+    is only given with at least `minimum` kWh behind it (less for hot water)."""
+
+    def total(key: str) -> float:
+        return sum(m[key] for m in members)
+
+    water, heating_kwh, other = total("hot_water_kwh"), total("heating_kwh"), total("other_kwh")
+    water_heat, heating_heat = total("hot_water_heat_kwh"), total("heating_heat_kwh")
+    electricity = water + heating_kwh + other
+    water_minimum = min(MIN_HOT_WATER_KWH, minimum / 2)
+    return {
+        "name": name,
+        "days": len(members),
+        "measured_days": sum(1 for m in members if m["source"] == "modes"),
+        "kwh": round(electricity, 1),
+        "hot_water_kwh": round(water, 1),
+        "heating_kwh": round(heating_kwh, 1),
+        "other_kwh": round(other, 1),
+        "heat_kwh": round(water_heat + heating_heat),
+        "hot_water_cop": round(water_heat / water, 2) if water >= water_minimum else None,
+        "heating_scop": round(heating_heat / heating_kwh, 2) if heating_kwh >= minimum else None,
+        "scop": (
+            round((water_heat + heating_heat) / electricity, 2) if electricity >= minimum else None
+        ),
+    }
+
+
+def curve_from(saved: dict) -> dict:
+    """A curve as `curve` returns it, from its saved points (to reuse a fitted curve)."""
+    low, high = saved["at_minus_3"], saved["at_15"]
+
+    def at(outdoor: float) -> float:
+        return round(min(60.0, max(25.0, low + (high - low) * (outdoor + 3) / 18)), 1)
+
+    return {**saved, "flow": at}
+
+
+CALIBRATION = (
+    "reheats",
+    "legionella_reheats",
+    "eta",
+    "eta_source",
+    "eta_measured",
+    "hot_water_cop",
+    "hot_water_cop_source",
+    "hot_water_cop_measured",
+)
+DAILY_KEPT = 400  # days of daily figures returned, for the cost tiles
+
+
 def estimate(
     used: dict[date, float],
     temperature: dict[date, float],
@@ -423,6 +475,7 @@ def estimate(
     warm_day_kwh: float | None,
     today: date,
     litres: float | None,
+    calibration: dict | None = None,
 ) -> dict:
     """Estimated SCOP by month and by year.
 
@@ -432,9 +485,13 @@ def estimate(
     water COP, so the whole year can be estimated even though the modes only go back a
     little way.
     """
-    tuned = calibrate(runs) if litres else calibrate([])
+    if calibration:  # figures already worked out over a longer stretch
+        tuned = {k: v for k, v in calibration.items() if k in CALIBRATION}
+        weather_curve = curve_from(calibration["curve"])
+    else:
+        tuned = calibrate(runs) if litres else calibrate([])
+        weather_curve = curve([p for row in measured.values() for p in row["pairs"]])
     eta, water_cop = tuned["eta"], tuned["hot_water_cop"]
-    weather_curve = curve([p for row in measured.values() for p in row["pairs"]])
     by_day_runs: dict[date, list[dict]] = {}
     for run in runs if litres else []:
         if run["kwh"] >= MIN_RUN_KWH:
@@ -494,38 +551,11 @@ def estimate(
             }
         )
 
-    def summary(name: str, members: list[dict]) -> dict:
-        def total(key: str) -> float:
-            return sum(m[key] for m in members)
-
-        water, heating_kwh, other = total("hot_water_kwh"), total("heating_kwh"), total("other_kwh")
-        water_heat, heating_heat = total("hot_water_heat_kwh"), total("heating_heat_kwh")
-        electricity = water + heating_kwh + other
-        return {
-            "name": name,
-            "days": len(members),
-            "measured_days": sum(1 for m in members if m["source"] == "modes"),
-            "kwh": round(electricity, 1),
-            "hot_water_kwh": round(water, 1),
-            "heating_kwh": round(heating_kwh, 1),
-            "other_kwh": round(other, 1),
-            "heat_kwh": round(water_heat + heating_heat),
-            "hot_water_cop": round(water_heat / water, 2) if water >= MIN_HOT_WATER_KWH else None,
-            "heating_scop": (
-                round(heating_heat / heating_kwh, 2) if heating_kwh >= MIN_HEATING_KWH else None
-            ),
-            "scop": (
-                round((water_heat + heating_heat) / electricity, 2)
-                if electricity >= MIN_HEATING_KWH
-                else None
-            ),
-        }
-
     def grouped(key) -> list[dict]:
         groups: dict[str, list[dict]] = {}
         for item in days:
             groups.setdefault(key(item["day"]), []).append(item)
-        return [summary(name, members) for name, members in sorted(groups.items())]
+        return [summarise(name, members) for name, members in sorted(groups.items())]
 
     months = grouped(lambda d: f"{d:%Y-%m}")
     years = grouped(lambda d: f"{d:%Y}")
@@ -541,7 +571,20 @@ def estimate(
         "years": years,
         "this_month": next((m for m in months if m["name"] == f"{today:%Y-%m}"), None),
         "this_year": next((y for y in years if y["name"] == f"{today:%Y}"), None),
-        "last_12_months": summary("Last 12 months", year_ago) if year_ago else None,
+        "last_12_months": summarise("Last 12 months", year_ago) if year_ago else None,
+        # Each day's figures: for the cost tiles, and a day's COP.
+        "daily": [
+            {k: (round(v, 3) if isinstance(v, float) else v) for k, v in item.items()}
+            for item in days[-DAILY_KEPT:]
+        ],
+        "yesterday": next(
+            (
+                summarise(f"{item['day']}", [item], DAY_MINIMUM)
+                for item in days[-1:]
+                if item["day"] == today
+            ),
+            None,
+        ),
         "recent_reheats": [
             {k: (round(v, 2) if isinstance(v, float) else v) for k, v in r.items() if k != "ideal"}
             for r in runs[-10:]

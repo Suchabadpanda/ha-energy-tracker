@@ -206,3 +206,12 @@ def test_heating_endpoint_gives_the_estimated_scop_from_the_modes():
     assert latest["measured_days"] >= 4
     assert latest["hot_water_kwh"] == pytest.approx(1.2 * latest["measured_days"], rel=0.15)
     assert latest["scop"] and 1.5 < latest["scop"] < 6
+    assert found["yesterday"]["scop"] and found["daily"]
+
+    # The tiles under the costs: today so far, and a stretch of whole days.
+    midnight = api.local_midnight(now, LONDON)
+    today = api._heat_pump_efficiency(midnight, now)
+    if now - midnight > timedelta(hours=3):  # enough of today to go on
+        assert today["days"] == 1 and today["kwh"] > 0
+    week = api._heat_pump_efficiency(midnight - timedelta(days=4), now)
+    assert week["days"] >= 4 and week["scop"] and 1.5 < week["scop"] < 6

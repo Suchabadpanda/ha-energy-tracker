@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.37.0
+
+- **Heat pump COP today** tile under Cost today, and **Heat pump SCOP** for the month under
+  the month's cost, each with heating and hot water apart. Estimated from the heat pump's
+  modes, as in Estimated SCOP.
+- **COP yesterday** tile in the Estimated SCOP box.
+
 ## 0.36.0
 
 - **Estimated SCOP from the heat pump's modes**, for this month and this year, with a table
