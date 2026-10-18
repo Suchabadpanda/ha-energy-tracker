@@ -1,0 +1,290 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Money · Energy Tracker</title>
+<link rel="stylesheet" href="app.css?v=__VERSION__">
+</head>
+<body data-page="money">
+<main>
+  <header>
+    <h1>Energy Tracker</h1>
+    <nav class="pages" aria-label="Pages">
+      <a href="./">Now</a>
+      <a href="history">History</a>
+      <a href="devices">Devices</a>
+      <a href="money" aria-current="page">Money</a>
+      <a href="settings">Settings</a>
+    </nav>
+    <div class="right">
+      <div id="status">Loading…</div>
+      <details class="jump" id="jump">
+        <summary>Sections</summary>
+        <div class="jump-panel" id="jump-panel"></div>
+      </details>
+    </div>
+  </header>
+
+  <div id="notice" role="alert" hidden>
+    <strong>No Sigenergy sensors were found in Home Assistant.</strong>
+    This app is built for Sigenergy solar and battery systems and reads the sensors created
+    by the Sigenergy integration, so it has nothing to show yet. If you have a Sigenergy
+    system, check that its integration is set up. For other systems, or sensors with different
+    names, see "Using different sensors" in the documentation.
+  </div>
+  <div id="reminders" role="status" hidden></div>
+
+  <h2 id="roi-heading">Return on investment</h2>
+  <div class="tiles" id="roi-tiles"></div>
+  <div id="roi-progress" hidden>
+    <div class="progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-label="Share of the system cost paid back">
+      <div class="bar"></div>
+    </div>
+    <div class="progress-labels"><span id="roi-progress-done"></span><span id="roi-progress-left"></span></div>
+  </div>
+  <div class="chart" style="margin-top: 12px;">
+    <div class="empty" id="roi-empty">Enter what the system cost below to see how much of it
+      has been paid back and when it should break even.</div>
+    <svg id="roi-chart" viewBox="0 0 900 300" role="img"
+         aria-label="Savings building up towards the cost of the system" hidden></svg>
+    <div class="legend" id="roi-legend" hidden></div>
+    <div class="hint" id="roi-hint"></div>
+    <details id="roi-editor">
+      <summary>System cost and settings</summary>
+      <div class="hint">Savings are what your household's electricity would have cost with no
+        solar or battery, less what you actually paid. By default the comparison uses your own
+        tariff, so cheap-rate charging of a car still counts as cheap. To measure against a
+        different tariff, add it under Compare tariffs and choose it here. The three yearly
+        percentages are optional: fill any in to see a second break-even date that allows for
+        them. Leave them empty to keep to today's prices and performance.</div>
+      <form id="roi-form">
+        <div class="field-row">
+          <label>Installed on <input type="date" name="install_date" required></label>
+          <label>Look ahead (years after install)
+            <input type="number" name="horizon_years" min="5" max="40" step="1" value="20" required></label>
+          <label class="grow" style="flex: 2 1 280px;">Tariff without the system
+            <select name="baseline"></select></label>
+          <label class="grow" style="flex: 2 1 280px;">Also compare with (a second line)
+            <select name="second_baseline"></select></label>
+        </div>
+        <div class="group-title">What it cost</div>
+        <div class="windows" id="roi-costs"></div>
+        <div class="actions"><button type="button" id="roi-add-cost">Add a cost</button></div>
+        <div class="group-title">Yearly assumptions <small>(optional)</small></div>
+        <div class="field-row">
+          <label>Panel loss (%)
+            <input type="number" name="panel_ageing" min="0" max="5" step="0.1" placeholder="Typical: 0.5"></label>
+          <label>Battery loss (%)
+            <input type="number" name="battery_ageing" min="0" max="10" step="0.1" placeholder="Typical: 2"></label>
+          <label>Price change (%)
+            <input type="number" name="price_change" min="-10" max="20" step="0.1" placeholder="Your own view"></label>
+        </div>
+        <div class="group-title">Extra income</div>
+        <label class="wide"><input type="checkbox" name="project_extra" checked>
+          Assume regular income (such as Axle) carries on in the years ahead</label>
+        <div class="field-row">
+          <label>Regular income of at least (<span class="major">£</span> a month)
+            <input type="number" name="regular_minimum" min="0" max="1000" step="0.01" placeholder="Axle's minimum, such as 10"></label>
+        </div>
+        <div class="hint" style="margin-top: 0; grid-column: 1 / -1;">Regular income is projected at what the last year paid, and at
+          least this much a month. One-off income, such as a referral bonus, counts towards what has been
+          saved but is never assumed to carry on. Choose which each entry is under Extra income.</div>
+        <div class="actions"><button class="primary" type="submit">Save</button></div>
+        <div id="roi-message"></div>
+      </form>
+    </details>
+  </div>
+
+  <h2 id="income-heading">Extra income</h2>
+  <div class="chart">
+    <div class="hint" id="income-summary" style="margin-top: 0;"></div>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>Date</th><th>For</th><th class="num">Exported</th><th class="num">Amount</th><th></th></tr></thead>
+        <tbody id="income-rows"></tbody>
+      </table>
+    </div>
+    <details id="income-editor">
+      <summary>Add income or change settings</summary>
+      <div class="hint">For money earned on top of your tariff, such as Axle Energy payments for
+        exporting during grid events. It counts towards Return on investment. Add entries by hand here. If
+        Home Assistant has an Axle event sensor, export events are also recorded automatically,
+        with the payment estimated as the energy exported during the event times the rate below.
+        Use Edit on an entry to replace an estimate with what you were actually paid.
+        Regular income, such as Axle's monthly payments, is carried forward in Return on investment's
+        projection; one-off income, such as a referral bonus, is counted but not projected.</div>
+      <form id="income-form">
+        <label>Date <input type="date" name="day" required></label>
+        <label>For <input type="text" name="description" maxlength="80" value="Axle export event" required></label>
+        <label>Amount (<span class="major">£</span>) <input type="number" name="amount" min="0" step="0.01" required></label>
+        <label>Counts as
+          <select name="regular">
+            <option value="true">Regular: carries on, such as Axle</option>
+            <option value="false">One-off: a referral, bonus or similar</option>
+          </select></label>
+        <div class="actions"><button class="primary" type="submit">Save entry</button></div>
+        <div id="income-message" style="grid-column: 1 / -1; font-size: 13px; min-height: 18px; color: var(--muted);"></div>
+      </form>
+      <form id="axle-form">
+        <label>Axle pays per kWh exported in an event (<span class="minor">p</span>)
+          <input type="number" name="rate" min="0" max="2000" step="0.1" required></label>
+        <div class="actions"><button type="submit">Save rate</button></div>
+        <div class="hint" id="axle-status" style="grid-column: 1 / -1; margin: 0;"></div>
+      </form>
+    </details>
+  </div>
+
+  <h2 id="bills-heading">Bill check</h2>
+  <div class="chart">
+    <div class="hint" id="bills-summary" style="margin-top: 0;"></div>
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th><button type="button" class="link" id="bills-sort" style="color: inherit; font-weight: inherit; font-size: inherit;">Bill period</button></th>
+          <th></th><th class="num">Imported</th><th class="num">Charged</th>
+          <th class="num">Exported</th><th class="num">Export payment</th><th></th></tr></thead>
+        <tbody id="bills-rows"></tbody>
+        <tbody id="bills-totals" style="border-top: 2px solid var(--line);"></tbody>
+      </table>
+    </div>
+    <details id="bills-editor">
+      <summary>Add a bill</summary>
+      <div class="hint">Enter the figures from a bill or statement to compare them with what the
+        tracker measured over the same dates. Fill in whichever you have, or choose the bill's
+        PDF and press Read to have them filled in for you to check. Choose several PDFs at
+        once to read them all into a list and save them together. PDFs are read on this device
+        and are not kept or sent anywhere. "Charged" is the
+        electricity charge including the standing charge and VAT, before any export payment.
+        The inverter and the supplier's meter are separate instruments, so a difference of a
+        percent or two is normal.</div>
+      <form id="bills-form">
+        <div class="lookup">
+          <label>Read the figures from bills (PDFs from your supplier; choose one or several)
+            <input type="file" id="bills-file" accept="application/pdf,.pdf" multiple></label>
+          <button type="button" id="bills-read">Read</button>
+        </div>
+        <div id="bills-batch" class="wide" style="grid-column: 1 / -1;" hidden>
+          <div class="table-scroll">
+            <table>
+              <thead><tr><th>File</th><th>Bill period</th><th class="num">Imported</th><th class="num">Charged</th>
+                <th class="num">Exported</th><th class="num">Export payment</th><th></th></tr></thead>
+              <tbody id="bills-batch-rows"></tbody>
+            </table>
+          </div>
+          <div class="actions" style="margin-top: 10px;">
+            <button class="primary" type="button" id="bills-batch-save">Save bills</button>
+          </div>
+        </div>
+        <div class="field-row">
+          <label>First day billed <input type="date" name="first_day" required></label>
+          <label>Last day billed <input type="date" name="last_day" required></label>
+        </div>
+        <div class="field-row">
+          <label>Imported (kWh) <input type="number" name="import_kwh" min="0" step="0.001"></label>
+          <label>Charged (<span class="major">£</span>) <input type="number" name="charge_gbp" min="0" step="0.01"></label>
+          <label>Exported (kWh) <input type="number" name="export_kwh" min="0" step="0.001"></label>
+          <label>Export payment (<span class="major">£</span>) <input type="number" name="export_gbp" min="0" step="0.01"></label>
+        </div>
+        <div class="actions"><button class="primary" type="submit">Save bill</button></div>
+        <div id="bills-message" style="grid-column: 1 / -1; font-size: 13px; min-height: 18px; color: var(--muted);"></div>
+        <div id="bills-rates" hidden></div>
+      </form>
+    </details>
+  </div>
+
+  <div class="nav" style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+    <h2 id="compare-heading">Compare tariffs</h2>
+    <select id="compare-period" aria-label="Period to compare over">
+      <option value="30d">Last 30 days</option>
+      <option value="90d">Last 90 days</option>
+      <option value="12m" selected>Last 12 months</option>
+      <option value="all">Everything stored</option>
+    </select>
+  </div>
+  <div class="chart">
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>Tariff</th><th>Import</th><th>Export credit</th><th>Standing charge</th>
+          <th>Net cost</th><th>Against yours</th><th>With charging moved</th><th></th></tr></thead>
+        <tbody id="compare-rows"></tbody>
+      </table>
+    </div>
+    <div class="hint" id="compare-hint"></div>
+    <details id="compare-editor">
+      <summary>Add a tariff to compare</summary>
+      <div class="hint">Enter another tariff's prices to see what your actual usage would have
+        cost on it. To test a price change on your own tariff, choose "Copy my current rates"
+        and alter the prices. Enter prices before VAT with the VAT percentage, or prices
+        including VAT with VAT set to 0.</div>
+      <form id="compare-form">
+        <div class="lookup">
+          <label>Look up Octopus Energy prices: your region
+            <select name="region"><option value="">Choose a region</option></select></label>
+          <label>Tariff <select name="product"><option value="">Choose a region first</option></select></label>
+          <button type="button" id="compare-lookup">Fill in prices</button>
+        </div>
+        <div class="lookup">
+          <label>Or follow its published prices day by day, for the region above (Agile, or a variable
+            tariff such as Flexible Octopus, so past price changes count)
+            <select name="dynamic_product"><option value="">Not used</option></select></label>
+        </div>
+        <label>Tariff name <input type="text" name="name" maxlength="120" required></label>
+        <label>Export (<span class="minor">p</span> per kWh)
+          <input type="number" name="export" min="0" step="0.0001" required></label>
+        <label>Standing charge (<span class="minor">p</span> per day)
+          <input type="number" name="standing" min="0" step="0.0001" required></label>
+        <label>VAT to add (%)
+          <input type="number" name="vat" min="0" max="100" step="0.1" value="0" required></label>
+        <label>Standard rate (<span class="minor">p</span> per kWh)
+          <input type="number" name="other_rate" min="0" step="0.0001" required></label>
+        <div class="windows" id="compare-windows"></div>
+        <div class="actions">
+          <button type="button" id="compare-add-window">Add a time window</button>
+          <button type="button" id="compare-copy">Copy my current rates</button>
+          <button class="primary" type="submit">Save tariff</button>
+        </div>
+        <div id="compare-message"></div>
+      </form>
+    </details>
+  </div>
+
+  <div class="nav" style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+    <h2 id="planner-heading">Tariff switch planner</h2>
+    <select id="planner-tariff" aria-label="Tariff to plan a switch to"></select>
+  </div>
+  <div class="chart">
+    <div class="empty" id="planner-empty">Add a tariff under Compare tariffs to plan a switch to it.</div>
+    <div id="planner-body" hidden>
+      <div class="rate-fix" id="planner-advice"></div>
+      <div class="table-scroll" style="margin-top: 12px;">
+        <table>
+          <thead><tr><th>Month</th><th class="num">You paid</th><th class="num">As it happened</th>
+            <th class="num">Charging moved</th><th class="num">Planned charging</th>
+            <th class="num">Planned, against yours</th></tr></thead>
+          <tbody id="planner-rows"></tbody>
+          <tbody id="planner-totals" style="border-top: 2px solid var(--line);"></tbody>
+        </table>
+      </div>
+      <div class="hint" id="planner-hint"></div>
+      <details id="planner-editor">
+        <summary>Battery used for the plan</summary>
+        <div class="hint">The plan needs to know how much the battery holds and how fast it charges.
+          Both are worked out from your readings; enter your own figures here if they look wrong,
+          or to try a bigger battery. Leave a box empty to go back to the worked-out figure.</div>
+        <form id="planner-form">
+          <label>Usable capacity (kWh) <input type="number" name="battery_kwh" min="1" max="500" step="0.1"></label>
+          <label>Fastest charging (kW) <input type="number" name="charge_kw" min="0.5" max="100" step="0.1"></label>
+          <div class="actions"><button class="primary" type="submit">Save</button></div>
+          <div id="planner-message" style="grid-column: 1 / -1; font-size: 13px; min-height: 18px; color: var(--muted);"></div>
+        </form>
+      </details>
+    </div>
+  </div>
+
+  <footer>Built for Sigenergy solar and battery systems. Costs are estimates from the
+    inverter's own counters and will differ slightly from your bill.
+    <div id="storage"></div></footer>
+</main>
+<script src="app.js?v=__VERSION__"></script>
+</body>
+</html>

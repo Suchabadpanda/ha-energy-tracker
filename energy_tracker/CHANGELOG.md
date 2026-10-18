@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.38.0
+
+- **The app is now five pages** instead of one long one: **Now**, **History**, **Devices**,
+  **Money** and **Settings**, linked at the top of every page. The Sections menu lists the
+  pages, with the current page's sections under it.
+  - Each page only loads and refreshes its own sections. The live tiles (every couple of
+    seconds) only run on the Now page.
+  - The look and the code are shared files your browser keeps between pages, and fetches
+    again only after an update.
+  - All pages share the same readings and settings.
+- The figures the app works out in the background are only kept ready for pages opened in
+  the last day, so the Home Assistant Green does far less work when nobody is looking. A
+  page not opened for a while works its figures out when opened (a few seconds), and is
+  kept ready again from then on.
+- Choosing a month under Costs by year opens that month's costs on the Now page.
+
+### How to check this release
+
+1. Update the add-on and open Energy Tracker. The Now page should show the tiles, today's
+   and the month's costs and the power charts, with the five page names in the header.
+2. Open each of History, Devices, Money and Settings: every section from before should be
+   on one of them (the table in the user guide lists which), with no "Could not…" messages.
+3. Open **Sections** on any page: it lists all five pages and that page's sections.
+4. On History, under Costs by year → Net cost month by month, choose a month: the Now page
+   opens at that month's costs.
+5. Fold a section on one page, then open another page and come back: it is still folded.
+6. Optional, for the speed: in the add-on's **Info** tab, CPU use should drop when the page
+   is closed, compared with before.
+
 ## 0.37.0
 
 - **Heat pump COP today** tile under Cost today, and **Heat pump SCOP** for the month under

@@ -323,3 +323,46 @@ def test_payback_can_also_be_measured_against_a_second_tariff():
     assert (
         client.post("/api/roi/settings", json={**body, "second_baseline": "own"}).status_code == 422
     )
+
+
+PAGE_ADDRESSES = ["/", "/history", "/devices", "/money", "/settings"]
+
+
+def test_every_page_is_served_with_the_shared_files_named_by_version():
+    for address in PAGE_ADDRESSES:
+        page = client.get(address)
+        assert page.status_code == 200 and "Energy Tracker" in page.text
+        assert page.headers["cache-control"] == "no-cache"
+        assert f"app.js?v={api.app.version}" in page.text and "__VERSION__" not in page.text
+        # Relative addresses, so the pages work inside Home Assistant's ingress.
+        assert '"/api/' not in page.text and 'href="/' not in page.text
+    script = client.get("/app.js")
+    assert script.status_code == 200 and "immutable" in script.headers["cache-control"]
+    assert '"/api/' not in script.text and "'/api/" not in script.text
+    assert client.get("/app.css").status_code == 200
+    assert client.get("/nowhere").status_code == 404
+    assert client.get("/healthz").status_code == 200  # not taken for a page
+
+
+def test_each_section_is_on_exactly_one_page_and_every_element_the_script_uses_exists():
+    import re
+
+    pages = {address: client.get(address).text for address in PAGE_ADDRESSES}
+    shared = {"status", "jump", "jump-panel", "notice", "reminders", "storage"}
+    seen: dict[str, str] = {}
+    for address, text in pages.items():
+        for found in re.findall(r'id="([^"]+)"', text):
+            if found in shared:
+                continue
+            assert found not in seen, f"{found} is on both {seen[found]} and {address}"
+            seen[found] = address
+    script = client.get("/app.js").text
+    made_by_script = {"cost-devices-tiles", "month-devices-tiles"}  # built from a box's id
+    for wanted in set(re.findall(r'getElementById\("([^"]+)"\)', script)):
+        assert wanted in seen or wanted in shared or wanted in made_by_script, wanted
+
+
+def test_opening_a_page_marks_it_in_use_for_the_background_figures():
+    api.page_opened.pop("money", None)
+    client.get("/money")
+    assert "money" in api.page_opened

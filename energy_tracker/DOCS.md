@@ -6,8 +6,22 @@
 
 ## Finding your way around
 
-The page is long, so the header stays in view as you scroll. **Sections**, at the top
-right, lists every part of the page: choose one to go straight to it. Click any section
+The app is split into five pages, linked at the top of every page:
+
+| Page | What is on it |
+|---|---|
+| **Now** | Right now, Where it's going, Today, Today by device, Cost today, the month's cost, the power and consumption charts |
+| **History** | History, Monthly summary, Yearly report, Costs by year, Averages, Performance |
+| **Devices** | Running costs by device, Heat pump and the weather (with the estimated SCOP) |
+| **Money** | Return on investment, Extra income, Bill check, Compare tariffs, Tariff switch planner |
+| **Settings** | Tariff rates, Notes, Backup and restore, Older history |
+
+Each page only loads and keeps up to date what is on it, so pages open quickly, and the live
+tiles only run while the Now page is open. All pages read the same stored readings and
+settings, so a change on one (new rates under Settings, say) shows on the others.
+
+The header stays in view as you scroll. **Sections**, at the top right, lists the pages,
+with the current page's sections under it: choose one to go straight to it. Click any section
 heading to fold that section away, and again to bring it back; **Fold all sections** and
 **Open all sections** are at the foot of the menu. What you fold is saved with the app, so
 it stays folded the next time you open it, on any device or browser.
@@ -16,7 +30,7 @@ The top of the **Sections** menu also links to this user guide, the app's overvi
 and the list of changes in each version. They open in a new tab, on GitHub, so they need
 an internet connection.
 
-Folding sections you rarely look at also makes the page quicker to open: nothing is
+Folding sections you rarely look at also makes a page quicker to open: nothing is
 fetched for a folded section until you open it.
 
 ## How often things update
@@ -32,7 +46,9 @@ fetched for a folded section until you open it.
 
 The long-range figures take a while to work out on a small machine, so the app prepares
 them in the background every ten minutes and keeps them ready, so the page never waits for
-them. They can therefore be a few minutes behind; saving rates, a bill, a tariff, a note or
+them. It only does this for pages opened in the last day: a page you have not opened for a
+while works its figures out when you next open it, which can take a few seconds, and they
+are kept ready again from then on. They can therefore be a few minutes behind; saving rates, a bill, a tariff, a note or
 income works them out again straight away, in the background.
 
 Each section is only fetched once it is scrolled near, and not at all while it is folded,
@@ -65,9 +81,9 @@ their own mean cheaper or better, and dearer or a problem.
 ## First steps
 
 1. Start the app and open **Energy Tracker** from the sidebar.
-2. Under **Tariff rates**, choose **Add or change rates** and enter your own prices. The
+2. On the **Settings** page, under **Tariff rates**, choose **Add or change rates** and enter your own prices. The
    rates it starts with are only an example.
-3. Optional: under **Older history**, import earlier readings so past months have costs.
+3. Optional: under **Older history**, also on Settings, import earlier readings so past months have costs.
 
 ## Options
 

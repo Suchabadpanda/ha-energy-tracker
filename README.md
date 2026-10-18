@@ -72,6 +72,9 @@ The figures shown are made-up example data.
 
 ## What it shows
 
+Five pages, linked at the top: **Now** (live figures and today's and this month's costs),
+**History**, **Devices**, **Money** and **Settings**. Each loads only its own sections.
+
 - **Right now**: solar, house load, grid, battery power and battery charge level, following
   Home Assistant live.
 - **Where it's going**: smart load (such as a heat pump), EV charger and the rest of the house, where those are fitted.

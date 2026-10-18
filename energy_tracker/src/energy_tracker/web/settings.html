@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Settings · Energy Tracker</title>
+<link rel="stylesheet" href="app.css?v=__VERSION__">
+</head>
+<body data-page="settings">
+<main>
+  <header>
+    <h1>Energy Tracker</h1>
+    <nav class="pages" aria-label="Pages">
+      <a href="./">Now</a>
+      <a href="history">History</a>
+      <a href="devices">Devices</a>
+      <a href="money">Money</a>
+      <a href="settings" aria-current="page">Settings</a>
+    </nav>
+    <div class="right">
+      <div id="status">Loading…</div>
+      <details class="jump" id="jump">
+        <summary>Sections</summary>
+        <div class="jump-panel" id="jump-panel"></div>
+      </details>
+    </div>
+  </header>
+
+  <div id="notice" role="alert" hidden>
+    <strong>No Sigenergy sensors were found in Home Assistant.</strong>
+    This app is built for Sigenergy solar and battery systems and reads the sensors created
+    by the Sigenergy integration, so it has nothing to show yet. If you have a Sigenergy
+    system, check that its integration is set up. For other systems, or sensors with different
+    names, see "Using different sensors" in the documentation.
+  </div>
+  <div id="reminders" role="status" hidden></div>
+
+  <h2>Tariff rates</h2>
+  <div class="chart">
+    <div class="table-scroll">
+      <table>
+        <thead><tr><th>From</th><th>Tariff</th><th>Import</th><th>Export</th>
+          <th>Standing charge</th><th></th></tr></thead>
+        <tbody id="tariff-rows"></tbody>
+      </table>
+    </div>
+    <details id="tariff-editor">
+      <summary>Add or change rates</summary>
+      <div class="hint">For a price change, enter the date the new rates start: earlier days keep
+        their old rates. To correct rates already listed, choose Edit on that row. Enter prices
+        as they appear on your bill before VAT and set VAT to 5, or enter prices that already
+        include VAT and set VAT to 0. VAT is added to import and the standing charge, not to
+        export. The standard rate applies all day unless you add time windows with a different
+        rate: one for a single cheap period, or several. For an Octopus tariff whose price changes
+        every half hour (Agile) or from time to time (a variable tariff), choose it under published
+        prices: each half hour is then charged at the price Octopus published for it, which
+        already includes VAT, and the rates typed here are only used where no price has been
+        published. The standing charge is always the one typed here. On a fixed-price deal, enter the
+        last day the price is guaranteed and the page will remind you a month before it ends.</div>
+      <form id="tariff-form">
+        <label>Rates start on <input type="date" name="effective_from" required></label>
+        <label>Tariff name <input type="text" name="name" maxlength="80" required></label>
+        <label>Export (<span class="minor">p</span> per kWh)
+          <input type="number" name="export" min="0" step="0.001" required></label>
+        <label>Standing charge (<span class="minor">p</span> per day)
+          <input type="number" name="standing" min="0" step="0.001" required></label>
+        <label>VAT to add (%)
+          <input type="number" name="vat" min="0" max="100" step="0.1" required></label>
+        <label>Price fixed until (optional) <input type="date" name="fixed_until"></label>
+        <label>Standard rate (<span class="minor">p</span> per kWh)
+          <input type="number" name="other_rate" min="0" step="0.0001" required></label>
+        <div class="windows" id="tariff-windows"></div>
+        <div class="lookup" style="border-bottom: none; padding-bottom: 0;">
+          <label>Published prices to follow (optional): your region
+            <select name="dynamic_region"><option value="">Choose a region</option></select></label>
+          <label>Tariff to follow
+            <select name="dynamic_product"><option value="">Not used</option></select></label>
+        </div>
+        <div class="actions">
+          <button type="button" id="tariff-add-window">Add a time window</button>
+          <button class="primary" type="submit">Save rates</button>
+        </div>
+        <div id="tariff-message"></div>
+      </form>
+    </details>
+  </div>
+
+  <h2 id="notes-heading">Notes</h2>
+  <div class="chart">
+    <div class="hint" style="margin-top: 0;">Pin a note to a day, such as "new tariff" or "heat pump serviced", to
+      explain a change in the figures later. Notes show as a yellow marker on the history chart and the return on
+      investment chart; point at the marker to read them.</div>
+    <div class="table-scroll"><table><tbody id="notes-rows"></tbody></table></div>
+    <form id="notes-form">
+      <div class="field-row">
+        <label style="flex: 0 1 190px;">Day <input type="date" name="day" required></label>
+        <label style="flex: 3 1 300px;">Note <input type="text" name="text" maxlength="200" required></label>
+      </div>
+      <div class="actions"><button class="primary" type="submit">Add note</button></div>
+      <div id="notes-message" style="grid-column: 1 / -1; font-size: 13px; min-height: 18px; color: var(--muted);"></div>
+    </form>
+  </div>
+
+  <h2 id="backup-heading">Backup and restore</h2>
+  <div class="chart">
+    <div class="hint" style="margin-top: 0;">Save everything you have entered as one file: tariff rates, tariffs
+      to compare, bills, extra income, notes, and the settings for return on investment, the planner and folded sections. Restoring a file replaces all of those with what the file holds. Readings are not in the file:
+      they are kept by Home Assistant's own backups. The file contains your bill figures and costs, so keep it
+      somewhere private.</div>
+    <div class="actions" style="margin-top: 12px; flex-wrap: wrap; align-items: center;">
+      <a class="button" href="api/backup" download>Download settings</a>
+    </div>
+    <form id="restore-form">
+      <div class="lookup" style="border-bottom: none; padding-bottom: 0;">
+        <label>Restore from a settings file
+          <input type="file" id="restore-file" accept="application/json,.json"></label>
+        <button type="button" id="restore-check">Check file</button>
+      </div>
+      <div class="rate-fix" id="restore-found" hidden></div>
+      <div id="restore-message" style="grid-column: 1 / -1; font-size: 13px; min-height: 18px; color: var(--muted);"></div>
+    </form>
+  </div>
+
+  <h2>Older history</h2>
+  <div class="chart">
+    <div class="hint">Brings in energy use from before this app started collecting, so earlier
+      months and years have costs too. Hourly history comes from Home Assistant. For the time
+      before Home Assistant has any, add an hourly export from the mySigen app: ask Sigen AI in
+      the app for one (the Documentation tab has the wording).
+      Safe to run more than once.</div>
+    <details id="import-editor">
+      <summary>Import older history</summary>
+      <form id="import-form">
+        <label class="wide">Sigenergy export (.xlsx), optional
+          <input type="file" name="file" accept=".xlsx"></label>
+        <div class="actions">
+          <button type="button" id="import-check">Check only</button>
+          <button class="primary" type="submit">Import</button>
+        </div>
+        <div id="import-message"></div>
+      </form>
+    </details>
+  </div>
+
+  <footer>Built for Sigenergy solar and battery systems. Costs are estimates from the
+    inverter's own counters and will differ slightly from your bill.
+    <div id="storage"></div></footer>
+</main>
+<script src="app.js?v=__VERSION__"></script>
+</body>
+</html>

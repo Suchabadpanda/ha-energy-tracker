@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Devices · Energy Tracker</title>
+<link rel="stylesheet" href="app.css?v=__VERSION__">
+</head>
+<body data-page="devices">
+<main>
+  <header>
+    <h1>Energy Tracker</h1>
+    <nav class="pages" aria-label="Pages">
+      <a href="./">Now</a>
+      <a href="history">History</a>
+      <a href="devices" aria-current="page">Devices</a>
+      <a href="money">Money</a>
+      <a href="settings">Settings</a>
+    </nav>
+    <div class="right">
+      <div id="status">Loading…</div>
+      <details class="jump" id="jump">
+        <summary>Sections</summary>
+        <div class="jump-panel" id="jump-panel"></div>
+      </details>
+    </div>
+  </header>
+
+  <div id="notice" role="alert" hidden>
+    <strong>No Sigenergy sensors were found in Home Assistant.</strong>
+    This app is built for Sigenergy solar and battery systems and reads the sensors created
+    by the Sigenergy integration, so it has nothing to show yet. If you have a Sigenergy
+    system, check that its integration is set up. For other systems, or sensors with different
+    names, see "Using different sensors" in the documentation.
+  </div>
+  <div id="reminders" role="status" hidden></div>
+
+  <div id="device-costs-section">
+    <h2 id="device-costs-heading">Running costs by device</h2>
+    <div class="chart">
+      <div class="table-scroll">
+        <table>
+          <thead id="device-costs-head"></thead>
+          <tbody id="device-costs-rows"></tbody>
+        </table>
+      </div>
+      <div class="hint" id="device-costs-hint"></div>
+    </div>
+  </div>
+
+  <div id="heating-section">
+    <h2 id="heating-heading">Heat pump and the weather</h2>
+    <div class="tiles" id="heating-tiles"></div>
+    <div class="chart" id="efficiency-box" style="margin-top: 12px;" hidden>
+      <h3 style="margin: 0 0 8px; font-size: 15px;">Estimated SCOP</h3>
+      <div class="tiles" id="efficiency-tiles"></div>
+      <div class="table-scroll" style="margin-top: 12px;">
+        <table>
+          <thead><tr><th>Period</th><th class="num">Days</th><th class="num">Electricity</th><th class="num">Hot water</th>
+            <th class="num">Heating</th><th class="num">Standby</th><th class="num">Hot water COP</th>
+            <th class="num">Heating SCOP</th><th class="num">SCOP</th></tr></thead>
+          <tbody id="efficiency-rows"></tbody>
+        </table>
+      </div>
+      <div class="hint" id="efficiency-hint"></div>
+    </div>
+    <div class="chart" style="margin-top: 12px;">
+      <div class="empty" id="heating-empty" hidden></div>
+      <svg id="heating-chart" viewBox="0 0 900 320" role="img"
+           aria-label="Each day's heat pump use against that day's outdoor temperature" hidden></svg>
+      <div class="hint" id="heating-chart-hint"></div>
+    </div>
+    <div class="chart" id="heating-table-box" hidden>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>Period</th><th class="num">Days</th><th class="num">Average outside</th>
+            <th class="num">Heat pump</th><th class="num">Degree days</th><th class="num">kWh per degree day</th><th class="num" id="heating-scop-head" hidden>Survey SCOP</th></tr></thead>
+          <tbody id="heating-rows"></tbody>
+        </table>
+      </div>
+      <div class="hint">Degree days measure how cold it was: each day adds how far its average fell below
+        15.5 °C. kWh per degree day lets one winter be compared fairly with another, whatever the weather; if it
+        rises, the heat pump (or its settings) is working less efficiently. Winters run October to April; months with
+        little heating are left blank, as hot water would swamp the figure.</div>
+    </div>
+    <div class="hint" id="heating-hint"></div>
+    <details id="heating-editor">
+      <summary>Your heat pump's details (for the estimated SCOP)</summary>
+      <div class="hint">Cylinder size: the litres on the hot water cylinder's label. With the heat pump's modes
+        (the <code>hot_water_mode_entity</code> and <code>heating_mode_entity</code> options), the tracker measures the
+        heat put into the cylinder at each reheat and uses it to estimate the heat pump's SCOP.</div>
+      <div class="hint">From the heat loss survey done for the heat pump (an MCS heat loss report, say). With it, the
+        tracker estimates the heat your home needed each day from how cold it was, and divides it by the electricity
+        the heat pump used for heating: an estimated SCOP. Surveys tend to overstate heat loss, so treat it as a
+        guide, best for comparing one month or winter with another.</div>
+      <form id="heating-form">
+        <label>Hot water cylinder (litres) <input type="number" name="cylinder_litres" min="30" max="1000" step="1" placeholder="250"></label>
+        <label>Total heat loss (kW) <small>(survey)</small> <input type="number" name="heat_loss_kw" min="0.1" max="50" step="0.01" placeholder="4.42"></label>
+        <label>Design outdoor temperature (°C) <input type="number" name="outdoor_c" min="-25" max="10" step="0.1" placeholder="-3.4"></label>
+        <label>Indoor temperature (°C) <input type="number" name="indoor_c" min="12" max="26" step="0.1" placeholder="21"></label>
+        <label>Heating degree days a year <small>(optional)</small> <input type="number" name="degree_days" min="100" max="6000" step="1" placeholder="2224"></label>
+        <label>Design SCOP <small>(optional)</small> <input type="number" name="design_scop" min="1" max="8" step="0.01" placeholder="3.78"></label>
+        <label>Heating needed below (°C) <input type="number" name="base_c" min="10" max="20" step="0.1" value="15.5"></label>
+        <div class="actions">
+          <button class="primary" type="submit">Save</button>
+          <button type="button" id="heating-clear">Clear</button>
+        </div>
+        <div id="heating-message" style="grid-column: 1 / -1; font-size: 13px; min-height: 18px; color: var(--muted);"></div>
+      </form>
+    </details>
+  </div>
+
+  <footer>Built for Sigenergy solar and battery systems. Costs are estimates from the
+    inverter's own counters and will differ slightly from your bill.
+    <div id="storage"></div></footer>
+</main>
+<script src="app.js?v=__VERSION__"></script>
+</body>
+</html>

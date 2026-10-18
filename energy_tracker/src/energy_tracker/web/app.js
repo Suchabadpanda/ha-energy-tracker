@@ -1,0 +1,3687 @@
+// The Sigenergy "smart load" meter measures the heat pump and EV charger circuit together,
+// and the Tesla Wall Connector measures the EV charger on its own. So:
+//   heat pump     = that circuit - EV charger
+//   rest of house = total consumption - that circuit
+// The sensors update at slightly different moments, so a result can dip below zero for a
+// reading or two when something switches on or off; it is clamped at zero.
+// How money is written: the main symbol and the small unit prices are entered in. Set from
+// the app's options (api/setup) before anything is drawn.
+// Which page this is (each page has some of the sections): now, history, devices, money or
+// settings. The code for every section is shared; a section not on this page is never fetched.
+const PAGE = document.body.dataset.page || "now";
+const onPage = id => document.getElementById(id) !== null;
+
+let CUR = "£", MINOR = "p";
+function applyCurrency(currency) {
+  if (!currency) return;
+  CUR = currency.symbol;
+  MINOR = currency.minor;
+  for (const el of document.querySelectorAll(".major")) el.textContent = CUR;
+  for (const el of document.querySelectorAll(".minor")) el.textContent = MINOR;
+}
+
+// Which optional equipment exists (from api/setup). Tiles for anything missing are left out.
+let setup = { smart_load: true, ev_charger: true, ev_on_smart_load: true,
+              smart_load_label: "Heat pump", sigenergy_found: true };
+// True when the EV charger's use is part of the smart load figure and must be taken off it.
+const evInsideSmartLoad = () => setup.smart_load && setup.ev_charger && setup.ev_on_smart_load;
+
+// The smart load on its own (e.g. the heat pump): its circuit, less the EV charger if that
+// is wired through it.
+const heatPumpPower = (circuit, ev) =>
+  Math.max(0, circuit - (evInsideSmartLoad() ? (ev ?? 0) : 0));
+// Everything not separately measured.
+const restOfHouse = (load, circuit, ev) => {
+  const smart = setup.smart_load ? circuit : undefined;
+  const charger = setup.ev_charger ? ev : undefined;
+  const measured = evInsideSmartLoad() ? (smart ?? charger ?? 0) : (smart ?? 0) + (charger ?? 0);
+  return Math.max(0, load - measured);
+};
+// Drops tiles (or chart layers) for equipment that is not installed.
+const installed = items => items.filter(item =>
+  item.needs === "smart_load" ? setup.smart_load
+  : item.needs === "ev_charger" ? setup.ev_charger
+  : item.needs === "any" ? setup.smart_load || setup.ev_charger
+  : true).map(item => item.needs === "smart_load" ? { ...item, label: setup.smart_load_label } : item);
+
+const NOW_TILES = [
+  { metric: "pv_power", label: "Solar", unit: "kW", color: "var(--solar)" },
+  { metric: "grid_power", label: "Grid", unit: "kW", abs: true, color: "var(--grid)",
+    note: v => Math.abs(v) < 0.02 ? "Idle" : v > 0 ? "Importing" : "Exporting" },
+  { metric: "battery_power", label: "Battery", unit: "kW", abs: true, color: "var(--battery)",
+    note: v => Math.abs(v) < 0.02 ? "Idle" : v > 0 ? "Charging" : "Discharging" },
+  { metric: "battery_soc", label: "Battery charge", unit: "%", digits: 0, color: "var(--battery)",
+    // Energy left in kWh, from the battery's usable size, and a bar showing how full it is.
+    extra: (tile, percent) => {
+      if (percent == null) return;
+      const size = setup.battery_kwh;
+      if (size) {
+        tile.querySelector(".note").textContent =
+          (size * percent / 100).toFixed(1) + " of " + size.toFixed(1) + " kWh left";
+      }
+      const gauge = Object.assign(document.createElement("div"), { className: "progress soc" });
+      gauge.setAttribute("role", "progressbar");
+      gauge.setAttribute("aria-valuemin", "0");
+      gauge.setAttribute("aria-valuemax", "100");
+      gauge.setAttribute("aria-valuenow", String(Math.round(percent)));
+      gauge.setAttribute("aria-label", "Battery charge");
+      const bar = Object.assign(document.createElement("div"), { className: "bar" });
+      bar.style.width = Math.max(0, Math.min(100, percent)) + "%";
+      gauge.append(bar);
+      tile.append(gauge);
+    } },
+];
+const USAGE_TILES = [
+  { metric: "load_power", label: "Total consumption", unit: "kW", color: "var(--load)" },
+  { metric: "rest_power", label: "House load", unit: "kW", needs: "any", color: "var(--house)" },
+  { metric: "ev_charger_power", label: "EV charger", unit: "kW", needs: "ev_charger", color: "var(--ev)" },
+  { metric: "heat_pump_power", label: "Heat pump", unit: "kW", needs: "smart_load", color: "var(--heatpump)" },
+];
+const TODAY_TILES = [
+  { metric: "pv_energy_today", label: "Solar generated", unit: "kWh", digits: 1, color: "var(--solar)" },
+  { metric: "load_energy_today", label: "Used (total)", unit: "kWh", digits: 1, color: "var(--load)" },
+  { metric: "import_energy_today", label: "Imported", unit: "kWh", digits: 1, color: "var(--grid)" },
+  { metric: "export_energy_today", label: "Exported", unit: "kWh", digits: 1, color: "var(--export)" },
+];
+// House load first, then the EV charger and the heat pump, as under Cost by device.
+const DEVICE_TILES = [
+  { metric: "rest_kwh", label: "House load", unit: "kWh", digits: 1, color: "var(--house)" },
+  { metric: "ev_charger_kwh", label: "EV charger", unit: "kWh", digits: 1, needs: "ev_charger", color: "var(--ev)" },
+  { metric: "heat_pump_kwh", label: "Heat pump", unit: "kWh", digits: 1, needs: "smart_load", color: "var(--heatpump)" },
+];
+const COST_TILES = [
+  { metric: "net_gbp", label: "Net cost so far", prefix: "£", color: "var(--accent)" },
+  { metric: "import_gbp", label: "Import", prefix: "£", color: "var(--grid)" },
+  { metric: "export_credit_gbp", label: "Export credit", prefix: "£", color: "var(--export)" },
+  { metric: "standing_charge_gbp", label: "Standing charge", prefix: "£", color: "var(--muted)" },
+  { metric: "saved_gbp", label: "Saved by off-peak", prefix: "£", color: "var(--good)" },
+];
+const FLOW_LINES = [
+  { metric: "pv_power", color: "var(--solar)", label: "Solar" },
+  { metric: "load_power", color: "var(--load)", label: "Consumption" },
+  { metric: "grid_power", color: "var(--grid)", label: "Grid (above zero = import, below = export)" },
+  { metric: "battery_power", color: "var(--battery)", label: "Battery (above zero = discharging, below = charging)", flip: true },
+];
+
+// --- Choosing what a chart shows ------------------------------------------------------------
+// Each legend entry switches its series on or off. The choice is remembered on this device.
+const HIDDEN_KEY = "energy-tracker-hidden-series";
+let hiddenSeries = {};
+try { hiddenSeries = JSON.parse(localStorage.getItem(HIDDEN_KEY) ?? "{}") ?? {}; } catch { /* no storage */ }
+const isShown = (chart, key) => !(hiddenSeries[chart] ?? []).includes(key);
+// items: [{ key, label, color, box?, dashed? }]. redraw is called after a change.
+function seriesLegend(el, chart, items, redraw) {
+  el.replaceChildren(...items.map(item => {
+    const button = Object.assign(document.createElement("button"), { type: "button", textContent: item.label });
+    button.className = "key" + (item.box ? " box" : "") + (item.dashed ? " dashed" : "");
+    button.style.setProperty("--c", item.color);
+    const shown = isShown(chart, item.key);
+    button.setAttribute("aria-pressed", String(shown));
+    button.title = shown ? "Click to hide" : "Click to show";
+    button.addEventListener("click", () => {
+      const off = new Set(hiddenSeries[chart] ?? []);
+      if (off.has(item.key)) off.delete(item.key);
+      else if (items.filter(i => !off.has(i.key)).length > 1) off.add(item.key);  // keep at least one
+      hiddenSeries[chart] = [...off];
+      try { localStorage.setItem(HIDDEN_KEY, JSON.stringify(hiddenSeries)); } catch { /* no storage */ }
+      redraw();
+    });
+    return button;
+  }));
+}
+// Bottom layer first.
+const USAGE_LAYERS = [
+  { metric: "rest_power", color: "var(--house)", label: "House load" },
+  { metric: "heat_pump_power", color: "var(--heatpump)", label: "Heat pump", needs: "smart_load" },
+  { metric: "ev_charger_power", color: "var(--ev)", label: "EV charger", needs: "ev_charger" },
+];
+// If two neighbouring points are further apart than this, nothing was collected in between
+// (the app was stopped), so the chart leaves a gap instead of joining them.
+const GAP_MS = 15 * 60 * 1000;
+
+const SERIES_METRICS = ["pv_power", "load_power", "grid_power", "battery_power",
+                        "smart_load_power", "ev_charger_power"];
+
+function renderTiles(el, tiles, latest) {
+  el.replaceChildren(...tiles.map(t => {
+    const reading = latest[t.metric];
+    const tile = document.createElement("div");
+    tile.className = "tile";
+    if (t.color) {  // a stripe in the colour its line has on the charts
+      tile.classList.add("tinted");
+      tile.style.setProperty("--c", t.color);
+    }
+    const label = document.createElement("div");
+    label.className = "label";
+    label.textContent = t.label;
+    const value = document.createElement("div");
+    value.className = "value";
+    const note = document.createElement("div");
+    note.className = "note";
+    if (reading) {
+      const v = reading.value;
+      // A negative amount of money reads "-£1.20", not "£-1.20".
+      const shown = t.abs || (t.prefix && v < 0) ? Math.abs(v) : v;
+      value.textContent = (t.prefix && v < 0 ? "-" : "") + (t.prefix ? CUR : "") + shown.toFixed(t.digits ?? 2);
+      if (t.unit) {
+        const unit = document.createElement("small");
+        unit.textContent = t.unit;
+        value.append(unit);
+      }
+      if (t.note) note.textContent = t.note(v);
+      else if (reading.note) note.textContent = reading.note;
+    } else {
+      value.textContent = "–";
+      note.textContent = "No data";
+    }
+    tile.append(label, value, note);
+    if (t.extra) t.extra(tile, reading ? reading.value : null);
+    return tile;
+  }));
+}
+
+// Adds the two calculated series (heat pump, rest of house), bucket by bucket.
+function withDerived(series) {
+  const lookup = name => new Map((series[name] ?? []).map(([t, v]) => [t, v]));
+  const circuit = lookup("smart_load_power"), ev = lookup("ev_charger_power");
+  return {
+    ...series,
+    heat_pump_power: (series.smart_load_power ?? []).map(([t, v]) => [t, heatPumpPower(v, ev.get(t))]),
+    rest_power: (series.load_power ?? []).map(([t, v]) =>
+      [t, restOfHouse(v, circuit.get(t), ev.get(t))]),
+  };
+}
+
+// Draws axes for a 24-hour chart and returns helpers for plotting on it.
+function chartFrame(svgId, emptyId, values) {
+  const svg = document.getElementById(svgId);
+  const NS = "http://www.w3.org/2000/svg";
+  const W = 900, H = 300, L = 44, R = 10, T = 10, B = 26;
+  svg.replaceChildren();
+  document.getElementById(emptyId).hidden = values.length > 1;
+  if (values.length < 2) return null;
+
+  const { start, end } = powerRange;
+  const lo = Math.min(0, ...values), hi = Math.max(1, ...values);
+  const pad = (hi - lo) * 0.08;
+  const yMin = lo < 0 ? lo - pad : 0, yMax = hi + pad;
+  const x = t => L + (t - start) / (end - start) * (W - L - R);
+  const y = v => T + (yMax - v) / (yMax - yMin) * (H - T - B);
+  const add = (tag, attrs, text) => {
+    const node = document.createElementNS(NS, tag);
+    for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v);
+    if (text !== undefined) node.textContent = text;
+    svg.append(node);
+    return node;
+  };
+
+  const step = Math.max(1, Math.ceil((yMax - yMin) / 5));
+  for (let v = Math.ceil(yMin / step) * step; v <= yMax; v += step) {
+    add("line", { x1: L, x2: W - R, y1: y(v), y2: y(v), class: v === 0 ? "zero" : "gridline" });
+    add("text", { x: L - 8, y: y(v) + 4, "text-anchor": "end", class: "axis" }, v);
+  }
+  const hours = (end - start) / 3600000;
+  if (hours <= 26) {
+    for (let h = 0; h <= 24; h += 4) {
+      const t = start + h * hours / 24 * 3600 * 1000;
+      const label = new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      add("text", { x: x(t), y: H - 8, "text-anchor": h === 0 ? "start" : h === 24 ? "end" : "middle",
+                    class: "axis" }, label);
+    }
+  } else {
+    // Longer periods are marked at midnight: every day for a week, every fifth for a month.
+    const every = hours <= 24 * 8 ? 1 : 5;
+    const day = new Date(start);
+    day.setHours(24, 0, 0, 0);
+    for (let n = 0; day.getTime() <= end; n++, day.setDate(day.getDate() + 1)) {
+      const t = day.getTime();
+      add("line", { x1: x(t), x2: x(t), y1: T, y2: H - B, class: "gridline" });
+      if (n % every) continue;
+      const label = every === 1 ? day.toLocaleDateString([], { weekday: "short", day: "numeric" })
+        : day.toLocaleDateString([], { day: "numeric", month: "short" });
+      add("text", { x: x(t), y: H - 8, "text-anchor": "middle", class: "axis" }, label);
+    }
+  }
+  const inRange = data => data.map(([t, v]) => [new Date(t).getTime(), v]).filter(p => p[0] >= start);
+  const path = pts => pts.map(([t, v], i) => `${i ? "L" : "M"}${x(t).toFixed(1)},${y(v).toFixed(1)}`).join("");
+  // Splits a list of [time, value] points wherever there is a gap in collection.
+  const segments = pts => {
+    const out = [];
+    for (const p of pts) {
+      const current = out[out.length - 1];
+      if (current && p[0] - current[current.length - 1][0] <= powerRange.gap) current.push(p);
+      else out.push([p]);
+    }
+    return out.filter(seg => seg.length > 1);
+  };
+  return { add, inRange, path, segments, x, y, svg, W, H, L, R, T, B, start, end };
+}
+
+// What the two power charts cover: set from the period chosen above them.
+let powerRange = { start: Date.now() - 24 * 3600 * 1000, end: Date.now(), gap: GAP_MS };
+let lastPower = null;       // the series last drawn, kept so a legend click can redraw
+const redrawPower = () => { if (lastPower) { renderFlows(lastPower); renderUsage(lastPower); } };
+
+function renderFlows(series) {
+  seriesLegend(document.getElementById("flows-legend"), "flows",
+    FLOW_LINES.map(l => ({ key: l.metric, label: l.label, color: l.color })), redrawPower);
+  const lines = FLOW_LINES.filter(l => isShown("flows", l.metric));
+  // The battery is stored as positive when charging; it is drawn the other way up, so
+  // that power coming out of the battery sits above zero like solar does.
+  const points = line => (series[line.metric] ?? []).map(([t, v]) => [t, line.flip ? -v : v]);
+  const values = lines.flatMap(l => points(l).map(p => p[1]));
+  const frame = chartFrame("flows", "flows-empty", values);
+  if (!frame) return;
+  const runs = lines.map(line => ({ line, segments: frame.segments(frame.inRange(points(line))) }));
+  // A faded fill between each line and zero, drawn first so every line stays on top.
+  for (const { line, segments } of runs) {
+    const d = segments.map(seg =>
+      frame.path([...seg, [seg[seg.length - 1][0], 0], [seg[0][0], 0]]) + "Z").join("");
+    if (d) frame.add("path", { d, fill: line.color, "fill-opacity": 0.16, stroke: "none" });
+  }
+  for (const { line, segments } of runs) {
+    const d = segments.map(frame.path).join("");
+    if (!d) continue;
+    frame.add("path", { d, fill: "none", stroke: line.color,
+                        "stroke-width": 2, "stroke-linejoin": "round" });
+  }
+  flowsHover(frame, runs);
+}
+
+// Pointing at a power chart marks the nearest reading and lists what the chart shows at
+// that moment. `entriesAt(time)` gives the lines to list: label, colour, text, and the
+// height to put a dot at.
+function chartHover(frame, tipId, times, entriesAt) {
+  const tip = document.getElementById(tipId);
+  tip.hidden = true;
+  times = [...new Set(times)].sort((a, b) => a - b);
+  if (!times.length) return;
+  const cursor = frame.add("line", { y1: frame.T, y2: frame.H - frame.B, class: "zero", visibility: "hidden" });
+  const dots = [];
+  const hit = frame.add("rect", { x: frame.L, y: frame.T, width: frame.W - frame.L - frame.R,
+                                  height: frame.H - frame.T - frame.B, fill: "transparent" });
+  hit.style.touchAction = "pan-y";
+  const hide = () => {
+    tip.hidden = true;
+    for (const node of [cursor, ...dots]) node.setAttribute("visibility", "hidden");
+  };
+  const show = event => {
+    const box = frame.svg.getBoundingClientRect();
+    const at = frame.start + ((event.clientX - box.left) / box.width * frame.W - frame.L) /
+      (frame.W - frame.L - frame.R) * (frame.end - frame.start);
+    // The nearest reading to the pointer.
+    let lo = 0, hi = times.length - 1;
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (times[mid] < at) lo = mid + 1; else hi = mid; }
+    const t = lo > 0 && at - times[lo - 1] < times[lo] - at ? times[lo - 1] : times[lo];
+    const px = frame.x(t);
+    cursor.setAttribute("x1", px);
+    cursor.setAttribute("x2", px);
+    cursor.setAttribute("visibility", "visible");
+    const long = frame.end - frame.start > 26 * 3600 * 1000;
+    const heading = Object.assign(document.createElement("div"), { className: "when",
+      textContent: new Date(t).toLocaleString([], long
+        ? { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }
+        : { hour: "2-digit", minute: "2-digit" }) });
+    const entries = entriesAt(t);
+    for (const dot of dots) dot.setAttribute("visibility", "hidden");
+    const rows = entries.map((entry, i) => {
+      if (entry.y !== undefined) {
+        // Dots are made as needed and drawn under the pointer target, which stays on top.
+        dots[i] ??= frame.svg.insertBefore(document.createElementNS("http://www.w3.org/2000/svg", "circle"), hit);
+        const dot = dots[i];
+        for (const [k, v] of Object.entries({ r: 4, fill: entry.color, stroke: "var(--card)", "stroke-width": 1.5,
+                                              cx: px, cy: frame.y(entry.y), visibility: "visible" })) dot.setAttribute(k, v);
+      }
+      const row = Object.assign(document.createElement("div"), { className: "row" });
+      row.style.setProperty("--c", entry.color);
+      row.append(Object.assign(document.createElement("span"), { textContent: entry.label }),
+                 Object.assign(document.createElement("strong"), { textContent: entry.text }));
+      return row;
+    });
+    tip.replaceChildren(heading, ...rows);
+    tip.hidden = false;
+    const scale = box.width / frame.W, centre = px * scale;
+    const flip = centre > box.width / 2;
+    tip.style.left = flip ? "" : (centre + 14) + "px";
+    tip.style.right = flip ? (box.width - centre + 14) + "px" : "";
+    tip.style.top = (frame.T * scale) + "px";
+  };
+  for (const name of ["pointerenter", "pointermove", "pointerdown"]) hit.addEventListener(name, show);
+  for (const name of ["pointerleave", "pointercancel"]) hit.addEventListener(name, hide);
+}
+
+// On the power metrics chart: every line's value, with what above or below zero means.
+function flowsHover(frame, runs) {
+  const series = runs.map(({ line, segments }) => ({ line, lookup: new Map(segments.flat()) })).filter(s => s.lookup.size);
+  const describe = (line, v) => {
+    const size = Math.abs(v).toFixed(2) + " kW";
+    if (Math.abs(v) < 0.005) return "0.00 kW";
+    if (line.metric === "grid_power") return size + (v > 0 ? " importing" : " exporting");
+    if (line.metric === "battery_power") return size + (v > 0 ? " discharging" : " charging");
+    return v.toFixed(2) + " kW";
+  };
+  chartHover(frame, "flows-tip", series.flatMap(s => [...s.lookup.keys()]), t =>
+    series.filter(s => s.lookup.has(t)).map(s => ({
+      label: s.line.label.split(" (")[0], color: s.line.color, text: describe(s.line, s.lookup.get(t)), y: s.lookup.get(t) })));
+}
+
+// Stacked areas: the top edge of the stack is total consumption.
+function renderUsage(series) {
+  const times = (series.rest_power ?? []).map(p => p[0]);
+  const fitted = installed(USAGE_LAYERS);
+  seriesLegend(document.getElementById("usage-legend"), "usage",
+    fitted.map(l => ({ key: l.metric, label: l.label, color: l.color, box: true })), redrawPower);
+  const layers = fitted.filter(l => isShown("usage", l.metric));
+  const lookups = layers.map(l => new Map(series[l.metric] ?? []));
+  let base = times.map(() => 0);
+  const stacks = lookups.map(lookup => {
+    const top = times.map((t, i) => base[i] + Math.max(0, lookup.get(t) ?? 0));
+    const layer = { bottom: base, top };
+    base = top;
+    return layer;
+  });
+  const frame = chartFrame("usage-chart", "usage-empty", base);
+  if (!frame) return;
+  // Points carry their index so each layer's top and bottom edges can be looked up per segment.
+  const runs = frame.segments(frame.inRange(times.map((t, i) => [t, i])));
+  layers.forEach((layer, n) => {
+    const d = runs.map(run => {
+      const top = run.map(([t, i]) => [t, stacks[n].top[i]]);
+      const bottom = run.map(([t, i]) => [t, stacks[n].bottom[i]]).reverse();
+      return frame.path(top) + frame.path(bottom).replace("M", "L") + "Z";
+    }).join("");
+    if (!d) return;
+    frame.add("path", { d, fill: layer.color, "fill-opacity": 0.75, stroke: layer.color,
+                        "stroke-width": 1, "stroke-linejoin": "round" });
+  });
+  // Pointing at the chart lists each part's own power, top of the stack first, and the total.
+  const index = new Map(runs.flat());
+  chartHover(frame, "usage-tip", [...index.keys()], t => {
+    const i = index.get(t);
+    const parts = layers.map((layer, n) => ({ label: layer.label, color: layer.color,
+      text: (stacks[n].top[i] - stacks[n].bottom[i]).toFixed(2) + " kW", y: stacks[n].top[i] })).reverse();
+    return layers.length > 1
+      ? [...parts, { label: layers.length === fitted.length ? "Total consumption" : "Total shown", color: "var(--muted)", text: base[i].toFixed(2) + " kW" }] : parts;
+  });
+}
+
+const sameDay = (a, b) => a.toDateString() === b.toDateString();
+// "10:50" for today, "3 Oct, 23:10" for another day.
+const when = iso => {
+  const d = new Date(iso);
+  const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  return sameDay(d, new Date()) ? time
+    : d.toLocaleDateString([], { day: "numeric", month: "short" }) + ", " + time;
+};
+
+// Explains when a figure doesn't cover the whole period, or covers time with no readings.
+function coverageHint(part) {
+  const notes = [];
+  if (!part.full_period) notes.push("Counted since " + when(part.since) + ", when these readings started.");
+  if (part.estimated_hours > 0) {
+    const hours = part.estimated_hours;
+    notes.push("Includes " + (hours >= 48 ? Math.round(hours / 24) + " days" : hours + " h") +
+      " without detailed readings; the time of day for that part is estimated.");
+  }
+  return notes.join(" ");
+}
+
+const asReadings = (part, notes = {}) => Object.fromEntries(Object.entries(part ?? {})
+  .filter(([, v]) => typeof v === "number").map(([k, v]) => [k, { value: v, note: notes[k] }]));
+
+function renderCost(tilesId, hintId, cost, finished = false) {
+  // Under the import tile, show how many kWh fell in each price band.
+  const bands = (cost?.import_bands ?? [])
+    .map(b => b.kwh.toFixed(1) + " kWh at " + (b.average ? "an average of " : "") + (b.p_per_kwh ?? "–") + MINOR).join(", ");
+  const days = cost?.standing_charge_days;
+  // A month that is over shows its final cost, not a running total.
+  const tiles = COST_TILES.map(t => finished && t.metric === "net_gbp" ? { ...t, label: "Net cost" } : t);
+  renderTiles(document.getElementById(tilesId), tiles, asReadings(cost, {
+    import_gbp: bands,
+    export_credit_gbp: cost ? cost.export_kwh.toFixed(1) + " kWh" : "",
+    standing_charge_gbp: days > 1 ? days + " days" : "",
+    saved_gbp: cost ? CUR + cost.all_day_rate_gbp.toFixed(2) + " if all at the day rate" : "",
+  }));
+  document.getElementById(hintId).textContent = cost
+    ? [cost.tariff + ".",
+       cost.vat_percent ? "Costs include " + cost.vat_percent + "% VAT; prices shown are before VAT."
+         : "No VAT is added on this tariff (set to 0% under Tariff rates).",
+       cost.standing_charge_gbp ? "" : "Standing charge not set: add it under Tariff rates.",
+       coverageHint(cost)].filter(Boolean).join(" ")
+    : "";
+}
+
+// What the heat pump, the EV charger and the rest of the house cost, following the energy.
+function renderByDevice(boxId, split) {
+  const box = document.getElementById(boxId);
+  box.hidden = !split;
+  if (!split) return;
+  const names = { heat_pump: split.smart_load_label || "Heat pump", ev_charger: "EV charger", rest: "House load" };
+  const colours = { heat_pump: "var(--heatpump)", ev_charger: "var(--ev)", rest: "var(--house)" };
+  const tiles = [], readings = {};
+  // House load first, then the EV charger, then the heat pump (and its split, after).
+  for (const key of ["rest", "ev_charger", "heat_pump"].filter(k => split.parts[k])) {
+    const part = split.parts[key];
+    tiles.push({ metric: key, label: names[key], prefix: "£", color: colours[key] });
+    const lines = [part.kwh.toFixed(1) + " kWh, " + part.share_percent + "% of the total"];
+    readings[key] = { value: part.gbp, note: lines.join("\n") };
+  }
+  const row = document.getElementById(boxId + "-tiles");
+  renderTiles(row, tiles, readings);
+
+  // One more tile, after the devices: the heat pump split into heating and hot water.
+  const hp = split.parts.heat_pump;
+  if (hp?.heating) {
+    const tile = Object.assign(document.createElement("div"), { className: "tile tinted split" });
+    tile.style.setProperty("--c", colours.heat_pump);
+    tile.append(Object.assign(document.createElement("div"), { className: "label", textContent: names.heat_pump + " split" }));
+    const halves = Object.assign(document.createElement("div"), { className: "halves" });
+    for (const [sub, label] of [["heating", "Heating"], ["hot_water", "Hot water"]]) {
+      const piece = hp[sub];
+      const half = document.createElement("div");
+      half.append(
+        Object.assign(document.createElement("div"), { className: "label", textContent: label }),
+        Object.assign(document.createElement("div"), { className: "value", textContent: money(piece.gbp) }),
+        Object.assign(document.createElement("div"), { className: "note", textContent: piece.kwh.toFixed(1) + " kWh" }));
+      halves.append(half);
+    }
+    tile.append(halves);
+    // Say how the split was made: measured from the tank's reheats, or estimated.
+    const measuredDays = hp.split_measured_days ?? 0;
+    tile.append(Object.assign(document.createElement("div"), { className: "note",
+      textContent: measuredDays >= hp.split_days ? "Measured from the heat pump's hot water runs"
+        : measuredDays ? "Measured on " + measuredDays + " of " + hp.split_days + " days; the rest estimated"
+        : "Estimated from the heat pump's use on warm days" }));
+    row.append(tile);
+  }
+  // The heat pump's estimated efficiency: its COP today, or its SCOP over the month.
+  const eff = hp?.efficiency;
+  if (eff) {
+    const today = boxId === "cost-devices";
+    const fixed = v => v == null ? "–" : v.toFixed(2);
+    const tile = Object.assign(document.createElement("div"), { className: "tile tinted",
+      title: "An estimate (there is no heat meter): the heat the heat pump gave out divided by the electricity it used. " +
+             "See Estimated SCOP on the Devices page for how it is worked out." });
+    tile.style.setProperty("--c", colours.heat_pump);
+    const parts = [eff.heating_scop != null ? "Heating " + fixed(eff.heating_scop) : "",
+                   eff.hot_water_cop != null ? "hot water " + fixed(eff.hot_water_cop) : ""].filter(Boolean).join(", ");
+    const lines = [parts || (today ? "Too little use yet today" : "Too little use yet"),
+                   eff.scop != null ? "Estimate: " + eff.heat_kwh.toLocaleString() + " kWh of heat from " + eff.kwh.toFixed(1) + " kWh" : ""];
+    if (!today && eff.measured_days < eff.days) lines.push(eff.measured_days + " of " + eff.days + " days measured; the rest estimated");
+    tile.append(
+      Object.assign(document.createElement("div"), { className: "label", textContent: names.heat_pump + (today ? " COP today" : " SCOP") }),
+      Object.assign(document.createElement("div"), { className: "value", textContent: fixed(eff.scop) }),
+      Object.assign(document.createElement("div"), { className: "note", textContent: lines.filter(Boolean).join("\n"), style: "white-space: pre-line" }));
+    row.append(tile);
+  }
+  // Electricity stored in the battery and sold back to the grid: no device used it.
+  const sold = split.battery_export;
+  if (sold) {
+    const tile = Object.assign(document.createElement("div"), { className: "tile tinted",
+      title: "Electricity stored in the battery, then sold back to the grid (in an export event, say). " +
+             "What it cost to store it is not any device's; the payment for it is in Export credit." });
+    tile.style.setProperty("--c", "var(--battery)");
+    tile.append(
+      Object.assign(document.createElement("div"), { className: "label", textContent: "Battery export" }),
+      Object.assign(document.createElement("div"), { className: "value", textContent: money(sold.gbp) }),
+      Object.assign(document.createElement("div"), { className: "note",
+        textContent: sold.kwh.toFixed(1) + " kWh sold from the battery, " + sold.share_percent + "% of the total" }));
+    row.append(tile);
+  }
+  const carried = document.getElementById(boxId + "-carried");
+  const amount = split.carried_gbp ?? 0;
+  const period = boxId === "cost-devices" ? "today" : "this month";
+  carried.textContent = split.from
+    ? "From " + new Date(split.from + "T00:00").toLocaleDateString([], { day: "numeric", month: "long" }) +
+      ", when the device readings begin, so these do not add up to the whole month's import."
+    : !split.followed || Math.abs(amount) < 0.05 ? ""
+    : amount > 0
+      ? money(amount) + " of the import " + period + " is not counted against a device yet: it is still in the battery, or was lost charging it."
+      : "Includes " + money(-amount) + " of electricity bought before " + period + ", used from the battery.";
+
+}
+
+function renderToday(today, month) {
+  const energy = today?.energy;
+  // The heat pump's tile also says how much was heating and how much hot water.
+  const hpSplit = today?.by_device?.parts?.heat_pump;
+  const readings = asReadings(energy, hpSplit?.heating ? {
+    heat_pump_kwh: "Heating " + hpSplit.heating.kwh.toFixed(1) + ", hot water " + hpSplit.hot_water.kwh.toFixed(1) + " kWh",
+  } : {});
+  renderTiles(document.getElementById("devices"), installed(DEVICE_TILES), readings);
+  document.getElementById("devices-hint").textContent = energy ? coverageHint(energy) : "";
+  renderCost("cost", "cost-hint", today?.cost);
+  renderCost("month", "month-hint", month?.cost, month ? !month.is_current : false);
+  renderByDevice("cost-devices", today?.by_device);
+  renderByDevice("month-devices", month?.by_device);
+  if (month) {
+    document.getElementById("month-title").textContent = "Cost in " + month.month;
+    if (!month.cost) document.getElementById("month-hint").textContent = "No readings for this month.";
+    monthLinks = { previous: month.previous, next: month.next };
+    document.getElementById("month-prev").disabled = !month.previous;
+    document.getElementById("month-next").disabled = !month.next;
+    document.getElementById("month-current").disabled = month.is_current;
+  }
+}
+
+// --- Month navigation and costs by year --------------------------------------------------
+
+// null = the current month; otherwise "YYYY-MM" (another page can open this one at a month).
+let selectedMonth = /^\d{4}-\d{2}$/.test(new URLSearchParams(location.search).get("month") ?? "")
+  ? new URLSearchParams(location.search).get("month") : null;
+let monthLinks = { previous: null, next: null };
+
+function showMonth(key) {
+  if (!onPage("month")) {  // the month's cost is on the Now page
+    location.href = "./" + (key ? "?month=" + key : "") + "#month-title";
+    return;
+  }
+  selectedMonth = key;
+  refresh();
+}
+document.getElementById("month-prev")?.addEventListener("click", () => showMonth(monthLinks.previous));
+document.getElementById("month-next")?.addEventListener("click", () => showMonth(monthLinks.next));
+document.getElementById("month-current")?.addEventListener("click", () => showMonth(null));
+
+const money = value => (value < 0 ? "-" : "") + CUR + Math.abs(value).toFixed(2);  // a credit shows as -£12.97
+
+function renderYears(data) {
+  const cell = (text, numeric = true) => {
+    const td = document.createElement("td");
+    td.textContent = text;
+    if (numeric) td.className = "num";
+    return td;
+  };
+  const years = data.years.filter(y => y.cost);
+
+  document.getElementById("year-rows").replaceChildren(...years.map(y => {
+    const tr = document.createElement("tr");
+    const name = cell(String(y.year), false);
+    if (!y.cost.full_period) {
+      const tag = document.createElement("span");
+      tag.className = "tag";
+      tag.textContent = "Part year";
+      name.append(tag);
+    }
+    tr.append(name, cell(y.cost.import_kwh.toFixed(0) + " kWh"), cell(money(y.cost.import_gbp)),
+      cell(money(y.cost.export_credit_gbp)), cell(money(y.cost.standing_charge_gbp)),
+      cell(money(y.cost.net_gbp)), cell(money(y.cost.saved_gbp)));
+    return tr;
+  }));
+  document.getElementById("year-hint").textContent = years.length
+    ? years.filter(y => !y.cost.full_period)
+        .map(y => {
+          const since = new Date(y.cost.since);
+          const fromJanuary = since.getMonth() === 0 && since.getDate() === 1;
+          return fromJanuary ? y.year + " is the year so far."
+            : y.year + " is counted from " + since.toLocaleDateString([], { day: "numeric", month: "long" }) + ".";
+        }).join(" ")
+    : "No readings yet.";
+
+  const head = document.createElement("tr");
+  const corner = document.createElement("th");
+  corner.textContent = "Month";
+  head.append(corner, ...years.map(y => {
+    const th = document.createElement("th");
+    th.className = "num";
+    th.textContent = y.year;
+    return th;
+  }));
+  document.getElementById("month-grid-head").replaceChildren(head);
+
+  document.getElementById("month-grid").replaceChildren(...Array.from({ length: 12 }, (_, i) => {
+    const tr = document.createElement("tr");
+    tr.append(cell(years[0]?.months[i].label ?? "", false), ...years.map(y => {
+      const m = y.months[i];
+      const td = cell("–");
+      if (m.cost) {
+        const button = document.createElement("button");
+        button.className = "link";
+        button.type = "button";
+        button.textContent = money(m.cost.net_gbp) + (m.cost.full_period ? "" : " *");
+        button.addEventListener("click", () => showMonth(m.key));
+        td.replaceChildren(button);
+      }
+      return td;
+    }));
+    return tr;
+  }));
+}
+
+// --- Tariff rates --------------------------------------------------------------------------
+
+const form = document.getElementById("tariff-form");
+const clockOf = m => String(Math.floor(m / 60)).padStart(2, "0") + ":" + String(m % 60).padStart(2, "0");
+const minutesOf = text => { const [h, m] = text.split(":").map(Number); return h * 60 + m; };
+
+// --- Time windows, shared by the two tariff forms -------------------------------------------
+const MAX_WINDOWS = 6;
+
+// One "from / until / price" row. Anything outside every window is charged the standard rate.
+function addWindow(box, start = 0, end = 360, rate = "") {
+  if (box.children.length >= MAX_WINDOWS) return;
+  const row = document.createElement("div");
+  row.className = "window";
+  const field = (text, control) => {
+    const label = document.createElement("label");
+    label.append(text, control);
+    return label;
+  };
+  const times = value => {
+    const select = document.createElement("select");
+    for (let m = 0; m < 1440; m += 30) select.add(new Option(clockOf(m), m));
+    select.value = value;
+    return select;
+  };
+  const price = document.createElement("input");
+  Object.assign(price, { type: "number", min: "0", step: "0.0001", required: true, value: rate });
+  const remove = document.createElement("button");
+  remove.type = "button";
+  remove.textContent = "Remove";
+  remove.addEventListener("click", () => row.remove());
+  row.append(field("Different rate from ", times(start)), field("until ", times(end % 1440)),
+             field("Rate (" + MINOR + " per kWh) ", price), remove);
+  box.append(row);
+}
+
+// Turns the standard rate plus any time windows into bands covering the whole day.
+function bandsFromWindows(box, other) {
+  const slots = new Array(48).fill(other);
+  for (const row of box.children) {
+    const [from, until] = [...row.querySelectorAll("select")].map(s => Number(s.value) / 30);
+    const rate = Number(row.querySelector("input").value);
+    if (from === until) throw new Error("A time window must start and end at different times.");
+    for (let i = from; i !== until; i = (i + 1) % 48) slots[i] = rate;
+  }
+  const bands = [];
+  slots.forEach((rate, i) => {
+    const last = bands[bands.length - 1];
+    if (last && last.p_per_kwh === rate) last.end = clockOf((i + 1) * 30);
+    else bands.push({ start: clockOf(i * 30), end: clockOf((i + 1) * 30), p_per_kwh: rate });
+  });
+  return bands;
+}
+
+// The reverse: the rate that covers most of the day becomes the standard rate, and the
+// other bands become time windows (one running past midnight is joined back up).
+function fillWindows(box, rateInput, bands) {
+  const minutes = new Map();
+  for (const b of bands) {
+    minutes.set(b.p_per_kwh, (minutes.get(b.p_per_kwh) ?? 0) + minutesOf(b.end) - minutesOf(b.start));
+  }
+  const other = [...minutes].sort((a, b) => b[1] - a[1])[0][0];
+  rateInput.value = other;
+  let rest = bands.filter(b => b.p_per_kwh !== other)
+    .map(b => ({ start: minutesOf(b.start), end: minutesOf(b.end), rate: b.p_per_kwh }));
+  const first = rest[0], last = rest[rest.length - 1];
+  if (rest.length > 1 && first.start === 0 && last.end === 1440 && first.rate === last.rate) {
+    rest = [...rest.slice(1, -1), { start: last.start, end: first.end, rate: first.rate }];
+  }
+  box.replaceChildren();
+  for (const w of rest.slice(0, MAX_WINDOWS)) addWindow(box, w.start, w.end, w.rate);
+}
+
+// --- Half-hourly prices, shared by the two tariff forms -------------------------------------
+// A tariff that follows published prices is stored as "PRODUCT/REGION".
+function setDynamic(productSelect, regionSelect, dynamic) {
+  const [product, region] = (dynamic || "/").split("/");
+  if (product && ![...productSelect.options].some(o => o.value === product)) {
+    productSelect.add(new Option(product, product));  // one saved earlier, no longer on sale
+  }
+  productSelect.value = product;
+  if (region && ![...regionSelect.options].some(o => o.value === region)) {
+    regionSelect.add(new Option("Region " + region, region));  // named once the list has loaded
+  }
+  if (region) regionSelect.value = region;
+}
+function getDynamic(productSelect, regionSelect) {
+  if (!productSelect.value) return "";
+  if (!regionSelect.value) throw new Error("Choose your region for the published prices.");
+  return productSelect.value + "/" + regionSelect.value;
+}
+// Where a tariff's prices come from, for the tables.
+function publishedNote(published) {
+  if (!published) return "";
+  const [product, region] = published.source.split("/");
+  const when = iso => new Date(iso).toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
+  const until = published.until
+    ? "prices held from " + when(published.from) + " to " + when(published.until)
+    : "no prices fetched yet (they arrive within a minute or so)";
+  return "Published prices from " + product + ", region " + region + ": " + until +
+    (published.error ? ". Last attempt failed: " + published.error : "") + ". Otherwise: ";
+}
+
+const tariffWindows = document.getElementById("tariff-windows");
+document.getElementById("tariff-add-window")?.addEventListener("click", () => addWindow(tariffWindows));
+
+// Start the form from the rates in force now, so only what changed needs retyping.
+function fillForm(period, startDate) {
+  form.elements.effective_from.value = startDate ?? new Date().toLocaleDateString("en-CA");
+  form.elements.name.value = period.name;
+  form.elements.export.value = period.export_p_per_kwh;
+  form.elements.standing.value = period.standing_charge_p_per_day;
+  form.elements.vat.value = period.vat_percent ?? 0;
+  form.elements.fixed_until.value = period.fixed_until ?? "";
+  fillWindows(tariffWindows, form.elements.other_rate, period.import_bands);
+  setDynamic(form.elements.dynamic_product, form.elements.dynamic_region, period.dynamic);
+}
+
+let formFilled = false;
+let currentRates = null;  // the tariff period in force today
+// Things about the rates that need attention, shown at the top of the page.
+function renderReminders(found) {
+  const box = document.getElementById("reminders");
+  box.replaceChildren(...(found ?? []).map(r => {
+    const text = r.kind === "fixed_ending"
+      ? "The fixed price on " + r.tariff + " ends on " + dayText(r.date) + " (" +
+        (r.days === 0 ? "today" : r.days === 1 ? "tomorrow" : "in " + r.days + " days") +
+        "). Enter the rates that follow under Tariff rates, or use the Tariff switch planner to weigh up a move."
+      : r.kind === "fixed_ended"
+      ? "The fixed price on " + r.tariff + " ended on " + dayText(r.date) + ". Costs are still being worked out at " +
+        "the old rates: enter the new ones under Tariff rates, starting the day after."
+      : "Published prices for " + r.tariff + " could not be fetched (" + r.error + "). Costs use the typed-in " +
+        "rates for any half hour without a published price, and are corrected once prices arrive.";
+    return Object.assign(document.createElement("div"), { textContent: text });
+  }));
+  box.hidden = !box.children.length;
+}
+
+function renderTariffs(data) {
+  renderReminders(data.reminders);
+  currentRates = data.periods.find(p => p.effective_from === data.current_from) ?? null;
+  if (!onPage("tariff-rows")) return;  // the table is on the Settings page
+  const cell = text => { const td = document.createElement("td"); td.textContent = text; return td; };
+  const rows = data.periods.map((period, index) => {
+    const tr = document.createElement("tr");
+    const from = cell(index === 0 ? "The start"
+      : new Date(period.effective_from + "T00:00").toLocaleDateString([], { dateStyle: "medium" }));
+    if (period.effective_from === data.current_from) {
+      const tag = document.createElement("span");
+      tag.className = "tag";
+      tag.textContent = "In use now";
+      from.append(tag);
+    }
+    const actions = document.createElement("td");
+    const action = (label, onClick) => {
+      const button = document.createElement("button");
+      button.className = "link";
+      button.type = "button";
+      button.textContent = label;
+      button.style.marginRight = "12px";
+      button.addEventListener("click", onClick);
+      actions.append(button);
+    };
+    action("Edit", () => {
+      fillForm(period, period.effective_from);
+      document.getElementById("tariff-editor").open = true;
+      tariffMessage("Editing the rates that start " + (index === 0 ? "at the beginning" : "on " + period.effective_from) + ".");
+      form.scrollIntoView({ block: "nearest" });
+    });
+    if (data.periods.length > 1) action("Remove", () => removeTariff(period.effective_from));
+    const name = cell(period.name);
+    if (period.fixed_until) {
+      const until = Object.assign(document.createElement("div"), { className: "hint",
+        textContent: "Price fixed until " + dayText(period.fixed_until) });
+      until.style.margin = "2px 0 0";
+      name.append(until);
+    }
+    tr.append(from, name,
+      cell(publishedNote(period.published) + ratesText(period.import_bands)
+           + (period.vat_percent ? " (+" + period.vat_percent + "% VAT)" : "")),
+      cell(period.export_p_per_kwh + MINOR), cell(period.standing_charge_p_per_day + MINOR + " a day"), actions);
+    return tr;
+  });
+  document.getElementById("tariff-rows").replaceChildren(...rows);
+  if (!formFilled) {
+    fillForm(data.periods.find(p => p.effective_from === data.current_from));
+    formFilled = true;
+  }
+}
+
+function tariffMessage(text, isError = false) {
+  const el = document.getElementById("tariff-message");
+  el.textContent = text;
+  el.className = isError ? "error" : "";
+}
+
+async function sendTariff(url, options) {
+  const response = await fetch(url, options);
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const detail = Array.isArray(body.detail) ? body.detail.map(d => d.msg).join("; ") : body.detail;
+    throw new Error(detail || "The server refused the change (" + response.status + ").");
+  }
+  return body;
+}
+
+form?.addEventListener("submit", async event => {
+  event.preventDefault();
+  try {
+    const f = form.elements;
+    const import_bands = bandsFromWindows(tariffWindows, Number(f.other_rate.value));
+    const data = await sendTariff("api/tariffs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: f.name.value, effective_from: f.effective_from.value,
+        export_p_per_kwh: Number(f.export.value),
+        standing_charge_p_per_day: Number(f.standing.value),
+        vat_percent: Number(f.vat.value), import_bands,
+        dynamic: getDynamic(f.dynamic_product, f.dynamic_region),
+        fixed_until: f.fixed_until.value || null,
+      }),
+    });
+    renderTariffs(data);
+    tariffMessage("Saved. Costs on this page now use the updated rates.");
+    refreshEverything();
+  } catch (err) {
+    tariffMessage(err.message, true);
+  }
+});
+
+// --- History -------------------------------------------------------------------------------
+
+const HISTORY_SERIES = [
+  { key: "solar_kwh", label: "Solar generated", color: "var(--solar)" },
+  { key: "consumption_kwh", label: "Used", color: "var(--load)" },
+  { key: "import_kwh", label: "Imported", color: "var(--grid)" },
+  { key: "export_kwh", label: "Exported", color: "var(--export)" },
+];
+let historyDay = null;      // any date inside the period being viewed; null means the latest
+let historyLinks = {};
+
+const localDate = iso => new Date(iso + "T00:00");
+const fmt = (date, options) => date.toLocaleDateString([], options);
+// Short label under each group of bars, and the fuller one used in the tooltip and table.
+function intervalLabels(row, interval) {
+  const start = new Date(row.start);
+  if (interval === "hour") {
+    const hour = start.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    return [hour.slice(0, 2), hour + " to " + new Date(row.end).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })];
+  }
+  if (interval === "day") {
+    return [String(start.getDate()), fmt(start, { weekday: "short", day: "numeric", month: "short" })];
+  }
+  return [fmt(start, { month: "short" }), fmt(start, { month: "long", year: "numeric" })];
+}
+function periodLabel(data) {
+  const start = localDate(data.start), end = localDate(data.end);
+  if (data.period === "day") return fmt(start, { weekday: "short", day: "numeric", month: "short", year: "numeric" });
+  if (data.period === "week") {
+    return fmt(start, { day: "numeric", month: "short" }) + " to " + fmt(end, { day: "numeric", month: "short", year: "numeric" });
+  }
+  if (data.period === "month") return fmt(start, { month: "long", year: "numeric" });
+  return String(start.getFullYear());
+}
+const kwh = value => value === null || value === undefined ? "–" : value.toFixed(value < 100 ? 1 : 0) + " kWh";
+
+function drawHistory(data) {
+  const svg = document.getElementById("history-chart");
+  const tip = document.getElementById("history-tip");
+  const NS = "http://www.w3.org/2000/svg";
+  const W = 900, H = 300, L = 44, R = 10, T = 12, B = 26;
+  svg.replaceChildren();
+  tip.hidden = true;
+  seriesLegend(document.getElementById("history-legend"), "history",
+    HISTORY_SERIES.map(x => ({ key: x.key, label: x.label, color: x.color, box: true })),
+    () => historyData && drawHistory(historyData));
+  const shownSeries = HISTORY_SERIES.filter(x => isShown("history", x.key));
+  const rows = data.rows;
+  const values = rows.flatMap(r => shownSeries.map(s => r[s.key] ?? 0));
+  const hasData = rows.some(r => shownSeries.some(s => r[s.key] !== null && r[s.key] !== undefined));
+  document.getElementById("history-empty").hidden = hasData;
+  svg.style.display = hasData ? "" : "none";
+  if (!hasData) return;
+
+  const add = (tag, attrs, text) => {
+    const node = document.createElementNS(NS, tag);
+    for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v);
+    if (text !== undefined) node.textContent = text;
+    svg.append(node);
+    return node;
+  };
+  const top = Math.max(...values, 0.5) * 1.08;
+  const raw = top / 5, power = 10 ** Math.floor(Math.log10(raw));
+  const step = [1, 2, 5, 10].map(m => m * power).find(s => s >= raw);
+  const y = v => T + (top - v) / top * (H - T - B);
+  for (let v = 0; v <= top; v += step) {
+    add("line", { x1: L, x2: W - R, y1: y(v), y2: y(v), class: "gridline" });
+    add("text", { x: L - 8, y: y(v) + 4, "text-anchor": "end", class: "axis" }, +v.toFixed(2));
+  }
+  add("text", { x: L - 8, y: T - 2, "text-anchor": "end", class: "axis" }, "kWh");
+
+  const band = (W - L - R) / rows.length;
+  const gap = 2, pad = Math.min(8, band * 0.12);
+  const bar = Math.max(1.5, (band - pad * 2 - gap * (shownSeries.length - 1)) / shownSeries.length);
+  const labelEvery = Math.ceil(rows.length / 16);
+  rows.forEach((row, i) => {
+    const left = L + i * band;
+    const [short, full] = intervalLabels(row, data.interval);
+    shownSeries.forEach((series, n) => {
+      const value = row[series.key];
+      if (!value) return;
+      const x = left + pad + n * (bar + gap), h = Math.max(1, y(0) - y(value)), r = Math.min(4, bar / 2, h);
+      // A bar with a rounded top, square at the baseline.
+      add("path", { fill: series.color, d: `M${x},${y(0)}V${y(0) - h + r}a${r},${r} 0 0 1 ${r},${-r}` +
+                    `h${bar - 2 * r}a${r},${r} 0 0 1 ${r},${r}V${y(0)}Z` });
+    });
+    if (i % labelEvery === 0) {
+      add("text", { x: left + band / 2, y: H - 8, "text-anchor": "middle", class: "axis" }, short);
+    }
+    // Notes pinned to a day in this column: a marker at the top, and their text in the tooltip.
+    const first = localDay(row.start), after = localDay(row.end);
+    const here = pinned.filter(n => n.day >= first && (n.day < after || after === first));
+    if (here.length) {
+      const cx = left + band / 2;
+      add("path", { d: `M${cx - 5},${T}h10l-5,8z`, fill: "var(--warn)" });
+    }
+    // The whole column is the hover and keyboard target, and lists every series.
+    const hit = add("rect", { x: left, y: T, width: band, height: H - T - B, class: "hit", tabindex: 0,
+                              "aria-label": full + ": " + shownSeries.map(s => s.label + " " + kwh(row[s.key])).join(", ") +
+                                here.map(n => ". Note: " + n.text).join("") });
+    const show = () => {
+      const heading = Object.assign(document.createElement("div"), { className: "when", textContent: full });
+      const lines = shownSeries.map(series => {
+        const line = Object.assign(document.createElement("div"), { className: "row" });
+        line.style.setProperty("--c", series.color);
+        line.append(Object.assign(document.createElement("span"), { textContent: series.label }),
+                    Object.assign(document.createElement("strong"), { textContent: kwh(row[series.key]) }));
+        return line;
+      });
+      const noted = here.map(n => Object.assign(document.createElement("div"), {
+        textContent: (here.length > 1 || new Date(row.end) - new Date(row.start) > 26 * 3600 * 1000
+          ? dayText(n.day) + ": " : "") + n.text,
+        style: "margin-top: 6px; color: var(--warn); font-weight: 600; max-width: 260px;" }));
+      tip.replaceChildren(heading, ...lines, ...noted);
+      tip.hidden = false;
+      const scale = svg.clientWidth / W, centre = (left + band / 2) * scale;
+      const flip = centre > svg.clientWidth / 2;
+      tip.style.left = flip ? "" : (centre + 12) + "px";
+      tip.style.right = flip ? (svg.clientWidth - centre + 12) + "px" : "";
+      tip.style.top = (T * scale) + "px";
+    };
+    for (const name of ["pointerenter", "pointermove", "focus"]) hit.addEventListener(name, show);
+    for (const name of ["pointerleave", "blur"]) hit.addEventListener(name, () => { tip.hidden = true; });
+  });
+  add("line", { x1: L, x2: W - R, y1: y(0), y2: y(0), class: "gridline" });
+}
+
+function renderHistory(data) {
+  historyLinks = { previous: data.previous, next: data.next };
+  document.getElementById("history-prev").disabled = !data.previous;
+  document.getElementById("history-next").disabled = !data.next;
+  document.getElementById("history-label").textContent = periodLabel(data);
+  const t = data.totals, cost = data.cost;
+  const reading = (value, note) => value === undefined ? undefined : { value, note };
+  renderTiles(document.getElementById("history-tiles"), [
+    { metric: "solar", label: "Solar generated", unit: "kWh", digits: 1 },
+    { metric: "used", label: "Used", unit: "kWh", digits: 1 },
+    { metric: "imported", label: "Imported", unit: "kWh", digits: 1 },
+    { metric: "exported", label: "Exported", unit: "kWh", digits: 1 },
+    { metric: "net", label: "Net cost", prefix: "£" },
+  ], {
+    solar: reading(t.solar_kwh), used: reading(t.consumption_kwh), imported: reading(t.import_kwh),
+    exported: reading(t.export_kwh),
+    net: cost ? reading(cost.net_gbp, "with standing charge") : undefined,
+  });
+  drawHistory(data);
+  document.getElementById("history-hint").textContent = cost ? coverageHint({ ...cost, full_period: true }) : "";
+
+  document.getElementById("history-interval-head").textContent =
+    { hour: "Hour", day: "Day", month: "Month" }[data.interval];
+  const cell = text => Object.assign(document.createElement("td"), { textContent: text });
+  const gbp = value => value === null || value === undefined ? "–" : money(value);
+  document.getElementById("history-rows").replaceChildren(...data.rows.map(row => {
+    const tr = document.createElement("tr");
+    tr.append(cell(intervalLabels(row, data.interval)[1]), cell(kwh(row.solar_kwh)), cell(kwh(row.consumption_kwh)),
+              cell(kwh(row.import_kwh)), cell(kwh(row.export_kwh)), cell(gbp(row.import_cost_gbp)),
+              cell(gbp(row.export_credit_gbp)));
+    return tr;
+  }));
+  updateDownload(data);
+}
+
+// Offers only levels of detail finer than the period itself.
+function updateDownload(data) {
+  const select = document.getElementById("history-interval");
+  const allowed = { day: ["halfhour", "hour"], week: ["halfhour", "hour", "day"],
+                    month: ["halfhour", "hour", "day"], year: ["halfhour", "hour", "day", "month"] }[data.period];
+  for (const option of select.options) option.hidden = option.disabled = !allowed.includes(option.value);
+  if (!allowed.includes(select.value)) select.value = allowed[allowed.length - 1];
+  document.getElementById("history-download").href =
+    "api/export.csv?period=" + data.period + "&day=" + data.start + "&interval=" + select.value;
+}
+
+let historyData = null;
+async function refreshHistory() {
+  if (!sectionOpen("history-heading")) return;  // fetched when the section is opened
+  const period = document.getElementById("history-period").value;
+  const chart = document.getElementById("history-chart");
+  chart.style.opacity = 0.5;  // keep the old picture, dimmed, while the new one loads
+  try {
+    historyData = await getJson("api/history?period=" + period + (historyDay ? "&day=" + historyDay : ""));
+    renderHistory(historyData);
+  } catch (err) {
+    document.getElementById("history-hint").textContent = "Could not load this period (" + err.message + ").";
+  } finally {
+    chart.style.opacity = "";
+  }
+}
+document.getElementById("history-period")?.addEventListener("change", refreshHistory);
+document.getElementById("history-prev")?.addEventListener("click", () => { historyDay = historyLinks.previous; refreshHistory(); });
+document.getElementById("history-next")?.addEventListener("click", () => { historyDay = historyLinks.next; refreshHistory(); });
+document.getElementById("history-now")?.addEventListener("click", () => { historyDay = null; refreshHistory(); });
+document.getElementById("history-interval")?.addEventListener("change", () => historyData && updateDownload(historyData));
+
+// --- Performance and battery sizing --------------------------------------------------------
+
+const percent = value => value === null || value === undefined ? "–" : value.toFixed(0) + "%";
+
+function renderPerformance(data) {
+  const tiles = document.getElementById("performance-tiles");
+  const hint = document.getElementById("performance-hint");
+  const sizingBox = document.getElementById("sizing-box");
+  if (!data.has_data) {
+    tiles.replaceChildren();
+    sizingBox.hidden = true;
+    hint.textContent = "Needs at least one full day of readings.";
+    document.getElementById("performance-rows").replaceChildren();
+    return;
+  }
+  const o = data.overall;
+  const reading = (value, note) => value === null || value === undefined ? undefined : { value, note };
+  renderTiles(tiles, [
+    { metric: "self", label: "Self-sufficiency", unit: "%", digits: 0 },
+    { metric: "solar", label: "Solar used at home", unit: "%", digits: 0 },
+    { metric: "battery", label: "Battery efficiency", unit: "%", digits: 0 },
+    { metric: "dear", label: "Dear-rate import", unit: "kWh", digits: 0 },
+  ], {
+    self: reading(o.self_sufficiency_percent, "of what you used did not come from the grid"),
+    solar: reading(o.solar_used_percent, "of what the panels made, the rest exported"),
+    battery: reading(o.battery_efficiency_percent, "out for every 100 in"),
+    dear: reading(o.dear_import_kwh, percent(o.dear_import_percent) + " of import, costing " + money(o.dear_import_gbp)),
+  });
+  hint.textContent = "Measured over " + data.days + " full days from " +
+    new Date(data.from + "T00:00").toLocaleDateString([], { dateStyle: "medium" }) + ". " +
+    (o.battery_efficiency_percent === null ? "Battery efficiency needs at least two weeks of battery readings. " : "") +
+    "Dear-rate import is anything bought outside your cheapest rate.";
+
+  const cell = (text, numeric = true) => {
+    const td = document.createElement("td");
+    td.textContent = text;
+    if (numeric) td.className = "num";
+    return td;
+  };
+  document.getElementById("performance-rows").replaceChildren(...[...data.monthly].reverse().map(m => {
+    const tr = document.createElement("tr");
+    const month = new Date(m.month + "-01T00:00").toLocaleDateString([], { month: "short", year: "numeric" });
+    tr.append(cell(month, false), cell(kwh(m.solar_kwh)), cell(kwh(m.consumption_kwh)), cell(kwh(m.import_kwh)),
+              cell(kwh(m.export_kwh)), cell(percent(m.self_sufficiency_percent)), cell(percent(m.solar_used_percent)),
+              cell(kwh(m.dear_import_kwh)));
+    return tr;
+  }));
+
+  const s = data.sizing;
+  sizingBox.hidden = !s;
+  if (!s) return;
+  document.getElementById("sizing-summary").textContent = s.short_days
+    ? "On " + s.short_days + " of " + s.days + " days (" + s.short_percent + "%) the battery did not last until the " +
+      "cheap rate, and electricity was bought at a dearer rate: about " + s.dear_kwh_year + " kWh a year, costing " +
+      pounds(s.dear_gbp_year) + ". The worst day was " + s.worst_day_kwh + " kWh."
+    : "The battery lasted until the cheap rate on every one of the " + s.days + " days measured. More capacity " +
+      "would not have saved anything.";
+  document.getElementById("sizing-rows").replaceChildren(...s.options.map(option => {
+    const tr = document.createElement("tr");
+    tr.append(cell("+" + option.extra_kwh + " kWh", false), cell(option.avoided_kwh_year.toFixed(0) + " kWh"),
+              cell(pounds(option.saved_gbp_year)));
+    return tr;
+  }));
+  document.getElementById("sizing-hint").textContent =
+    "Replays the days measured as if the extra capacity had been charged at your cheapest rate and used before " +
+    "buying at a dearer one, allowing for " + s.efficiency_percent + "% battery efficiency. " +
+    (s.rough ? "Scaled up from under a year of readings, so the yearly figures are rough. " : "") +
+    "It is an upper limit: it assumes the inverter can deliver the extra power when needed (a car charging fast " +
+    "can outrun it) and that there is time to fill the extra capacity in the cheap window. Divide the price of " +
+    "the extra battery by the yearly saving for the years it would take to pay back.";
+}
+
+// --- More panels or a bigger inverter --------------------------------------------------------
+
+const panelsForm = document.getElementById("panels-form");
+let panelsFilled = false;
+function renderPanels(data) {
+  const box = document.getElementById("panels-box");
+  box.hidden = !data.has_data && !data.estimated_kwp;
+  if (!panelsFilled) {
+    panelsFilled = true;
+    for (const name of ["kwp", "inverter_kw", "new_inverter_kw", "cost_per_kwp"]) {
+      panelsForm.elements[name].value = data.settings[name] ?? "";
+    }
+  }
+  panelsForm.elements.kwp.placeholder = data.estimated_kwp ? "Worked out: " + data.estimated_kwp : "";
+  if (!data.has_data) {
+    document.getElementById("panels-summary").textContent = "Needs at least two weeks of solar readings.";
+    document.getElementById("panels-rows").replaceChildren();
+    return;
+  }
+  const bigger = data.settings.new_inverter_kw;
+  document.getElementById("panels-bigger-head").hidden = !bigger;
+  const cell = (text, className = "num") => Object.assign(document.createElement("td"), { textContent: text, className });
+  document.getElementById("panels-rows").replaceChildren(...data.options.map(o => {
+    const tr = document.createElement("tr");
+    tr.append(cell("+" + o.extra_kwp + " kWp", ""), cell(o.extra_kwh_year + " kWh"),
+      cell(o.clipped_kwh_year === null ? "–" : o.clipped_kwh_year + " kWh"),
+      cell(pounds(o.saved_gbp_year)));
+    if (bigger) tr.append(cell(pounds(o.saved_bigger_inverter_gbp_year)));
+    tr.append(cell(o.cost_gbp === null ? "–" : pounds(o.cost_gbp)),
+      cell(o.payback_years === null ? "–" : o.payback_years + " years"));
+    return tr;
+  }));
+  const inverter = data.settings.inverter_kw;
+  document.getElementById("panels-summary").textContent =
+    "Worked out for " + data.used_kwp + " kWp of panels" + (data.settings.kwp ? "" : " (estimated from the readings: enter yours below)") +
+    ", which made about " + data.generated_kwh_year + " kWh a year" +
+    (inverter ? ", with a " + inverter + " kW inverter limit" + (data.clipped_now_kwh_year ? " that already costs about " +
+      data.clipped_now_kwh_year + " kWh a year" : "") : "") + ".";
+  document.getElementById("panels-hint").textContent =
+    "Your household is run again on your own tariff with each panel's output scaled up, half hour by half hour, " +
+    "and the battery working as in the tariff switch planner. Extra solar first covers the house, then fills the " +
+    "battery, then is exported at your export rate. " +
+    (inverter ? "Solar above the inverter limit is lost. " : "Enter the inverter limit below to see what it would cost in lost generation. ") +
+    "Panels facing a different way would produce at different times, so treat these as a guide." +
+    (data.rough ? " Rough: based on fewer than twelve months, so the seasons are not fully counted." : "");
+}
+async function refreshPanels() {
+  if (!sectionOpen("performance-heading")) return;
+  try { renderPanels(await getJson("api/panels")); }
+  catch (err) { document.getElementById("panels-summary").textContent = "Could not work out the estimate (" + err.message + ")."; }
+}
+panelsForm?.addEventListener("submit", async event => {
+  event.preventDefault();
+  try {
+    const number = name => panelsForm.elements[name].value === "" ? null : Number(panelsForm.elements[name].value);
+    renderPanels(await sendTariff("api/panels/settings", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ kwp: number("kwp"), inverter_kw: number("inverter_kw"),
+                             new_inverter_kw: number("new_inverter_kw"), cost_per_kwp: number("cost_per_kwp") }) }));
+    document.getElementById("panels-message").textContent = "Saved.";
+  } catch (err) { document.getElementById("panels-message").textContent = err.message; }
+});
+
+async function refreshPerformance() {
+  refreshPanels();
+  if (!sectionOpen("performance-heading")) return;  // fetched when the section is opened
+  try {
+    renderPerformance(await getJson("api/performance?period=" + document.getElementById("performance-period").value));
+  } catch (err) {
+    document.getElementById("performance-hint").textContent = "Could not work out performance (" + err.message + ").";
+  }
+}
+document.getElementById("performance-period")?.addEventListener("change", refreshPerformance);
+
+// --- Notes ---------------------------------------------------------------------------------
+
+let pinned = [];  // notes, newest first: shown on the charts as well as listed
+const localDay = iso => new Date(iso).toLocaleDateString("en-CA");  // "2026-10-08"
+let editingNote = null;
+function renderNotes() {
+  const cell = text => Object.assign(document.createElement("td"), { textContent: text });
+  document.getElementById("notes-rows").replaceChildren(...pinned.map(note => {
+    const tr = document.createElement("tr");
+    const actions = document.createElement("td");
+    actions.style.whiteSpace = "nowrap";
+    const action = (label, onClick) => {
+      const button = Object.assign(document.createElement("button"), { className: "link", type: "button", textContent: label });
+      button.style.marginRight = "12px";
+      button.addEventListener("click", onClick);
+      actions.append(button);
+    };
+    action("Edit", () => {
+      editingNote = note.id;
+      notesForm.elements.day.value = note.day;
+      notesForm.elements.text.value = note.text;
+      notesForm.querySelector("button.primary").textContent = "Save note";
+      notesForm.elements.text.focus();
+    });
+    action("Remove", async () => {
+      try { pinned = (await sendTariff("api/notes/" + note.id, { method: "DELETE" })).notes; notesChanged(); }
+      catch (err) { document.getElementById("notes-message").textContent = err.message; }
+    });
+    const day = cell(dayText(note.day));
+    day.style.whiteSpace = "nowrap";
+    tr.append(day, cell(note.text), actions);
+    return tr;
+  }));
+}
+function notesChanged() {
+  if (onPage("notes-rows")) renderNotes();
+  if (historyData) drawHistory(historyData);
+  if (lastRoi) renderPayback(lastRoi);
+}
+async function refreshNotes() {
+  try { pinned = (await getJson("api/notes")).notes; notesChanged(); } catch { /* charts simply show no notes */ }
+}
+const notesForm = document.getElementById("notes-form");
+notesForm?.addEventListener("submit", async event => {
+  event.preventDefault();
+  try {
+    const data = await sendTariff("api/notes" + (editingNote ? "?id=" + editingNote : ""), {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ day: notesForm.elements.day.value, text: notesForm.elements.text.value }) });
+    pinned = data.notes;
+    editingNote = null;
+    notesForm.reset();
+    notesForm.querySelector("button.primary").textContent = "Add note";
+    document.getElementById("notes-message").textContent = "Saved.";
+    notesChanged();
+  } catch (err) { document.getElementById("notes-message").textContent = err.message; }
+});
+
+// --- Yearly report -------------------------------------------------------------------------
+
+let yearlyYear = null;   // null means this year
+let yearlyShare = false; // true while costs are hidden for sharing
+let lastYearly = null;
+let yearlyLinks = {};
+function renderYearly(data) {
+  lastYearly = data;
+  document.getElementById("yearly-section").classList.toggle("sharing", yearlyShare);
+  yearlyLinks = { previous: data.previous, next: data.next };
+  document.getElementById("yearly-prev").disabled = !data.previous;
+  document.getElementById("yearly-next").disabled = !data.next;
+  const title = data.year + (data.is_current ? " so far" : "");
+  document.getElementById("yearly-label").textContent = title;
+  document.getElementById("yearly-col-this").textContent = title;
+  document.getElementById("yearly-col-before").textContent = data.year - 1;
+  const y = data.this, before = data.year_before;
+  document.getElementById("yearly-empty").hidden = !!y;
+  document.getElementById("yearly-body").hidden = !y;
+  if (!y) { document.getElementById("yearly-hint").textContent = ""; return; }
+  const c = y.cost, lines = [];
+  // Lines about money are marked, so the shared view can leave them out.
+  const moneyLine = text => ({ text, money: true });
+  lines.push(moneyLine("Electricity cost " + money(c.net_gbp) + " in all: " + money(c.import_gbp) + " for " +
+    c.import_kwh.toFixed(0) + " kWh imported, plus " + money(c.standing_charge_gbp) + " standing charge, less " +
+    money(c.export_credit_gbp) + " for " + c.export_kwh.toFixed(0) + " kWh exported."));
+  lines.push({ text: "The house imported " + c.import_kwh.toFixed(0) + " kWh from the grid and exported " +
+    c.export_kwh.toFixed(0) + " kWh.", shareOnly: true });
+  if (before && before.complete && y.complete) lines.push(moneyLine("That is " + change(c.net_gbp, before.cost.net_gbp, money) +
+    " than " + (data.year - 1) + "."));
+  if (c.saved_gbp > 0) lines.push(moneyLine("Importing at cheaper times saved " + money(c.saved_gbp) +
+    " against paying the day rate for everything."));
+  if (y.solar_kwh !== null) lines.push("The panels made " + kwh(y.solar_kwh) + (y.solar_used_percent !== null
+    ? ", of which " + percent(y.solar_used_percent) + " was used at home." : "."));
+  if (y.self_sufficiency_percent !== null) lines.push(percent(y.self_sufficiency_percent) +
+    " of the " + kwh(y.consumption_kwh) + " used did not come from the grid.");
+  const d = data.devices;
+  if (d) {
+    const parts = [];
+    const cost = v => yearlyShare ? "" : " (about " + money(v) + ")";
+    if (d.heat_pump_kwh !== undefined) parts.push("the " + data.smart_load_label.toLowerCase() + " used " +
+      kwh(d.heat_pump_kwh) + cost(d.heat_pump_gbp));
+    if (d.ev_charger_kwh !== undefined) parts.push("the EV charger " + kwh(d.ev_charger_kwh) + cost(d.ev_charger_gbp));
+    if (parts.length) lines.push("Of the electricity used, " + parts.join(" and ") + ".");
+  }
+  if (y.extra_income_gbp > 0) lines.push(moneyLine("Extra income came to " + money(y.extra_income_gbp) + "."));
+  if (data.saved_by_year_end_gbp !== null && data.system_cost_gbp) {
+    lines.push(moneyLine((data.is_current ? "So far the system has saved " : "By the end of the year the system had saved ") +
+      pounds(data.saved_by_year_end_gbp) + " of its " + pounds(data.system_cost_gbp) + " cost (" +
+      (data.saved_by_year_end_gbp / data.system_cost_gbp * 100).toFixed(1) + "%)."));
+  }
+  if (y.dearest_day) lines.push(moneyLine("The dearest day was " + dayName(y.dearest_day.day) + " at " + money(y.dearest_day.value) + "."));
+  if (y.sunniest_day && y.sunniest_day.value > 0) lines.push("The sunniest day was " + dayName(y.sunniest_day.day) +
+    " with " + kwh(y.sunniest_day.value) + " generated.");
+  if (y.busiest_day) lines.push("The most electricity was used on " + dayName(y.busiest_day.day) + ": " +
+    kwh(y.busiest_day.value) + ".");
+  document.getElementById("yearly-points").replaceChildren(...lines
+    .filter(line => typeof line === "string" || (yearlyShare ? !line.money : !line.shareOnly))
+    .map(line => Object.assign(document.createElement("li"), { textContent: typeof line === "string" ? line : line.text })));
+
+  const cell = (text, numeric = true) => Object.assign(document.createElement("td"), { textContent: text, className: numeric ? "num" : "" });
+  const cash = v => v === null || v === undefined ? "–" : money(v);
+  const rows = [
+    ["Net cost", x => x.cost.net_gbp, cash, true],
+    ["Import cost", x => x.cost.import_gbp, cash, true],
+    ["Export credit", x => x.cost.export_credit_gbp, cash, true],
+    ["Standing charge", x => x.cost.standing_charge_gbp, cash, true],
+    ["Extra income", x => x.extra_income_gbp, cash, true],
+    ["Solar generated", x => x.solar_kwh, kwh],
+    ["Used", x => x.consumption_kwh, kwh],
+    ["Imported", x => x.import_kwh, kwh],
+    ["Exported", x => x.export_kwh, kwh],
+    ["Self-sufficiency", x => x.self_sufficiency_percent, percent],
+    ["Dear-rate import", x => x.dear_import_kwh, kwh, true],
+    ["Days counted", x => x.days, String],
+  ];
+  document.getElementById("yearly-rows").replaceChildren(...rows.map(([label, pick, show, isMoney]) => {
+    const tr = document.createElement("tr");
+    if (isMoney) tr.className = "money";
+    const now = pick(y), then = before ? pick(before) : null;
+    // Part of a year against a whole one is not a fair comparison, so no change is given.
+    const comparable = before && before.complete && y.complete;
+    const moved = !comparable || show === String || now === null || then === null || then === undefined ? ""
+      : change(now, then, v => show === percent ? v.toFixed(1) + " points" : show(v));
+    tr.append(cell(label, false), cell(show(now)), cell(before ? show(then) : "–"), cell(moved));
+    return tr;
+  }));
+  document.getElementById("yearly-months").replaceChildren(...y.months.map(m => {
+    const tr = document.createElement("tr");
+    const net = cell(cash(m.net_gbp));
+    net.classList.add("money");
+    tr.append(cell(new Date(m.month + "-01T00:00").toLocaleDateString([], { month: "long" }), false),
+              net, cell(kwh(m.solar_kwh)), cell(kwh(m.consumption_kwh)), cell(kwh(m.import_kwh)),
+              cell(kwh(m.export_kwh)), cell(percent(m.self_sufficiency_percent)));
+    return tr;
+  }));
+  const partial = [[y, String(data.year)], [before, String(data.year - 1)]]
+    .filter(([x]) => x && !x.complete).map(([x, name]) => name + " covers " + x.days + " days");
+  document.getElementById("yearly-hint").textContent = yearlyShare
+    ? "Costs and anything about money are hidden, so this can be shared. Press \"Hide costs\" again to show them."
+    : (partial.length ? partial.join("; ") + ", so no change is worked out between them. " : "") +
+    "Whole days up to yesterday. Costs are the tracker's estimate at your tariff rates. Device costs are each " +
+    "device's cost, following the energy through the battery.";
+}
+async function refreshYearly() {
+  if (!sectionOpen("yearly-heading")) return;  // fetched when the section is opened
+  try { renderYearly(await getJson("api/yearly" + (yearlyYear ? "?year=" + yearlyYear : ""))); }
+  catch (err) { document.getElementById("yearly-hint").textContent = "Could not load the yearly report (" + err.message + ")."; }
+}
+document.getElementById("yearly-prev")?.addEventListener("click", () => { yearlyYear = yearlyLinks.previous; refreshYearly(); });
+document.getElementById("yearly-next")?.addEventListener("click", () => { yearlyYear = yearlyLinks.next; refreshYearly(); });
+document.getElementById("yearly-print")?.addEventListener("click", () => printSection("yearly-section"));
+document.getElementById("yearly-share")?.addEventListener("click", event => {
+  yearlyShare = !yearlyShare;
+  event.target.setAttribute("aria-pressed", String(yearlyShare));
+  event.target.textContent = yearlyShare ? "Show costs" : "Hide costs";
+  if (lastYearly) renderYearly(lastYearly);
+});
+
+// --- Backup and restore --------------------------------------------------------------------
+
+function restoreMessage(text, isError = false) {
+  const el = document.getElementById("restore-message");
+  el.textContent = text;
+  el.style.color = isError ? "var(--danger)" : "";
+}
+const sendBackup = (file, dryRun) => sendTariff("api/restore?dry_run=" + dryRun, {
+  method: "POST", headers: { "Content-Type": "application/json" }, body: file });
+document.getElementById("restore-check")?.addEventListener("click", async () => {
+  const file = document.getElementById("restore-file").files[0];
+  const box = document.getElementById("restore-found");
+  box.hidden = true;
+  if (!file) return restoreMessage("Choose a settings file first.", true);
+  try {
+    const { found } = await sendBackup(file, true);
+    const count = (n, one, many) => n + " " + (n === 1 ? one : many);
+    const el = (tag, text, props = {}) => Object.assign(document.createElement(tag), { textContent: text, ...props });
+    const go = el("button", "Replace my settings with this file", { type: "button", className: "primary" });
+    go.addEventListener("click", async () => {
+      if (!confirm("Replace everything you have entered with the contents of this file? This cannot be undone.")) return;
+      try {
+        await sendBackup(file, false);
+        box.hidden = true;
+        restoreMessage("Restored. The page is reloading with the restored settings...");
+        setTimeout(() => location.reload(), 1200);
+      } catch (err) { restoreMessage(err.message, true); }
+    });
+    const actions = el("div", "", { className: "actions" });
+    actions.append(go);
+    box.replaceChildren(
+      el("strong", "This file was saved " + (found.saved ? "on " + new Date(found.saved).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : "at an unknown time") +
+        (found.version ? " by version " + found.version : "") + ". It holds:"),
+      el("div", [count(found.tariff_periods, "set of tariff rates", "sets of tariff rates"),
+                 count(found.comparison_tariffs, "tariff to compare", "tariffs to compare"),
+                 count(found.bills, "bill", "bills"),
+                 count(found.extra_income, "extra income entry", "extra income entries")].join(", ") + "."),
+      el("div", "Restoring replaces what is here now with these, and removes anything not in the file. Readings are not touched."),
+      actions);
+    box.hidden = false;
+    restoreMessage("");
+  } catch (err) { restoreMessage(err.message, true); }
+});
+
+// --- Monthly summary -----------------------------------------------------------------------
+
+let summaryMonth = null;   // null means last month
+let summaryLinks = {};
+const dayName = iso => new Date(iso + "T00:00").toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" });
+// "12% less", "£4.10 more": how this month compares with another.
+function change(now, then, format) {
+  if (now === null || now === undefined || then === null || then === undefined) return "";
+  const diff = now - then;
+  if (Math.abs(diff) < 0.005) return "the same";
+  return format(Math.abs(diff)) + (diff > 0 ? " more" : " less");
+}
+
+function renderSummary(data) {
+  summaryLinks = { previous: data.previous, next: data.next };
+  document.getElementById("summary-prev").disabled = !data.previous;
+  document.getElementById("summary-next").disabled = !data.next;
+  document.getElementById("summary-label").textContent = data.month;
+  document.getElementById("summary-col-this").textContent = data.month;
+  const m = data.this, before = data.month_before, lastYear = data.year_before;
+  const points = document.getElementById("summary-points");
+  document.getElementById("summary-empty").hidden = !!m;
+  document.getElementById("summary-table").hidden = !m;
+  if (!m) {
+    points.replaceChildren();
+    document.getElementById("summary-hint").textContent = "";
+    return;
+  }
+  const lines = [];
+  const c = m.cost;
+  lines.push("Electricity cost " + money(c.net_gbp) + " in all: " + money(c.import_gbp) + " for " +
+    c.import_kwh.toFixed(0) + " kWh imported, plus " + money(c.standing_charge_gbp) + " standing charge, less " +
+    money(c.export_credit_gbp) + " for " + c.export_kwh.toFixed(0) + " kWh exported.");
+  if (before) lines.push("That is " + change(c.net_gbp, before.cost.net_gbp, money) + " than the month before" +
+    (lastYear ? ", and " + change(c.net_gbp, lastYear.cost.net_gbp, money) + " than the same month last year." : "."));
+  if (c.saved_gbp > 0) lines.push("Importing at cheaper times saved " + money(c.saved_gbp) +
+    " against paying the day rate for everything.");
+  if (m.solar_kwh !== null) lines.push("The panels made " + kwh(m.solar_kwh) + (m.solar_used_percent !== null
+    ? ", of which " + percent(m.solar_used_percent) + " was used at home." : "."));
+  if (m.self_sufficiency_percent !== null) lines.push(percent(m.self_sufficiency_percent) +
+    " of the " + kwh(m.consumption_kwh) + " used did not come from the grid.");
+  if (m.dear_import_kwh > 0) lines.push(kwh(m.dear_import_kwh) + " was bought outside the cheapest rate, costing " +
+    money(m.dear_import_gbp) + ".");
+  if (m.extra_income_gbp > 0) lines.push("Extra income came to " + money(m.extra_income_gbp) + ".");
+  if (m.dearest_day) lines.push("The dearest day was " + dayName(m.dearest_day.day) + " at " + money(m.dearest_day.value) +
+    (m.cheapest_day ? "; the cheapest was " + dayName(m.cheapest_day.day) + " at " + money(m.cheapest_day.value) + "." : "."));
+  if (m.sunniest_day && m.sunniest_day.value > 0) lines.push("The sunniest day was " + dayName(m.sunniest_day.day) +
+    " with " + kwh(m.sunniest_day.value) + " generated.");
+  if (m.busiest_day) lines.push("The most electricity was used on " + dayName(m.busiest_day.day) + ": " +
+    kwh(m.busiest_day.value) + ".");
+  points.replaceChildren(...lines.map(text => Object.assign(document.createElement("li"), { textContent: text })));
+
+  const cell = (text, numeric = true) => {
+    const td = document.createElement("td");
+    td.textContent = text;
+    if (numeric) td.className = "num";
+    return td;
+  };
+  const cash = v => v === null || v === undefined ? "–" : money(v);
+  const rows = [
+    ["Net cost", x => cash(x.cost.net_gbp)],
+    ["Import cost", x => cash(x.cost.import_gbp)],
+    ["Export credit", x => cash(x.cost.export_credit_gbp)],
+    ["Standing charge", x => cash(x.cost.standing_charge_gbp)],
+    ["Extra income", x => cash(x.extra_income_gbp)],
+    ["Solar generated", x => kwh(x.solar_kwh)],
+    ["Used", x => kwh(x.consumption_kwh)],
+    ["Imported", x => kwh(x.import_kwh)],
+    ["Exported", x => kwh(x.export_kwh)],
+    ["Self-sufficiency", x => percent(x.self_sufficiency_percent)],
+    ["Dear-rate import", x => kwh(x.dear_import_kwh)],
+    ["Days counted", x => String(x.days)],
+  ];
+  document.getElementById("summary-rows").replaceChildren(...rows.map(([label, pick]) => {
+    const tr = document.createElement("tr");
+    tr.append(cell(label, false), ...[m, before, lastYear].map(x => cell(x ? pick(x) : "–")));
+    return tr;
+  }));
+  const partial = [[m, data.month], [before, "The month before"], [lastYear, "The same month last year"]]
+    .filter(([x]) => x && !x.complete).map(([x, name]) => name + " covers " + x.days + " days");
+  document.getElementById("summary-hint").textContent =
+    (partial.length ? partial.join("; ") + ", so compare with care. " : "") +
+    "Whole days up to yesterday. Costs are the tracker's estimate at your tariff rates.";
+}
+
+async function refreshSummary() {
+  if (!sectionOpen("summary-heading")) return;  // fetched when the section is opened
+  try {
+    renderSummary(await getJson("api/summary" + (summaryMonth ? "?month=" + summaryMonth : "")));
+  } catch (err) {
+    document.getElementById("summary-hint").textContent = "Could not load the summary (" + err.message + ").";
+  }
+}
+document.getElementById("summary-prev")?.addEventListener("click", () => { summaryMonth = summaryLinks.previous; refreshSummary(); });
+document.getElementById("summary-next")?.addEventListener("click", () => { summaryMonth = summaryLinks.next; refreshSummary(); });
+document.getElementById("summary-last")?.addEventListener("click", () => { summaryMonth = null; refreshSummary(); });
+// Prints one section on its own.
+function printSection(id) {
+  const section = document.getElementById(id);
+  section.classList.add("printing");
+  document.body.classList.add("print-one");
+  window.print();
+  document.body.classList.remove("print-one");
+  section.classList.remove("printing");
+}
+document.getElementById("summary-print")?.addEventListener("click", () => printSection("summary-section"));
+
+// --- Bill check ----------------------------------------------------------------------------
+
+const billsForm = document.getElementById("bills-form");
+let editingBill = null;
+let lastBills = null;
+let billYearsFolded = new Set();
+try { billYearsFolded = new Set(JSON.parse(localStorage.getItem("energy-tracker-bill-years-folded") ?? "[]")); } catch { /* no storage */ }
+let billsNewestFirst = false;
+try { billsNewestFirst = localStorage.getItem("energy-tracker-bills-newest") === "1"; } catch { /* no storage */ }
+document.getElementById("bills-sort")?.addEventListener("click", () => {
+  billsNewestFirst = !billsNewestFirst;
+  try { localStorage.setItem("energy-tracker-bills-newest", billsNewestFirst ? "1" : "0"); } catch { /* no storage */ }
+  if (lastBills) renderBills(lastBills);
+});
+function billsMessage(text, isError = false) {
+  const el = document.getElementById("bills-message");
+  el.textContent = text;
+  el.style.color = isError ? "var(--danger)" : "";
+}
+
+function renderBills(data) {
+  const cell = (text, className) => {
+    const td = document.createElement("td");
+    td.textContent = text;
+    if (className) td.className = className;
+    return td;
+  };
+  const day = iso => new Date(iso + "T00:00").toLocaleDateString([], { dateStyle: "medium" });
+  const energy = v => v === null || v === undefined ? "–" : v.toFixed(1) + " kWh";
+  const cash = v => v === null || v === undefined ? "–" : money(v);
+  const gap = (d, format) => !d ? "" : Math.abs(d.amount) < 0.005 ? "same"
+    : format(Math.abs(d.amount)) + (d.amount > 0 ? " higher" : " lower") + (d.percent === null ? "" : " (" + Math.abs(d.percent) + "%)");
+  billsShown = data.bills;
+  lastBills = data;
+  // In date order by the first day billed; the column heading switches the direction.
+  // Bills are grouped under the year most of their days fall in, then put in date order.
+  const yearOf = bill => {
+    const middle = (new Date(bill.first_day).getTime() + new Date(bill.last_day).getTime()) / 2;
+    return new Date(middle).getUTCFullYear();
+  };
+  const ordered = [...data.bills].sort((a, b) =>
+    (yearOf(a) - yearOf(b) || a.first_day.localeCompare(b.first_day) ||
+     a.last_day.localeCompare(b.last_day) || a.id - b.id) * (billsNewestFirst ? -1 : 1));
+  const sorter = document.getElementById("bills-sort");
+  sorter.textContent = "Bill period " + (billsNewestFirst ? "\u25BE" : "\u25B4");
+  sorter.title = billsNewestFirst ? "Newest first. Click for oldest first." : "Oldest first. Click for newest first.";
+
+  // Totals compare like with like: a figure counts only where both the bill and the tracker
+  // have one, and the tracker's readings cover the whole of that bill.
+  const columns = ["import_kwh", "charge_gbp", "export_kwh", "export_gbp"];
+  const sums = Object.fromEntries(columns.map(c => [c, { bill: 0, tracker: 0, count: 0 }]));
+  let partial = 0;
+  for (const bill of data.bills) {
+    if (bill.tracker && !bill.tracker.covers_whole_bill) { partial += 1; continue; }
+    for (const c of columns) {
+      if (bill[c] === null || !bill.tracker) continue;
+      sums[c].bill += bill[c];
+      sums[c].tracker += bill.tracker[c];
+      sums[c].count += 1;
+    }
+  }
+  const counted = Math.max(...columns.map(c => sums[c].count));
+  const phrase = (c, what, format) => {
+    const t = sums[c];
+    if (!t.count) return "";
+    const diff = t.bill - t.tracker, share = t.tracker ? Math.abs(diff) / t.tracker * 100 : null;
+    return Math.abs(diff) < 0.005 ? what + " the same as the tracker"
+      : what + " " + format(Math.abs(diff)) + (diff > 0 ? " more" : " less") + " than the tracker" +
+        (share === null ? "" : " (" + share.toFixed(1) + "%)");
+  };
+  const summary = document.getElementById("bills-summary");
+  if (!data.bills.length) {
+    summary.textContent = "No bills entered yet.";
+  } else if (!counted) {
+    summary.textContent = "The tracker's readings do not fully cover any of these bills, so there is nothing to total yet.";
+  } else {
+    const parts = [phrase("import_kwh", "imported", v => v.toFixed(1) + " kWh"), phrase("charge_gbp", "charged", money),
+                   phrase("export_kwh", "exported", v => v.toFixed(1) + " kWh"), phrase("export_gbp", "paid for export", money)]
+      .filter(Boolean);
+    summary.textContent = "Across " + data.bills.length + (data.bills.length === 1 ? " bill" : " bills") +
+      ", the bills show: " + parts.join("; ") + "." +
+      (partial ? " " + partial + (partial === 1 ? " bill is" : " bills are") +
+        " left out of the totals because the tracker's readings do not cover all of the dates." : "");
+  }
+
+  // A heading row for each year, which folds that year's bills away when clicked.
+  const rows = [];
+  let currentYear = null;
+  for (const bill of ordered) {
+    const year = yearOf(bill);
+    if (year !== currentYear) {
+      currentYear = year;
+      const inYear = data.bills.filter(b => yearOf(b) === year);
+      const add = c => inYear.reduce((sum, b) => sum + (b[c] ?? 0), 0);
+      const has = c => inYear.some(b => b[c] !== null);
+      const detail = [inYear.length + (inYear.length === 1 ? " bill" : " bills"),
+        has("import_kwh") && energy(add("import_kwh")) + " imported", has("charge_gbp") && cash(add("charge_gbp")) + " charged",
+        has("export_kwh") && energy(add("export_kwh")) + " exported", has("export_gbp") && cash(add("export_gbp")) + " export payment"]
+        .filter(Boolean).join(", ");
+      const head = document.createElement("tr");
+      head.className = "year-row";
+      const td = document.createElement("td");
+      td.colSpan = 7;
+      const isFolded = billYearsFolded.has(year);
+      td.tabIndex = 0;
+      td.setAttribute("role", "button");
+      td.setAttribute("aria-expanded", String(!isFolded));
+      td.append((isFolded ? "\u25B8 " : "\u25BE ") + year,
+                Object.assign(document.createElement("span"), { className: "detail", textContent: detail }));
+      const flip = () => {
+        if (billYearsFolded.has(year)) billYearsFolded.delete(year); else billYearsFolded.add(year);
+        try { localStorage.setItem("energy-tracker-bill-years-folded", JSON.stringify([...billYearsFolded])); } catch { /* no storage */ }
+        saveLayout();
+        renderBills(lastBills);
+      };
+      td.addEventListener("click", flip);
+      td.addEventListener("keydown", event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); flip(); } });
+      head.append(td);
+      rows.push(head);
+    }
+    if (billYearsFolded.has(year)) continue;
+    const t = bill.tracker, d = bill.differences;
+    const actions = document.createElement("td");
+    actions.rowSpan = 3;
+    const action = (label, onClick) => {
+      const button = Object.assign(document.createElement("button"), { className: "link", type: "button", textContent: label });
+      button.style.marginRight = "12px";
+      button.addEventListener("click", onClick);
+      actions.append(button);
+    };
+    action("Edit", () => {
+      editingBill = bill.id;
+      for (const name of ["first_day", "last_day", "import_kwh", "charge_gbp", "export_kwh", "export_gbp"]) {
+        billsForm.elements[name].value = bill[name] ?? "";
+      }
+      document.getElementById("bills-editor").open = true;
+      billsMessage("Editing this bill. Saving replaces it.");
+      billsForm.scrollIntoView({ block: "nearest" });
+    });
+    action("Remove", async () => {
+      if (!confirm("Remove this bill?")) return;
+      try { renderBills(await sendTariff("api/bills/" + bill.id, { method: "DELETE" })); }
+      catch (err) { billsMessage(err.message, true); }
+    });
+    const period = cell(day(bill.first_day) + " to " + day(bill.last_day));
+    period.rowSpan = 3;
+    if (t && (!t.covers_whole_bill || t.estimated_hours > 0)) {
+      const note = Object.assign(document.createElement("div"), { className: "hint", textContent: !t.covers_whole_bill
+        ? "The tracker's readings do not cover all of these dates." : "Includes " + t.estimated_hours + " h without detailed readings." });
+      note.style.margin = "2px 0 0";
+      period.append(note);
+    }
+    const line = (label, values, className, lead = []) => {
+      const tr = document.createElement("tr");
+      tr.append(...lead, cell(label, className), ...values.map(v => cell(v, "num" + (className ? " " + className : ""))));
+      return tr;
+    };
+    const first = line("Bill", [energy(bill.import_kwh), cash(bill.charge_gbp), energy(bill.export_kwh), cash(bill.export_gbp)], "", [period]);
+    first.append(actions);
+    rows.push(first,
+      line("Tracker", t ? [energy(t.import_kwh), cash(t.charge_gbp), energy(t.export_kwh), cash(t.export_gbp)] : ["–", "–", "–", "–"], "sub"),
+      line("Bill is", [gap(d.import_kwh, energy), gap(d.charge_gbp, cash), gap(d.export_kwh, energy), gap(d.export_gbp, cash)], "sub"));
+  }
+  document.getElementById("bills-rows").replaceChildren(...rows);
+
+  // Totals underneath, in the same three lines as each bill.
+  const foot = document.getElementById("bills-totals");
+  if (!counted) { foot.replaceChildren(); return; }
+  const totalLine = (label, pick, className, lead = []) => {
+    const tr = document.createElement("tr");
+    tr.append(...lead, cell(label, className), ...columns.map(c => {
+      const t = sums[c];
+      return cell(t.count ? pick(c, t) : "–", "num" + (className ? " " + className : ""));
+    }), cell(""));
+    return tr;
+  };
+  const show = (c, value) => c.endsWith("kwh") ? energy(value) : cash(value);
+  const heading = cell("Total");
+  heading.rowSpan = 3;
+  heading.style.fontWeight = "600";
+  const note = Object.assign(document.createElement("div"), { className: "hint",
+    textContent: "Each column adds up the bills that have that figure." });
+  note.style.margin = "2px 0 0";
+  note.style.fontWeight = "400";
+  heading.append(note);
+  foot.replaceChildren(
+    totalLine("Bills", (c, t) => show(c, t.bill), "", [heading]),
+    totalLine("Tracker", (c, t) => show(c, t.tracker), "sub"),
+    totalLine("Bills are", (c, t) => gap({ amount: t.bill - t.tracker,
+      percent: t.tracker ? Math.round((t.bill - t.tracker) / t.tracker * 1000) / 10 : null }, v => show(c, v)), "sub"));
+}
+
+// Reading bill PDFs. One file fills in the form to check and save. Several are listed for
+// review and saved together. Nothing is saved until the person presses a Save button.
+let billsShown = [];     // bills already saved, to spot ones read twice
+let billsToSave = [];    // read from several PDFs and waiting for approval
+const readBill = file => sendTariff("api/bills/read", {
+  method: "POST", headers: { "Content-Type": "application/pdf" }, body: file,
+});
+const ratesNote = data => {
+  const rates = data.rates.map(r => r.kwh + " kWh at " + r.p_per_kwh + MINOR).join(", ");
+  return !rates ? "" : "Rates on the bill: " + rates +
+    (data.standing_charge_p_per_day !== null ? "; standing charge " + data.standing_charge_p_per_day + MINOR + " a day" : "") +
+    (data.vat_percent !== null ? "; VAT " + data.vat_percent + "%" : "") + ".";
+};
+// The same dates and the same kind of figures as a bill already in the list.
+const alreadySaved = found => billsShown.some(bill => bill.first_day === found.first_day &&
+  bill.last_day === found.last_day &&
+  (bill.import_kwh === null) === (found.import_kwh === null) &&
+  (bill.export_kwh === null) === (found.export_kwh === null));
+
+function showBatch(results) {
+  const box = document.getElementById("bills-batch");
+  const cell = (text, className) => {
+    const td = document.createElement("td");
+    td.textContent = text;
+    if (className) td.className = className;
+    return td;
+  };
+  const day = iso => iso ? new Date(iso + "T00:00").toLocaleDateString([], { dateStyle: "medium" }) : "?";
+  const energy = v => v === null || v === undefined ? "–" : v + " kWh";
+  const cash = v => v === null || v === undefined ? "–" : money(v);
+  billsToSave = [];
+  document.getElementById("bills-batch-rows").replaceChildren(...results.map(result => {
+    const tr = document.createElement("tr");
+    const name = cell(result.file);
+    let status;
+    if (result.error) status = result.error;
+    else if (!result.data.found.first_day || !result.data.found.last_day) status = "Dates not found: add this one on its own.";
+    else if (alreadySaved(result.data.found)) status = "Already in the list: skipped.";
+    else if (billsToSave.some(b => JSON.stringify(b) === JSON.stringify(result.data.found))) status = "Same as another file: skipped.";
+    else { status = ["Ready to save.", ...result.data.notes].join(" "); billsToSave.push(result.data.found); }
+    const f = result.data?.found;
+    tr.append(name, cell(f ? day(f.first_day) + " to " + day(f.last_day) : "–"),
+              cell(f ? energy(f.import_kwh) : "–", "num"), cell(f ? cash(f.charge_gbp) : "–", "num"),
+              cell(f ? energy(f.export_kwh) : "–", "num"), cell(f ? cash(f.export_gbp) : "–", "num"),
+              cell(status, "sub"));
+    return tr;
+  }));
+  const save = document.getElementById("bills-batch-save");
+  save.hidden = !billsToSave.length;
+  save.textContent = "Save " + billsToSave.length + (billsToSave.length === 1 ? " bill" : " bills");
+  box.hidden = false;
+}
+
+document.getElementById("bills-read")?.addEventListener("click", async () => {
+  const files = [...document.getElementById("bills-file").files];
+  if (!files.length) return billsMessage("Choose one or more bill PDF files first.", true);
+  if (files.length > 40) return billsMessage("Choose 40 files or fewer at a time.", true);
+  document.getElementById("bills-batch").hidden = true;
+  billRates = [];
+  showBillRates();
+  try {
+    if (files.length === 1) {
+      billsMessage("Reading the bill...");
+      const data = await readBill(files[0]);
+      noteBillRates("", data);
+      showBillRates();
+      editingBill = null;
+      for (const [name, value] of Object.entries(data.found)) billsForm.elements[name].value = value ?? "";
+      billsMessage(["Filled in from the " + data.kind + " bill. Check the figures against it, then save.",
+                    ratesNote(data), ...data.notes].filter(Boolean).join(" "));
+      return;
+    }
+    const results = [];
+    for (const [index, file] of files.entries()) {
+      billsMessage("Reading bill " + (index + 1) + " of " + files.length + "...");
+      try {
+        const data = await readBill(file);
+        results.push({ file: file.name, data });
+        noteBillRates(file.name, data);
+      } catch (err) { results.push({ file: file.name, error: err.message }); }
+    }
+    showBatch(results);
+    showBillRates();
+    billsMessage("Read " + files.length + " files. Check the figures below against the bills, then save them together.");
+  } catch (err) {
+    billsMessage(err.message, true);
+  }
+});
+
+document.getElementById("bills-batch-save")?.addEventListener("click", async () => {
+  const button = document.getElementById("bills-batch-save");
+  button.disabled = true;
+  let saved = 0, last = null;
+  try {
+    for (const found of billsToSave) {
+      last = await sendTariff("api/bills", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(found),
+      });
+      saved += 1;
+    }
+    billsMessage("Saved " + saved + (saved === 1 ? " bill." : " bills."));
+    document.getElementById("bills-batch").hidden = true;
+    document.getElementById("bills-file").value = "";
+    billsToSave = [];
+  } catch (err) {
+    billsMessage("Saved " + saved + " of " + billsToSave.length + ", then stopped: " + err.message, true);
+  } finally {
+    button.disabled = false;
+    if (last) renderBills(last);
+  }
+});
+
+// Rates printed on the bills just read that differ from the tracker's. The bill is the
+// supplier's own record, so a correction is offered; nothing changes until a button is pressed.
+let billRates = [];  // {file, request} for each bill read
+const dayText = iso => new Date(iso + "T00:00").toLocaleDateString([], { dateStyle: "medium" });
+function noteBillRates(file, data) {
+  if (!data.found.first_day) return;
+  billRates.push({ file, check: data.tariff_check, request: {
+    kind: data.kind, first_day: data.found.first_day, rates: data.rates.map(r => r.p_per_kwh),
+    standing_charge_p_per_day: data.standing_charge_p_per_day, vat_percent: data.vat_percent } });
+}
+async function recheckBillRates() {
+  for (const entry of billRates) {
+    try {
+      entry.check = await sendTariff("api/bills/tariff-check", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(entry.request) });
+    } catch { entry.check = null; }
+  }
+  showBillRates();
+}
+async function applyBillRates(check, from) {
+  try {
+    const data = await sendTariff("api/tariffs", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...check.corrected, effective_from: from }) });
+    formFilled = false;
+    renderTariffs(data);
+    billsMessage("Rates updated. Costs on this page now use them.");
+    await recheckBillRates();
+    refreshEverything();
+  } catch (err) { billsMessage(err.message, true); }
+}
+function showBillRates() {
+  const box = document.getElementById("bills-rates");
+  const shown = billRates.filter(e => e.check && (e.check.differences.length || e.check.notes.length));
+  const el = (tag, text, props = {}) => Object.assign(document.createElement(tag), { textContent: text, ...props });
+  const amount = (value, unit) => unit === "%" ? value + "%" : value + MINOR + " " + unit;
+  const seen = new Set();
+  box.replaceChildren(...shown.map(({ file, check }) => {
+    const card = el("div", "", { className: "rate-fix" });
+    card.append(el("strong", (file ? file + ": " : "") + "the bill from " + dayText(check.bill_from) +
+      " does not match the tracker's rates (" + check.tariff_name + ")."));
+    for (const d of check.differences) {
+      card.append(el("div", d.what + ": the tracker has " + amount(d.tracker, d.unit) + ", the bill says " + amount(d.bill, d.unit) + "."));
+    }
+    for (const note of check.notes) card.append(el("div", note));
+    // Offer one set of buttons per correction, however many bills show it.
+    const key = JSON.stringify([check.period_key, check.corrected]);
+    if (check.corrected && !seen.has(key)) {
+      seen.add(key);
+      const actions = el("div", "", { className: "actions" });
+      const since = check.period_from ? "since " + dayText(check.period_from) : "from the start";
+      const fix = el("button", "Correct the rates in use " + since, { type: "button", className: "primary" });
+      fix.addEventListener("click", () => applyBillRates(check, check.period_key));
+      actions.append(fix);
+      if (check.bill_from !== check.period_key) {
+        const fresh = el("button", "Start new rates on " + dayText(check.bill_from), { type: "button" });
+        fresh.addEventListener("click", () => applyBillRates(check, check.bill_from));
+        actions.append(fresh);
+      }
+      card.append(actions, el("div", "Correct them if the rates were typed in wrongly. Start new rates if the price " +
+        "really changed on that date: earlier days then keep the old rates." +
+        (check.next_change ? " Either way, the rates listed from " + dayText(check.next_change) + " are left as they are." : ""),
+        { className: "hint", style: "margin: 0;" }));
+    } else if (check.corrected) {
+      card.append(el("div", "The same correction is offered above.", { className: "hint", style: "margin: 0;" }));
+    }
+    return card;
+  }));
+  box.hidden = !shown.length;
+}
+
+async function refreshBills() {
+  if (!sectionOpen("bills-heading")) return;  // fetched when the section is opened
+  try { renderBills(await getJson("api/bills")); } catch (err) { billsMessage("Could not load bills (" + err.message + ").", true); }
+}
+billsForm?.addEventListener("submit", async event => {
+  event.preventDefault();
+  try {
+    const f = billsForm.elements;
+    const number = name => f[name].value === "" ? null : Number(f[name].value);
+    const data = await sendTariff("api/bills" + (editingBill ? "?id=" + editingBill : ""), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ first_day: f.first_day.value, last_day: f.last_day.value, import_kwh: number("import_kwh"),
+                             charge_gbp: number("charge_gbp"), export_kwh: number("export_kwh"), export_gbp: number("export_gbp") }),
+    });
+    editingBill = null;
+    billsForm.reset();
+    billsMessage("Saved.");
+    renderBills(data);
+  } catch (err) {
+    billsMessage(err.message, true);
+  }
+});
+
+// --- Extra income --------------------------------------------------------------------------
+
+const incomeForm = document.getElementById("income-form");
+const axleForm = document.getElementById("axle-form");
+let editingIncome = null;
+// Until a kind is picked, it follows the description: anything from Axle is regular.
+let kindChosen = false;
+incomeForm?.elements.regular.addEventListener("change", () => { kindChosen = true; });
+incomeForm?.elements.description.addEventListener("input", () => {
+  if (!kindChosen) incomeForm.elements.regular.value = String(/axle/i.test(incomeForm.elements.description.value));
+});
+
+function incomeMessage(text, isError = false) {
+  const el = document.getElementById("income-message");
+  el.textContent = text;
+  el.style.color = isError ? "var(--danger)" : "";
+}
+
+function renderIncome(data) {
+  const cell = (text, numeric = false) => {
+    const td = document.createElement("td");
+    td.textContent = text;
+    if (numeric) td.className = "num";
+    return td;
+  };
+  const years = Object.entries(data.by_year).map(([year, total]) => year + ": " + money(total)).join(", ");
+  document.getElementById("income-summary").textContent = data.entries.length
+    ? "Total " + money(data.total_gbp) + (years ? " (" + years + ")" : "") + ": " +
+      money(data.regular_gbp) + " regular, " + money(data.one_off_gbp) + " one-off."
+    : "Nothing recorded yet.";
+  document.getElementById("income-rows").replaceChildren(...data.entries.map(entry => {
+    const tr = document.createElement("tr");
+    const what = cell(entry.description);
+    const pending = entry.amount_gbp === null;
+    what.append(Object.assign(document.createElement("span"), { className: "tag",
+      textContent: entry.regular ? "Regular" : "One-off",
+      title: entry.regular ? "Carried forward in the return on investment projection"
+        : "Counted as saved, but not assumed to carry on" }));
+    if (entry.estimated || pending) {
+      const tag = Object.assign(document.createElement("span"), { className: "tag",
+        textContent: pending ? "Waiting for the event to finish" : "Estimate" });
+      what.append(tag);
+    }
+    if (entry.event_start) {
+      const time = iso => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      const detail = Object.assign(document.createElement("div"), { className: "hint",
+        textContent: time(entry.event_start) + " to " + time(entry.event_end) });
+      detail.style.margin = "2px 0 0";
+      what.append(detail);
+    }
+    const actions = document.createElement("td");
+    const action = (label, onClick) => {
+      const button = Object.assign(document.createElement("button"), { className: "link", type: "button", textContent: label });
+      button.style.marginRight = "12px";
+      button.addEventListener("click", onClick);
+      actions.append(button);
+    };
+    action("Edit", () => {
+      editingIncome = entry.id;
+      incomeForm.elements.day.value = entry.day;
+      incomeForm.elements.description.value = entry.description;
+      incomeForm.elements.amount.value = entry.amount_gbp ?? "";
+      incomeForm.elements.regular.value = String(entry.regular);
+      kindChosen = true;
+      document.getElementById("income-editor").open = true;
+      incomeMessage("Editing the entry for " + entry.day + ". Saving replaces it" +
+        (entry.estimated ? " and marks it as the actual amount." : "."));
+      incomeForm.scrollIntoView({ block: "nearest" });
+    });
+    action("Remove", async () => {
+      if (!confirm("Remove this entry?")) return;
+      try {
+        renderIncome(await sendTariff("api/income/" + entry.id, { method: "DELETE" }));
+        refreshPayback();
+      } catch (err) { incomeMessage(err.message, true); }
+    });
+    tr.append(cell(new Date(entry.day + "T00:00").toLocaleDateString([], { dateStyle: "medium" })), what,
+              cell(entry.kwh === null ? "" : entry.kwh.toFixed(2) + " kWh", true),
+              cell(pending ? "–" : money(entry.amount_gbp), true), actions);
+    return tr;
+  }));
+  if (document.activeElement !== axleForm.elements.rate) axleForm.elements.rate.value = data.axle.rate_p;
+  document.getElementById("axle-status").textContent = {
+    ok: "Axle sensors found in Home Assistant. Export events are recorded as they appear.",
+    unavailable: "Axle sensors exist in Home Assistant but are showing as unavailable, so no events can " +
+      "be recorded until the Axle integration is working again. Entries can still be added by hand.",
+    missing: "No Axle sensors found in Home Assistant, so events are not recorded automatically. " +
+      "Entries can still be added by hand.",
+  }[data.axle.status];
+}
+
+async function refreshIncome() {
+  if (!sectionOpen("income-heading")) return;  // fetched when the section is opened
+  try { renderIncome(await getJson("api/income")); } catch (err) { /* shown on the next refresh */ }
+}
+
+incomeForm?.addEventListener("submit", async event => {
+  event.preventDefault();
+  try {
+    const f = incomeForm.elements;
+    const data = await sendTariff("api/income" + (editingIncome ? "?id=" + editingIncome : ""), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ day: f.day.value, description: f.description.value, amount_gbp: Number(f.amount.value),
+                             regular: f.regular.value === "true" }),
+    });
+    editingIncome = null;
+    kindChosen = false;
+    f.amount.value = "";
+    incomeMessage("Saved.");
+    renderIncome(data);
+    refreshPayback();
+  } catch (err) {
+    incomeMessage(err.message, true);
+  }
+});
+
+axleForm?.addEventListener("submit", async event => {
+  event.preventDefault();
+  try {
+    renderIncome(await sendTariff("api/income/axle-rate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ p_per_kwh: Number(axleForm.elements.rate.value) }),
+    }));
+    incomeMessage("Rate saved. It applies to events from now on.");
+  } catch (err) {
+    incomeMessage(err.message, true);
+  }
+});
+
+// --- Tariff switch planner -----------------------------------------------------------------
+
+const plannerForm = document.getElementById("planner-form");
+let plannerFormFilled = false;
+function renderPlanner(data) {
+  const select = document.getElementById("planner-tariff");
+  const chosen = data.tariff?.id ?? select.value;
+  select.replaceChildren(...data.tariffs.map(t => new Option(t.name, t.id)));
+  if (data.tariffs.length) select.value = chosen;
+  select.hidden = !data.tariffs.length;
+  document.getElementById("planner-empty").hidden = data.has_data;
+  document.getElementById("planner-empty").textContent = data.tariffs.length
+    ? "No full day of readings to plan with yet." : "Add a tariff under Compare tariffs to plan a switch to it.";
+  document.getElementById("planner-body").hidden = !data.has_data;
+  if (!data.has_data) return;
+
+  const cell = (text, className) => Object.assign(document.createElement("td"), { textContent: text, className: className ?? "" });
+  const cash = v => v === null || v === undefined ? "–" : money(v);
+  const gap = row => {
+    if (row.planned_gbp === null || row.planned_own_gbp === null) return cell("–", "num");
+    const d = row.planned_gbp - row.planned_own_gbp;
+    return Math.abs(d) < 0.005 ? cell("Same", "num")
+      : cell(money(Math.abs(d)) + (d < 0 ? " cheaper" : " dearer"), "num " + (d < 0 ? "better" : "worse"));
+  };
+  const line = (label, row, bold) => {
+    const tr = document.createElement("tr");
+    tr.append(cell(label), cell(cash(row.paid_gbp), "num"), cell(cash(row.replayed_gbp), "num"),
+              cell(cash(row.moved_gbp), "num"), cell(cash(row.planned_gbp), "num"), gap(row));
+    if (bold) tr.style.fontWeight = "600";
+    return tr;
+  };
+  const monthName = key => new Date(key + "-01T00:00").toLocaleDateString([], { month: "long", year: "numeric" });
+  document.getElementById("planner-rows").replaceChildren(...data.months.map(m => {
+    const whole = new Date(m.month.slice(0, 4), Number(m.month.slice(5)), 0).getDate() === m.days;
+    return line(monthName(m.month) + (whole ? "" : " (" + m.days + " days)"), m);
+  }));
+  document.getElementById("planner-totals").replaceChildren(line("Total, " + data.days + " days", data.totals, true));
+
+  // The charging plan, in words.
+  const el = (tag, text) => Object.assign(document.createElement(tag), { textContent: text });
+  const windows = times => times.map(t => t.start + " to " + (t.end === "24:00" ? "midnight" : t.end) +
+    " (" + t.p_per_kwh + MINOR + ")").join(" and ");
+  const advice = [el("strong", "Charging plan for " + data.tariff.name)];
+  if (data.tariff.dynamic) {
+    advice.push(el("div", "Its prices change every half hour, so the cheap times move from day to day. The plan charges " +
+      "the battery and the car in each day's cheapest half hours; in practice that means following the prices " +
+      "published each afternoon for the day ahead."));
+  } else if (data.cheap_times.length) {
+    advice.push(el("div", "Charge the battery and the car from " + windows(data.cheap_times) + "." +
+      (data.own_cheap_times.length ? " At the moment they charge from " + windows(data.own_cheap_times) + "." : "")));
+  } else {
+    advice.push(el("div", "It has one price all day, so there is no cheap time to charge in: the battery would only " +
+      "store spare solar."));
+  }
+  const b = data.battery, short = data.shortfall;
+  if (!short) {
+    advice.push(el("div", "The battery's size could not be worked out from the readings. Enter it under " +
+      "\"Battery used for the plan\" below to see whether it would last between cheap times."));
+  } else {
+    const battery = "With a " + b.used_kwh + " kWh battery charging at up to " + b.used_kw + " kW";
+    const timed = data.tariff.dynamic || data.cheap_times.length > 0;
+    advice.push(el("div", short.short_days === 0
+      ? battery + ", it would " + (timed ? "last from one cheap time to the next" : "never run empty") +
+        " on every one of the " + short.days + " days."
+      : battery + ", it would " + (timed ? "run out before the next cheap time" : "be empty for part of the day") +
+        " on " + short.short_days + " of " + short.days +
+        " days (" + short.short_percent + "%), for about " + short.hours_empty_on_short_days +
+        " hours on those days. Over the period " + short.dear_kwh + " kWh would be bought " +
+        (timed ? "outside the cheap times." : "from the grid.") +
+        (short.worst_month ? " The hardest month is " + monthName(short.worst_month) + " (" +
+          short.worst_month_short_days + " days short)." : "")));
+    if (data.own_shortfall) {
+      advice.push(el("div", "For comparison, the same plan on your current tariff runs out on " +
+        data.own_shortfall.short_days + " of " + data.own_shortfall.days + " days."));
+    }
+  }
+  document.getElementById("planner-advice").replaceChildren(...advice);
+
+  const t = data.totals;
+  const check = t.planned_own_gbp !== null && t.paid_gbp !== null
+    ? " Run on your own tariff, the same model comes to " + money(t.planned_own_gbp) + " against the " +
+      money(t.paid_gbp) + " you actually paid. A model never matches real life exactly, so the last column compares " +
+      "the model with itself, which is the fair comparison: read it as the likely difference, not an exact bill." : "";
+  document.getElementById("planner-hint").textContent =
+    dayText(data.first_day) + " to " + dayText(data.last_day) + ", net of export income and including the standing " +
+    "charge. \"As it happened\" replays your usage unchanged. \"Charging moved\" shifts battery and car charging to " +
+    "the cheapest half hours without checking the battery would last: a best case. \"Planned charging\" runs the " +
+    "household again on this tariff: the battery and car charge in its cheap times and the battery then runs the " +
+    "house until it is empty." + check + " The plan does not hold back charging before a sunny day, so it exports a " +
+    "little more than a smart system would.";
+
+  if (!plannerFormFilled) {
+    plannerFormFilled = true;
+    plannerForm.elements.battery_kwh.value = data.settings.battery_kwh ?? "";
+    plannerForm.elements.charge_kw.value = data.settings.charge_kw ?? "";
+  }
+  plannerForm.elements.battery_kwh.placeholder = b.estimated_kwh ? "Worked out: " + b.estimated_kwh : "Not known";
+  plannerForm.elements.charge_kw.placeholder = b.estimated_kw ? "Worked out: " + b.estimated_kw : "Not known";
+}
+async function refreshPlanner() {
+  if (!sectionOpen("planner-heading")) return;  // fetched when the section is opened
+  try {
+    const chosen = document.getElementById("planner-tariff").value;
+    renderPlanner(await getJson("api/planner" + (chosen ? "?tariff=" + chosen : "")));
+  } catch (err) {
+    document.getElementById("planner-empty").hidden = false;
+    document.getElementById("planner-empty").textContent = "Could not work out the plan (" + err.message + ").";
+  }
+}
+document.getElementById("planner-tariff")?.addEventListener("change", refreshPlanner);
+plannerForm?.addEventListener("submit", async event => {
+  event.preventDefault();
+  const message = document.getElementById("planner-message");
+  try {
+    const number = name => plannerForm.elements[name].value === "" ? null : Number(plannerForm.elements[name].value);
+    await sendTariff("api/planner/settings", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ battery_kwh: number("battery_kwh"), charge_kw: number("charge_kw") }) });
+    message.textContent = "Saved.";
+    refreshPlanner();
+  } catch (err) { message.textContent = err.message; }
+});
+
+// --- Running costs by device ---------------------------------------------------------------
+
+const deviceYearsOpen = new Set([String(new Date().getFullYear())]);
+let lastDeviceCosts = null;
+function renderDeviceCosts(data) {
+  lastDeviceCosts = data;
+  const section = document.getElementById("device-costs-section");
+  const any = data.has_data && (data.heat_pump || data.ev_charger);
+  section.hidden = !any;
+  if (!any) return;
+  const parts = [
+    ["rest", "House load"],
+    ...(data.ev_charger ? [["ev_charger", "EV charger"]] : []),
+    ...(data.heat_pump ? [["heat_pump", data.smart_load_label]] : []),
+    ...(data.battery_export ? [["battery_export", "Battery export"]] : []),
+  ];
+  const th = (text, className) => Object.assign(document.createElement("th"), { textContent: text, className: className ?? "" });
+  const head = document.createElement("tr");
+  head.append(th("Period"), ...parts.flatMap(([, label]) => [th(label, "num"), th("Cost", "num")]), th("Import cost", "num"));
+  document.getElementById("device-costs-head").replaceChildren(head);
+  const cell = (text, className) => Object.assign(document.createElement("td"), { textContent: text, className: className ?? "" });
+  const figures = row => [
+    ...parts.flatMap(([key]) => [cell((row[key + "_kwh"] ?? 0).toFixed(1) + " kWh", "num"),
+                                 cell(money(row[key + "_gbp"] ?? 0), "num")]),
+    cell(money(row.import_gbp), "num")];
+  const rows = [];
+  if (data.today) {
+    const tr = document.createElement("tr");
+    tr.append(cell("Today so far"), ...figures(data.today));
+    rows.push(tr);
+  }
+  for (const year of [...data.years].reverse()) {
+    const open = deviceYearsOpen.has(year.year);
+    const tr = document.createElement("tr");
+    tr.className = "year-row";
+    const label = cell((open ? "\u25BE " : "\u25B8 ") + year.year);
+    label.append(Object.assign(document.createElement("span"), { className: "detail", textContent: year.days + " days" }));
+    tr.append(label, ...figures(year));
+    tr.tabIndex = 0;
+    tr.setAttribute("role", "button");
+    tr.setAttribute("aria-expanded", String(open));
+    const toggle = () => {
+      if (open) deviceYearsOpen.delete(year.year); else deviceYearsOpen.add(year.year);
+      renderDeviceCosts(lastDeviceCosts);
+    };
+    tr.addEventListener("click", toggle);
+    tr.addEventListener("keydown", event => {
+      if (event.key === "Enter" || event.key === " ") { event.preventDefault(); toggle(); }
+    });
+    rows.push(tr);
+    if (!open) continue;
+    for (const month of data.months.filter(m => m.month.startsWith(year.year)).reverse()) {
+      const line = document.createElement("tr");
+      const name = new Date(month.month + "-01T00:00").toLocaleDateString([], { month: "long" });
+      line.append(cell(name, "sub"), ...figures(month));
+      rows.push(line);
+    }
+  }
+  document.getElementById("device-costs-rows").replaceChildren(...rows);
+  document.getElementById("device-costs-hint").textContent =
+    "Each device pays for the electricity that supplied it, half hour by half hour: grid power at that half hour's " +
+    "price (with VAT) and battery power at what charging the battery cost. The standing charge and export income are " +
+    "left out. The devices add up to the import cost give or take what was still in the battery. Counted from " +
+    dayText(data.from) + ". Click a year to show its months.";
+}
+async function refreshDeviceCosts() {
+  if (!sectionOpen("device-costs-heading")) return;  // fetched when the section is opened
+  try { renderDeviceCosts(await getJson("api/devices")); }
+  catch (err) { document.getElementById("device-costs-hint").textContent = "Could not work out device costs (" + err.message + ")."; }
+}
+
+// --- Averages per day ------------------------------------------------------------------------------
+
+let lastAverages = null;
+function renderAverages(data) {
+  lastAverages = data;
+  const tiles = document.getElementById("averages-tiles");
+  if (!data.has_data) {
+    tiles.replaceChildren();
+    document.getElementById("averages-rows").replaceChildren();
+    document.getElementById("averages-hint").textContent = "Averages appear after the first full day of readings.";
+    return;
+  }
+  const kwh = v => v == null ? "–" : v.toFixed(1) + " kWh";
+  const cash = v => v == null ? "–" : money(v);
+  const recent = data.last_30, before = data.previous_30, lastYear = data.year_ago_30;
+  // Change against the 30 days before, and the same time last year where there is one.
+  // Energy changes as a percentage; money as an amount, as a percentage of a small or
+  // negative cost means little.
+  const change = (key, now) => {
+    const parts = [];
+    for (const [other, name] of [[before, "the 30 days before"], [lastYear, "this time last year"]]) {
+      const was = other?.[key];
+      if (now == null || was == null) continue;
+      if (key === "net_gbp") {
+        const diff = now - was;
+        parts.push(Math.abs(diff) < 0.005 ? "Same as " + name
+          : money(Math.abs(diff)) + (diff > 0 ? " more" : " less") + " a day than " + name);
+        continue;
+      }
+      if (Math.abs(was) < 0.05) continue;
+      const pct = Math.round((now / was - 1) * 100);
+      parts.push((pct === 0 ? "Same as " : Math.abs(pct) + "% " + (pct > 0 ? "more" : "less") + " than ") + name);
+    }
+    return parts.join("; ");
+  };
+  const tile = (label, value, unit, note, colour) => {
+    const el = Object.assign(document.createElement("div"), { className: "tile tinted" });
+    el.style.setProperty("--c", colour);
+    const shown = Object.assign(document.createElement("div"), { className: "value", textContent: value });
+    if (unit) shown.append(Object.assign(document.createElement("small"), { textContent: unit }));
+    el.append(Object.assign(document.createElement("div"), { className: "label", textContent: label }), shown,
+              Object.assign(document.createElement("div"), { className: "note", textContent: note }));
+    return el;
+  };
+  const label = data.smart_load_label || "Heat pump";
+  const list = [
+    ["used", "Used a day", kwh, "var(--load)"],
+    ["house_kwh", "House load a day", kwh, "var(--house)"],
+    ...(data.ev_charger ? [["ev_kwh", "EV charger a day", kwh, "var(--ev)"]] : []),
+    ...(data.heat_pump ? [["heat_pump_kwh", label + " a day", kwh, "var(--heatpump)"]] : []),
+    ["solar", "Solar a day", kwh, "var(--solar)"],
+    ["net_gbp", "Net cost a day", cash, "var(--accent)"],
+  ];
+  tiles.replaceChildren(...(recent ? list.filter(([key]) => recent[key] != null).map(([key, name, show, colour]) =>
+    key === "net_gbp"
+      ? tile(name, show(recent[key]), "", change(key, recent[key]) || "Last 30 days", colour)
+      : tile(name, recent[key].toFixed(1), "kWh", change(key, recent[key]) || "Last 30 days", colour)) : []));
+
+  const notes = [];
+  if (recent?.self_sufficiency_percent != null) {
+    notes.push("Over the last 30 days " + recent.self_sufficiency_percent + "% of the electricity used did not have to be bought.");
+  }
+  if (data.weekday?.used != null && data.weekend?.used != null) {
+    notes.push("Over the last 90 days you used " + kwh(data.weekday.used) + " on an average weekday and " +
+               kwh(data.weekend.used) + " at weekends.");
+  }
+  const dayName = d => new Date(d + "T00:00").toLocaleDateString([], { weekday: "short", day: "numeric", month: "short", year: "numeric" });
+  if (data.busiest_day && data.quietest_day) {
+    notes.push("In the last year the busiest day was " + dayName(data.busiest_day.day) + " (" + kwh(data.busiest_day.used) +
+               ") and the quietest " + dayName(data.quietest_day.day) + " (" + kwh(data.quietest_day.used) + ").");
+  }
+  document.getElementById("averages-highlights").textContent = notes.join(" ");
+
+  // The table: every figure is a day's average for the month or year.
+  const by = document.getElementById("averages-by").value;
+  const rows = [...data[by]].reverse();
+  const hasTemp = rows.some(r => r.temperature != null);
+  const columns = [
+    ["used", "Used", kwh],
+    ["house_kwh", "House load", kwh],
+    ...(data.ev_charger ? [["ev_kwh", "EV charger", kwh]] : []),
+    ...(data.heat_pump ? [["heat_pump_kwh", label, kwh]] : []),
+    ["solar", "Solar", kwh],
+    ["imported", "Imported", kwh],
+    ["exported", "Exported", kwh],
+    ["self_sufficiency_percent", "Self-sufficient", v => v == null ? "–" : v + "%"],
+    ["net_gbp", "Net cost", cash],
+    ...(hasTemp ? [["temperature", "Outside", v => v == null ? "–" : v.toFixed(1) + " °C"]] : []),
+  ];
+  const th = (text, cls) => Object.assign(document.createElement("th"), { textContent: text, className: cls ?? "" });
+  const head = document.createElement("tr");
+  head.append(th(by === "months" ? "Month" : "Year"), ...columns.map(([, name]) => th(name, "num")));
+  document.getElementById("averages-head").replaceChildren(head);
+  const periodName = r => by === "months"
+    ? new Date(r.name + "-01T00:00").toLocaleDateString([], { month: "short", year: "numeric" })
+    : r.name;
+  document.getElementById("averages-rows").replaceChildren(...rows.map(r => {
+    const tr = document.createElement("tr");
+    const first = Object.assign(document.createElement("td"), { textContent: periodName(r) + (r.complete ? "" : " *") });
+    if (!r.complete) first.title = r.days + " days counted";
+    tr.append(first, ...columns.map(([key, , show]) =>
+      Object.assign(document.createElement("td"), { textContent: show(r[key]), className: "num" })));
+    return tr;
+  }));
+  document.getElementById("averages-hint").textContent =
+    "Every figure is an average per day, so months and years of any length compare fairly. * means only part of " +
+    "the period was recorded. Self-sufficient is the share of the electricity used that did not have to be bought. " +
+    "Net cost is import less export credit, with the standing charge. Device figures start when every device " +
+    "meter was being read; earlier periods show –.";
+}
+
+async function refreshAverages() {
+  if (!sectionOpen("averages-heading")) return;  // fetched when the section is opened
+  try { renderAverages(await getJson("api/averages")); }
+  catch (err) { document.getElementById("averages-hint").textContent = "Could not work out the averages (" + err.message + ")."; }
+}
+document.getElementById("averages-by")?.addEventListener("change", () => lastAverages && renderAverages(lastAverages));
+
+// --- Heat pump and the weather -------------------------------------------------------------------
+
+function renderHeating(data) {
+  const section = document.getElementById("heating-section");
+  section.hidden = !data.has_heat_pump;
+  if (!data.has_heat_pump) return;
+  fillHeatingForm(data.design);
+  const label = data.smart_load_label || "Heat pump";
+  const source = data.entity
+    ? "Outdoor temperature from " + data.entity + ". To use a different sensor, set outdoor_temperature_entity in the add-on's options."
+    : data.has_temperature ? "Outdoor temperatures from earlier readings; none is being read right now. Name a sensor in the add-on's outdoor_temperature_entity option if the weather entity has gone."
+    : "No outdoor temperature found. Home Assistant normally has a weather entity for your home; or name a temperature sensor in the add-on's outdoor_temperature_entity option.";
+  document.getElementById("heating-hint").textContent = source;
+  const empty = document.getElementById("heating-empty");
+  const chart = document.getElementById("heating-chart");
+  const tiles = document.getElementById("heating-tiles");
+  document.getElementById("heating-table-box").hidden = !data.has_data;
+  chart.hidden = !data.has_data;
+  empty.hidden = data.has_data;
+  if (!data.has_data) {
+    tiles.replaceChildren();
+    document.getElementById("heating-chart-hint").textContent = "";
+    empty.textContent = data.has_temperature
+      ? "Outdoor temperatures are being collected. The comparison appears after the first full day."
+      : "Waiting for outdoor temperatures. " + source;
+    return;
+  }
+  const tile = (name, value, note) => {
+    const el = document.createElement("div");
+    el.className = "tile";
+    for (const [cls, text] of [["label", name], ["value", value], ["note", note ?? ""]]) {
+      const part = Object.assign(document.createElement("div"), { className: cls, textContent: text });
+      // A unit on the end is shown small, as on the other tiles, so the figure fits.
+      const unit = cls === "value" && /^(.*) (kWh|°C)$/.exec(text);
+      if (unit) {
+        part.textContent = unit[1];
+        part.append(Object.assign(document.createElement("small"), { textContent: unit[2] }));
+      }
+      el.append(part);
+    }
+    return el;
+  };
+  const seasons = data.seasons ?? [];
+  const latest = seasons.at(-1), before = seasons.at(-2);
+  const rate = s => s?.kwh_per_degree_day == null ? "–" : s.kwh_per_degree_day.toFixed(2) + " kWh";
+  let change = "";
+  if (latest?.kwh_per_degree_day != null && before?.kwh_per_degree_day != null) {
+    const pct = Math.round(100 * (latest.kwh_per_degree_day / before.kwh_per_degree_day - 1));
+    change = pct === 0 ? "Same as " + before.name : Math.abs(pct) + "% " + (pct < 0 ? "less" : "more") + " than " + before.name;
+  }
+  tiles.replaceChildren(
+    tile("Extra use per °C colder", data.per_degree_colder_kwh == null ? "–" : data.per_degree_colder_kwh.toFixed(1) + " kWh",
+         "A day, on days below " + data.base_c + " °C"),
+    tile("Use on warm days", data.warm_day_kwh == null ? "–" : data.warm_day_kwh.toFixed(1) + " kWh",
+         data.warm_day_kwh == null ? "Not enough warm days yet" : "A day: mostly hot water"),
+    tile(latest ? "Per degree day, " + latest.name : "Per degree day", rate(latest),
+         change || (latest ? latest.degree_days + " degree days so far" : "Needs a colder spell")),
+    tile("Days compared", String(data.days), "With both readings"),
+    ...scopTiles(data, tile));
+  renderEfficiency(data.efficiency, tile, data.design);
+
+  // Scatter: each day's use against its average temperature, with the fitted line.
+  const NS = "http://www.w3.org/2000/svg";
+  const add = (tag, attrs, text) => {
+    const node = document.createElementNS(NS, tag);
+    for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v);
+    if (text != null) node.textContent = text;
+    chart.append(node);
+    return node;
+  };
+  chart.replaceChildren();
+  const points = data.points.slice(-365);
+  const left = 56, right = 884, top = 30, bottom = 280;
+  const temps = points.map(p => p.temperature);
+  const tMin = Math.floor(Math.min(...temps, 0) / 5) * 5, tMax = Math.ceil(Math.max(...temps, 20) / 5) * 5;
+  const lineAt = t => data.line ? Math.max(0, data.line.slope * t + data.line.intercept) : 0;
+  const kMax = Math.max(5, Math.ceil(Math.max(...points.map(p => p.kwh), lineAt(Math.min(...temps))) / 5) * 5);
+  const x = t => left + (t - tMin) / (tMax - tMin) * (right - left);
+  const y = k => bottom - k / kMax * (bottom - top);
+  for (let k = 0; k <= kMax; k += kMax / 5) {
+    add("line", { x1: left, x2: right, y1: y(k), y2: y(k), stroke: "var(--grid-line, var(--border))", "stroke-width": 1 });
+    add("text", { x: left - 8, y: y(k) + 4, "text-anchor": "end", "font-size": 12, fill: "var(--muted)" }, Math.round(k) + "");
+  }
+  for (let t = tMin; t <= tMax; t += 5) {
+    add("text", { x: x(t), y: bottom + 18, "text-anchor": "middle", "font-size": 12, fill: "var(--muted)" }, t + " °C");
+  }
+  add("text", { x: 8, y: 12, "font-size": 12, fill: "var(--muted)" }, "kWh a day");
+  add("line", { x1: x(data.base_c), x2: x(data.base_c), y1: top, y2: bottom, stroke: "var(--muted)",
+                "stroke-dasharray": "4 4", "stroke-width": 1 });
+  add("text", { x: x(data.base_c) + 6, y: top + 12, "font-size": 11, fill: "var(--muted)" }, "Heating needed below " + data.base_c + " °C");
+  const newest = points.length ? points.at(-1).day : null;
+  for (const p of points) {
+    const recent = newest && (new Date(newest) - new Date(p.day)) < 30 * 86400000;
+    const dot = add("circle", { cx: x(p.temperature), cy: y(p.kwh), r: recent ? 4 : 3,
+                                fill: "var(--heatpump)", "fill-opacity": recent ? 0.95 : 0.45 });
+    const title = document.createElementNS(NS, "title");
+    title.textContent = new Date(p.day + "T00:00").toLocaleDateString([], { weekday: "short", day: "numeric", month: "short", year: "numeric" })
+      + "\n" + p.temperature.toFixed(1) + " °C outside\n" + label + ": " + p.kwh.toFixed(1) + " kWh";
+    dot.append(title);
+  }
+  if (data.line) {
+    const from = Math.max(tMin, Math.min(...temps)), to = Math.min(data.base_c, tMax);
+    add("line", { x1: x(from), y1: y(lineAt(from)), x2: x(to), y2: y(lineAt(to)), stroke: "var(--accent)", "stroke-width": 2.5 });
+  }
+  document.getElementById("heating-chart-hint").textContent =
+    "Each dot is a day (the last 30 days darker); hover for details. The line is the trend on days needing heating.";
+
+  const rows = document.getElementById("heating-rows");
+  const cell = (text, cls) => Object.assign(document.createElement("td"), { textContent: text, className: cls ?? "" });
+  const scopBy = data.scop ? new Map([
+    ...data.scop.seasons.map(x => ["season:" + x.name, x]),
+    ...data.scop.months.map(x => ["month:" + x.name, x])]) : null;
+  document.getElementById("heating-scop-head").hidden = !scopBy;
+  const line = (name, r, cls, key) => {
+    const tr = document.createElement("tr");
+    if (cls) tr.className = cls;
+    tr.append(cell(name), cell(String(r.days), "num"), cell(r.mean_temperature.toFixed(1) + " °C", "num"),
+              cell(r.kwh.toFixed(0) + " kWh", "num"), cell(String(r.degree_days), "num"),
+              cell(r.kwh_per_degree_day == null ? "" : r.kwh_per_degree_day.toFixed(2), "num"));
+    if (scopBy) {
+      const est = scopBy.get(key)?.scop;
+      tr.append(cell(est == null ? "" : est.toFixed(1), "num"));
+    }
+    return tr;
+  };
+  const monthName = key => new Date(key + "-01T00:00").toLocaleDateString([], { month: "long", year: "numeric" });
+  rows.replaceChildren(
+    ...[...seasons].reverse().map(s => line("Winter " + s.name, s, "year-row", "season:" + s.name)),
+    ...[...data.months].reverse().map(m => line(monthName(m.name), m, "", "month:" + m.name)));
+}
+
+// The estimated SCOP from the heat pump's modes: tiles, and a table by year and month.
+function renderEfficiency(eff, tile, design) {
+  const box = document.getElementById("efficiency-box");
+  box.hidden = !eff?.has_data;
+  if (!eff?.has_data) return;
+  const fixed = (v, n = 1) => v == null ? "–" : v.toFixed(n);
+  const month = eff.this_month, year = eff.this_year;
+  const monthName = key => new Date(key + "-01T00:00").toLocaleDateString([], { month: "long", year: "numeric" });
+  const parts = p => p ? "Heating " + fixed(p.heating_scop) + ", hot water " + fixed(p.hot_water_cop) : "";
+  document.getElementById("efficiency-tiles").replaceChildren(
+    tile(month ? "SCOP, " + monthName(month.name) : "SCOP this month", fixed(month?.scop, 2),
+         month ? parts(month) : "No whole days yet this month"),
+    tile("COP yesterday", fixed(eff.yesterday?.scop, 2),
+         eff.yesterday ? parts(eff.yesterday) : "No figure for yesterday"),
+    tile(year ? "SCOP, " + year.name + " so far" : "SCOP this year", fixed(year?.scop, 2),
+         year ? year.heat_kwh.toLocaleString() + " kWh of heat from " + year.kwh.toFixed(0) + " kWh" : ""),
+    tile("Hot water COP", fixed(eff.hot_water_cop, 2),
+         eff.hot_water_cop_source === "measured" ? "Measured from " + eff.reheats + " reheats"
+         : eff.hot_water_cop_source === "out of range" ? "Typical figure: the measured " + eff.hot_water_cop_measured + " looks wrong (check the cylinder size)"
+         : "Typical figure, until reheats are measured"),
+    tile("Measured days", String(year?.measured_days ?? 0),
+         eff.modes_from ? "Split by the heat pump's modes since " + new Date(eff.modes_from + "T00:00").toLocaleDateString([], { day: "numeric", month: "short" }) : ""));
+  const cell = (text, cls) => Object.assign(document.createElement("td"), { textContent: text, className: cls ?? "" });
+  const kwh = v => v.toFixed(v < 100 ? 1 : 0) + " kWh";
+  const line = (name, r, cls) => {
+    const tr = document.createElement("tr");
+    if (cls) tr.className = cls;
+    tr.append(cell(name), cell(r.measured_days ? r.days + " (" + r.measured_days + " measured)" : String(r.days), "num"),
+              cell(kwh(r.kwh), "num"), cell(kwh(r.hot_water_kwh), "num"), cell(kwh(r.heating_kwh), "num"),
+              cell(r.other_kwh ? kwh(r.other_kwh) : "", "num"), cell(fixed(r.hot_water_cop, 2), "num"),
+              cell(fixed(r.heating_scop, 2), "num"), cell(fixed(r.scop, 2), "num"));
+    return tr;
+  };
+  document.getElementById("efficiency-rows").replaceChildren(
+    ...[...eff.years].reverse().map(y => line(y.name, y, "year-row")),
+    ...[...eff.months].reverse().map(m => line(monthName(m.name), m)));
+  const notes = [
+    "An estimate: there is no heat meter. On measured days the heat pump's own modes split its electricity "
+      + "exactly into hot water, heating and standby; earlier days are split from the total.",
+    eff.litres
+      ? "Hot water heat is the cylinder's temperature rise × " + eff.litres + " litres, so it errs low (water drawn off during a reheat goes uncounted)."
+      : "Enter the cylinder's size below to measure the hot water heat; until then typical figures are used.",
+    "Heating heat is modelled from the flow and outdoor temperatures, at " + Math.round(eff.eta * 100) + "% of the ideal efficiency"
+      + (eff.eta_source === "measured" ? " (calibrated on the hot water reheats)."
+         : eff.eta_source === "out of range" ? " (a typical figure: the reheats gave " + Math.round(eff.eta_measured * 100) + "%, which is not believable)."
+         : " (a typical figure, until there are enough reheats to calibrate it)."),
+    "Flow temperature curve " + (eff.curve.source === "assumed" ? "(typical)" : "(" + eff.curve.source + ")") + ": "
+      + eff.curve.at_minus_3 + " °C at −3 °C outside, " + eff.curve.at_7 + " °C at 7 °C.",
+  ];
+  if (design?.design_scop) notes.push("Design SCOP: " + design.design_scop.toFixed(2) + ".");
+  document.getElementById("efficiency-hint").textContent = notes.join(" ");
+}
+
+// The estimated SCOP: a tile, and how it compares with what the survey expected.
+function scopTiles(data, tile) {
+  const est = data.scop;
+  if (!est) return [];
+  const design = data.design ?? {};
+  const latest = [est.last_30_days, est.overall].find(x => x?.scop != null);
+  const notes = [];
+  if (design.design_scop) notes.push("Design: " + design.design_scop.toFixed(2));
+  if (latest?.name) notes.push(latest.name.toLowerCase());
+  const winter = [...est.seasons].reverse().find(s => s.scop != null);
+  return [
+    tile("Survey SCOP (heating)", latest ? latest.scop.toFixed(1) : "–",
+         latest ? notes.join(", ") : "Needs more days that need heating"),
+    ...(winter ? [tile("Survey SCOP, winter " + winter.name, winter.scop.toFixed(1),
+                       winter.heat_kwh.toLocaleString() + " kWh of heat from " + winter.heating_kwh.toFixed(0) + " kWh")] : []),
+    ...(est.expected_heat_kwh ? [tile("Yearly heat need (survey)", est.expected_heat_kwh.toLocaleString() + " kWh",
+         est.expected_heating_kwh ? "About " + est.expected_heating_kwh.toLocaleString() + " kWh of electricity at the design SCOP" : "From its degree days")] : []),
+  ];
+}
+
+// The heat loss survey form.
+const heatingForm = document.getElementById("heating-form");
+let heatingFormFilled = false;
+function fillHeatingForm(design) {
+  if (heatingFormFilled) return;
+  heatingFormFilled = true;
+  if (!design) return;
+  for (const name of ["cylinder_litres", "heat_loss_kw", "outdoor_c", "indoor_c", "degree_days", "design_scop", "base_c"]) {
+    if (design[name] != null) heatingForm.elements[name].value = design[name];
+  }
+}
+function heatingMessage(text, isError = false) {
+  const el = document.getElementById("heating-message");
+  el.textContent = text;
+  el.style.color = isError ? "var(--danger)" : "";
+}
+heatingForm?.addEventListener("submit", async event => {
+  event.preventDefault();
+  const f = heatingForm.elements;
+  const number = name => f[name].value === "" ? null : Number(f[name].value);
+  try {
+    const data = await sendTariff("api/heating/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cylinder_litres: number("cylinder_litres"),
+                             heat_loss_kw: number("heat_loss_kw"), outdoor_c: number("outdoor_c") ?? -3,
+                             indoor_c: number("indoor_c") ?? 21, base_c: number("base_c") ?? 15.5,
+                             degree_days: number("degree_days"), design_scop: number("design_scop") }),
+    });
+    heatingMessage("Saved.");
+    renderHeating(data);
+  } catch (err) { heatingMessage(err.message, true); }
+});
+document.getElementById("heating-clear")?.addEventListener("click", async () => {
+  try {
+    const data = await sendTariff("api/heating/settings", { method: "DELETE" });
+    heatingForm.reset();
+    heatingMessage("Cleared.");
+    renderHeating(data);
+  } catch (err) { heatingMessage(err.message, true); }
+});
+
+async function refreshHeating() {
+  if (!sectionOpen("heating-heading")) return;  // fetched when the section is opened
+  try { renderHeating(await getJson("api/heating")); }
+  catch (err) {
+    // Show the section, so the problem can be seen rather than the section going missing.
+    document.getElementById("heating-section").hidden = false;
+    document.getElementById("heating-hint").textContent = "Could not compare with the weather (" + err.message + ").";
+  }
+}
+
+// --- Payback -------------------------------------------------------------------------------
+
+const roiForm = document.getElementById("roi-form");
+const roiCosts = document.getElementById("roi-costs");
+const longDate = iso => new Date(iso + "T00:00").toLocaleDateString([], { month: "short", year: "numeric" });
+// Large sums read better in whole pounds: £12,400.
+const pounds = value => (value < 0 ? "-" : "") + CUR + Math.round(Math.abs(value)).toLocaleString();
+
+function roiMessage(text, isError = false) {
+  const el = document.getElementById("roi-message");
+  el.textContent = text;
+  el.className = isError ? "error" : "";
+}
+
+// One line of the system's cost: when, what, how much. Later additions get their own line.
+function addCost(date = "", description = "", amount = "") {
+  if (roiCosts.children.length >= 20) return;
+  const row = document.createElement("div");
+  row.className = "window";
+  const field = (text, attrs) => {
+    const label = document.createElement("label");
+    const input = Object.assign(document.createElement("input"), attrs);
+    label.append(text, input);
+    return label;
+  };
+  const remove = Object.assign(document.createElement("button"), { type: "button", textContent: "Remove" });
+  remove.addEventListener("click", () => row.remove());
+  const what = field("For ", { type: "text", maxLength: 80, placeholder: "Solar and battery", value: description });
+  what.className = "grow";
+  row.append(field("Paid on ", { type: "date", required: true, value: date }), what,
+             field("Amount (" + CUR + ") ", { type: "number", min: "0.01", step: "0.01", required: true, value: amount }),
+             remove);
+  roiCosts.append(row);
+}
+document.getElementById("roi-add-cost")?.addEventListener("click", () => addCost());
+
+let roiFormFilled = false;
+function fillRoiForm(data) {
+  const f = roiForm.elements;
+  const chosen = data.settings?.baseline ?? f.baseline.value ?? "own";
+  f.baseline.replaceChildren(...data.baselines.map(b => new Option(b.name, b.id)));
+  f.baseline.value = data.baselines.some(b => b.id === chosen) ? chosen : "own";
+  const second = data.settings?.second_baseline ?? f.second_baseline.value ?? "";
+  f.second_baseline.replaceChildren(new Option("Nothing", ""),
+    ...data.baselines.filter(b => b.id !== "own").map(b => new Option(b.name, b.id)));
+  f.second_baseline.value = data.baselines.some(b => b.id === second) ? second : "";
+  if (roiFormFilled) return;  // don't overwrite what is being typed
+  roiFormFilled = true;
+  if (data.settings) {
+    f.install_date.value = data.settings.install_date;
+    f.panel_ageing.value = data.settings.panel_ageing_percent || "";
+    f.battery_ageing.value = data.settings.battery_ageing_percent || "";
+    f.price_change.value = data.settings.price_change_percent || "";
+    f.project_extra.checked = data.settings.project_extra_income ?? true;
+    f.regular_minimum.value = data.settings.regular_income_minimum_gbp || "";
+    f.horizon_years.value = data.settings.horizon_years ?? 20;
+    roiCosts.replaceChildren();
+    for (const c of data.settings.costs) addCost(c.date, c.description, c.amount);
+  }
+  if (!roiCosts.children.length) addCost();
+}
+
+function drawPayback(p, totalCost, billed, second) {
+  const svg = document.getElementById("roi-chart");
+  const NS = "http://www.w3.org/2000/svg";
+  const W = 900, H = 300, L = 58, R = 14, T = 12, B = 26;
+  svg.replaceChildren();
+  const time = d => new Date(d + "T00:00").getTime();
+  const actual = p.series.map(([d, v]) => [time(d), v]);
+  const on = key => isShown("payback", key);
+  const projected = on("projected") ? p.projection.map(([d, v]) => [time(d), v]) : [];
+  const adjusted = on("adjusted") ? (p.adjusted?.projection ?? []).map(([d, v]) => [time(d), v]) : [];
+  const fromBills = billed && on("bills") ? billed.series.map(([d, v]) => [time(d), v]) : [];
+  const billsAhead = billed && on("bills-projected") ? (billed.projection ?? []).map(([d, v]) => [time(d), v]) : [];
+  const versus = second && on("second") ? second.series.map(([d, v]) => [time(d), v]) : [];
+  const versusAhead = second && on("second-projected") ? second.projection.map(([d, v]) => [time(d), v]) : [];
+  const all = [...actual, ...projected, ...fromBills, ...billsAhead, ...versus, ...versusAhead];
+  const latest = Math.max(...[...all, ...adjusted].map(a => a[0]));
+  const start = all[0][0];
+  // Leave room to the right of today even when no break-even date can be worked out.
+  const end = Math.max(latest, start + 30 * 86400000);
+  const top = Math.max(totalCost, ...all.map(a => a[1]), ...adjusted.map(a => a[1]), 1) * 1.08;
+  const bottom = Math.min(0, ...all.map(a => a[1]));
+  const x = t => L + (t - start) / (end - start) * (W - L - R);
+  const y = v => T + (top - v) / (top - bottom) * (H - T - B);
+  const add = (tag, attrs, text) => {
+    const node = document.createElementNS(NS, tag);
+    for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v);
+    if (text !== undefined) node.textContent = text;
+    svg.append(node);
+    return node;
+  };
+  // Round the gridline spacing to 1, 2 or 5 times a power of ten.
+  const raw = (top - bottom) / 5, power = 10 ** Math.floor(Math.log10(raw));
+  const step = [1, 2, 5, 10].map(m => m * power).find(s => s >= raw);
+  for (let v = Math.ceil(bottom / step) * step; v <= top; v += step) {
+    add("line", { x1: L, x2: W - R, y1: y(v), y2: y(v), class: v === 0 ? "zero" : "gridline" });
+    add("text", { x: L - 8, y: y(v) + 4, "text-anchor": "end", class: "axis" }, CUR + v.toLocaleString());
+  }
+  // A label at each 1 January, thinned so they never crowd.
+  const firstYear = new Date(start).getFullYear() + 1, lastYear = new Date(end).getFullYear();
+  const every = Math.max(1, Math.ceil((lastYear - firstYear + 1) / 10));
+  for (let year = firstYear; year <= lastYear; year += every) {
+    const t = new Date(year, 0, 1).getTime();
+    add("line", { x1: x(t), x2: x(t), y1: T, y2: H - B, class: "gridline" });
+    add("text", { x: x(t), y: H - 8, "text-anchor": "middle", class: "axis" }, year);
+  }
+  // Notes: a marker on the top edge, with the note as its tooltip.
+  for (const note of pinned) {
+    const t = time(note.day);
+    if (t < start || t > end) continue;
+    add("line", { x1: x(t), x2: x(t), y1: T, y2: H - B, stroke: "var(--warn)", "stroke-dasharray": "2 4", "stroke-width": 1 });
+    const marker = add("path", { d: `M${x(t) - 5},${T}h10l-5,8z`, fill: "var(--warn)", style: "cursor: help;" });
+    const title = document.createElementNS(NS, "title");
+    title.textContent = dayText(note.day) + ": " + note.text;
+    marker.append(title);
+  }
+  const path = pts => pts.map(([t, v], i) => (i ? "L" : "M") + x(t).toFixed(1) + "," + y(v).toFixed(1)).join("");
+  // Whatever lies above the cost line is profit: shaded, by clipping the area under the
+  // savings line to the part of the chart above the cost.
+  const line = [...(on("saved") ? actual : []), ...projected];
+  if (totalCost > 0 && line.length > 1 && line[line.length - 1][1] > totalCost) {
+    const clip = add("clipPath", { id: "roi-profit" });
+    clip.append(Object.assign(document.createElementNS(NS, "rect")));
+    for (const [k, v] of Object.entries({ x: L, y: T, width: W - L - R, height: Math.max(0, y(totalCost) - T) })) {
+      clip.firstChild.setAttribute(k, v);
+    }
+    add("path", { d: path(line) + `L${x(line[line.length - 1][0]).toFixed(1)},${y(totalCost)}L${x(line[0][0]).toFixed(1)},${y(totalCost)}Z`,
+                  fill: "var(--good)", "fill-opacity": 0.16, "clip-path": "url(#roi-profit)" });
+    const reachedAt = p.break_even ? x(time(p.break_even)) : L;
+    if (W - R - reachedAt > 70) {
+      add("text", { x: W - R - 6, y: y(totalCost) - 8, "text-anchor": "end", class: "axis",
+                    style: "fill: var(--good); font-weight: 600;" }, "Profit");
+    }
+  }
+  if (totalCost > 0 && on("cost")) {
+    add("line", { x1: L, x2: W - R, y1: y(totalCost), y2: y(totalCost), stroke: "var(--danger)",
+                  "stroke-width": 1.5 });
+  }
+  if (on("saved")) {
+    add("path", { d: path(actual), fill: "none", stroke: "var(--good)", "stroke-width": 2.5,
+                  "stroke-linejoin": "round" });
+  }
+  if (projected.length > 1) {
+    add("path", { d: path(projected), fill: "none", stroke: "var(--good)", "stroke-width": 2,
+                  "stroke-dasharray": "6 5" });
+  }
+  if (fromBills.length > 1) {
+    add("path", { d: path(fromBills), fill: "none", stroke: "var(--accent)", "stroke-width": 2,
+                  "stroke-linejoin": "round" });
+    const [t, v] = fromBills[fromBills.length - 1];
+    add("circle", { cx: x(t), cy: y(v), r: 3.5, fill: "var(--accent)" });
+  }
+  if (versus.length > 1) {
+    add("path", { d: path(versus), fill: "none", stroke: "var(--load)", "stroke-width": 2, "stroke-linejoin": "round" });
+  }
+  if (versusAhead.length > 1) {
+    add("path", { d: path(versusAhead), fill: "none", stroke: "var(--load)", "stroke-width": 2, "stroke-dasharray": "6 5" });
+    if (second.break_even && !second.already_reached) {
+      add("circle", { cx: x(time(second.break_even)), cy: y(totalCost), r: 5, fill: "var(--load)" });
+    }
+  }
+  if (billsAhead.length > 1) {
+    add("path", { d: path(billsAhead), fill: "none", stroke: "var(--accent)", "stroke-width": 2,
+                  "stroke-dasharray": "6 5" });
+    if (billed.break_even && !billed.already_reached) {
+      add("circle", { cx: x(time(billed.break_even)), cy: y(totalCost), r: 5, fill: "var(--accent)" });
+    }
+  }
+  if (adjusted.length > 1) {
+    add("path", { d: path(adjusted), fill: "none", stroke: "var(--warn)", "stroke-width": 2,
+                  "stroke-dasharray": "6 5" });
+    if (p.adjusted.break_even && !p.already_reached) {
+      add("circle", { cx: x(time(p.adjusted.break_even)), cy: y(totalCost), r: 5, fill: "var(--warn)" });
+    }
+  }
+  if (p.break_even && (p.already_reached ? on("saved") : on("projected"))) {
+    const t = time(p.break_even);
+    add("circle", { cx: x(t), cy: y(totalCost), r: 5, fill: "var(--good)" });
+  }
+}
+
+let lastRoi = null;
+function renderPayback(data) {
+  lastRoi = data;
+  fillRoiForm(data);
+  const p = data.payback;
+  const ready = data.configured && p?.has_data;
+  document.getElementById("roi-chart").hidden = !ready;
+  document.getElementById("roi-legend").hidden = !ready;
+  document.getElementById("roi-empty").hidden = ready;
+  const hint = document.getElementById("roi-hint");
+  if (!ready) {
+    document.getElementById("roi-tiles").replaceChildren();
+    document.getElementById("roi-progress").hidden = true;
+    hint.textContent = data.configured ? "No full day of readings since the install date yet." : "";
+    return;
+  }
+  const cost = data.total_cost_gbp;
+  const breakEven = p.already_reached ? "Reached " + longDate(p.break_even)
+    : p.break_even ? longDate(p.break_even) : "Not in sight";
+  const tile = (label, value, note) => {
+    const el = document.createElement("div");
+    el.className = "tile";
+    for (const [cls, text] of [["label", label], ["value", value], ["note", note ?? ""]]) {
+      const part = document.createElement("div");
+      part.className = cls;
+      part.textContent = text;
+      el.append(part);
+    }
+    return el;
+  };
+  document.getElementById("roi-tiles").replaceChildren(
+    tile("System cost", pounds(cost)),
+    tile("Saved so far", pounds(p.saved_gbp), "About " + pounds(p.yearly_gbp) + " a year"),
+    tile("Paid back", p.percent === null ? "–" : p.percent + "%",
+         p.remaining_gbp > 0 ? pounds(p.remaining_gbp) + " still to recover" : pounds(-p.remaining_gbp) + " profit so far"),
+    tile(p.already_reached ? "Broke even" : "Break-even estimate", breakEven,
+         p.break_even ? p.years_from_install + " years after install" + (p.rough && !p.already_reached ? " (rough)" : "")
+           : "Savings are not positive on these settings"),
+    ...(p.adjusted ? [tile("With your yearly assumptions",
+          p.adjusted.break_even ? longDate(p.adjusted.break_even) : "Not in sight",
+          p.adjusted.break_even ? p.adjusted.years_from_install + " years after install" + (p.rough ? " (rough)" : "")
+            : "Savings shrink before the cost is reached")] : []));
+  const horizonYear = new Date(p.horizon + "T00:00").getFullYear();
+  const signed = v => (v < 0 ? "A loss of " + pounds(-v) : pounds(v));
+  if (p.profit_at_horizon_gbp !== null) {
+    document.getElementById("roi-tiles").append(tile(
+      (p.profit_at_horizon_gbp < 0 ? "Projected shortfall by " : "Projected profit by ") + horizonYear,
+      pounds(Math.abs(p.profit_at_horizon_gbp)),
+      p.horizon_years + " years after install" + (p.rough ? " (rough)" : "") +
+        (p.adjusted?.profit_at_horizon_gbp !== null && p.adjusted
+          ? ". " + signed(p.adjusted.profit_at_horizon_gbp) + " with your yearly assumptions" : "")));
+  }
+  if (data.bills_line) {
+    const b = data.bills_line;
+    document.getElementById("roi-tiles").append(tile("Saved, from your bills", pounds(b.saved_gbp),
+      "To " + dayText(b.last_billed) + ". The tracker's own costing gives " + pounds(b.tracker_saved_gbp) + " to then"));
+    if (!b.already_reached) {
+      document.getElementById("roi-tiles").append(tile("Break-even, from your bills",
+        b.break_even ? longDate(b.break_even) : "Not in sight",
+        b.break_even ? b.years_from_install + " years after install" + (b.rough ? " (rough)" : "") +
+          (b.profit_at_horizon_gbp !== null ? ". " + (b.profit_at_horizon_gbp < 0 ? "A loss of " + pounds(-b.profit_at_horizon_gbp)
+            : pounds(b.profit_at_horizon_gbp) + " profit") + " by " + horizonYear : "")
+          : "Savings by the bills are not positive"));
+    }
+  }
+  if (data.second_line) {
+    const v = data.second_line;
+    document.getElementById("roi-tiles").append(tile("Saved against " + v.name, pounds(v.saved_gbp),
+      (v.already_reached ? "Broke even " + longDate(v.break_even)
+        : v.break_even ? "Break-even " + longDate(v.break_even) + ", " + v.years_from_install + " years after install" +
+          (v.rough ? " (rough)" : "") : "Break-even not in sight") +
+      (v.profit_at_horizon_gbp !== null ? ". " + signed(v.profit_at_horizon_gbp) + (v.profit_at_horizon_gbp < 0 ? "" : " profit") +
+        " by " + horizonYear : "")));
+  }
+  // Progress towards the cost, and what is left.
+  const progress = document.getElementById("roi-progress");
+  progress.hidden = p.percent === null;
+  if (p.percent !== null) {
+    const shown = Math.min(100, Math.max(0, p.percent));
+    progress.querySelector(".bar").style.width = shown + "%";
+    progress.querySelector(".bar").style.borderRadius = shown >= 100 ? "7px" : "";
+    progress.querySelector(".progress").setAttribute("aria-valuenow", shown);
+    document.getElementById("roi-progress-done").textContent =
+      pounds(p.saved_gbp) + " of " + pounds(cost) + " paid back (" + p.percent + "%)";
+    document.getElementById("roi-progress-left").textContent = p.remaining_gbp > 0
+      ? pounds(p.remaining_gbp) + " remaining" + (p.break_even ? ", expected by " + longDate(p.break_even) : "")
+      : "Paid for itself. " + pounds(-p.remaining_gbp) + " profit so far";
+  }
+  seriesLegend(document.getElementById("roi-legend"), "payback", [
+    { key: "saved", label: "Saved so far", color: "var(--good)" },
+    { key: "projected", label: "Projected", color: "var(--good)", dashed: true },
+    ...(p.adjusted ? [{ key: "adjusted", label: "With your yearly assumptions", color: "var(--warn)", dashed: true }] : []),
+    ...(data.bills_line ? [{ key: "bills", label: "Saved, from your bills", color: "var(--accent)" }] : []),
+    ...(data.bills_line?.projection?.length ? [{ key: "bills-projected", label: "Projected, from your bills",
+                                                 color: "var(--accent)", dashed: true }] : []),
+    ...(data.second_line ? [
+      { key: "second", label: "Saved against " + data.second_line.name, color: "var(--load)" },
+      { key: "second-projected", label: "Projected against " + data.second_line.name, color: "var(--load)", dashed: true },
+    ] : []),
+    { key: "cost", label: "System cost", color: "var(--danger)" },
+  ], () => lastRoi && renderPayback(lastRoi));
+  drawPayback(p, cost, data.bills_line, data.second_line);
+  const notes = ["Measured against " + data.baseline_name + ", from " +
+    new Date(p.first_day + "T00:00").toLocaleDateString([], { dateStyle: "medium" }) + " (" + p.days + " days of readings)."];
+  if (p.yearly_solar_gbp !== null) {
+    notes.push("Of the " + pounds(p.yearly_gbp) + " a year, about " + pounds(p.yearly_solar_gbp) +
+      " is what the panels alone would save and " + pounds(p.yearly_battery_gbp) + " is added by the battery.");
+  }
+  if (data.extra_income_gbp > 0 || p.yearly_regular_income_gbp) {
+    const parts = [];
+    if (data.regular_income_gbp > 0) {
+      parts.push(money(data.regular_income_gbp) + " regular (" + (data.extra_income_projected
+        ? "carried forward at about " + pounds(p.yearly_regular_income_gbp ?? 0) + " a year"
+        : "not carried forward, as chosen below") + ")");
+    } else if (p.yearly_regular_income_gbp) {
+      parts.push("no regular income yet, but your minimum of about " + pounds(p.yearly_regular_income_gbp) +
+        " a year is carried forward");
+    }
+    if (data.one_off_income_gbp > 0) parts.push(money(data.one_off_income_gbp) + " one-off (counted, not carried forward)");
+    notes.push("Extra income: " + parts.join("; ") + ".");
+  }
+  const b = data.bills_line;
+  if (b) {
+    const gap = b.saved_gbp - b.tracker_saved_gbp;
+    notes.push("Worked out from your bills (" + b.billed_days + " billed days, to " + dayText(b.last_billed) +
+      "), the system had saved " + pounds(b.saved_gbp) + " by then, against " + pounds(b.tracker_saved_gbp) +
+      " on the tracker's own costing" + (Math.abs(gap) < 1 ? "." : ": " + pounds(Math.abs(gap)) +
+      (gap > 0 ? " more" : " less") + " by the bills.") + " Days no bill covers use the tracker's figure." +
+      (b.projection?.length ? " The dashed blue line carries the bills' rate of saving (about " + pounds(b.yearly_gbp) +
+        " a year) forward from the last bill, the same way as the green one." : ""));
+  }
+  if (data.second_line) {
+    const v = data.second_line;
+    notes.push("The purple line measures the same savings against " + v.name + " instead: about " + pounds(v.yearly_gbp) +
+      " a year." + (v.follows_published ? " It follows that tariff's published prices day by day, so past price changes count."
+        : " It uses that tariff's prices as entered for every day, so past price changes are not allowed for."));
+  }
+  if (p.estimated_before_days > 0) {
+    notes.push("The " + p.estimated_before_days + " days between the install date and the first reading are " +
+      "estimated at the average (" + money(p.estimated_before_gbp) + ").");
+  }
+  if (!p.already_reached) {
+    notes.push(p.rough
+      ? "Rough estimate: with under a year of readings the average is carried forward, which ignores the " +
+        "seasons. It firms up once a full year is recorded."
+      : "Projected by repeating the last 12 months, at today's prices and usage.");
+  }
+  if (p.profit_at_horizon_gbp !== null) {
+    notes.push("The line runs on to " + horizonYear + ", " + p.horizon_years + " years after install; what lies above " +
+      "the system cost is profit. That assumes the system keeps working at no further cost: a battery or inverter " +
+      "may need replacing within that time, which is not allowed for.");
+  }
+  hint.textContent = notes.join(" ");
+}
+
+async function refreshPayback() {
+  if (!sectionOpen("roi-heading")) return;  // fetched when the section is opened
+  try {
+    renderPayback(await getJson("api/roi"));
+  } catch (err) {
+    document.getElementById("roi-hint").textContent = "Could not work out the return on investment (" + err.message + ").";
+  }
+}
+
+roiForm?.addEventListener("submit", async event => {
+  event.preventDefault();
+  try {
+    const costs = [...roiCosts.children].map(row => {
+      const [date, description, amount] = [...row.querySelectorAll("input")].map(i => i.value);
+      return { date, description, amount: Number(amount) };
+    });
+    if (!costs.length) throw new Error("Add at least one cost.");
+    const data = await sendTariff("api/roi/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ install_date: roiForm.elements.install_date.value,
+                             baseline: roiForm.elements.baseline.value, costs,
+                             second_baseline: roiForm.elements.second_baseline.value,
+                             panel_ageing_percent: Number(roiForm.elements.panel_ageing.value) || 0,
+                             battery_ageing_percent: Number(roiForm.elements.battery_ageing.value) || 0,
+                             price_change_percent: Number(roiForm.elements.price_change.value) || 0,
+                             project_extra_income: roiForm.elements.project_extra.checked,
+                             regular_income_minimum_gbp: Number(roiForm.elements.regular_minimum.value) || 0,
+                             horizon_years: Number(roiForm.elements.horizon_years.value) || 20 }),
+    });
+    roiMessage("Saved.");
+    renderPayback(data);
+  } catch (err) {
+    roiMessage(err.message, true);
+  }
+});
+
+// --- Compare tariffs -----------------------------------------------------------------------
+
+const compareForm = document.getElementById("compare-form");
+const windowsBox = document.getElementById("compare-windows");
+let editingComparison = null;  // id of the saved tariff being edited, if any
+
+function compareMessage(text, isError = false) {
+  const el = document.getElementById("compare-message");
+  el.textContent = text;
+  el.className = isError ? "error" : "";
+}
+
+function fillCompareForm(tariff) {
+  const f = compareForm.elements;
+  f.name.value = tariff.name;
+  f.export.value = tariff.export_p_per_kwh ?? f.export.value;
+  f.standing.value = tariff.standing_charge_p_per_day;
+  f.vat.value = tariff.vat_percent ?? 0;
+  fillWindows(windowsBox, f.other_rate, tariff.import_bands);
+  setDynamic(f.dynamic_product, f.region, tariff.dynamic);
+}
+
+const ratesText = bands => bands.length === 1 ? bands[0].p_per_kwh + MINOR + " all day"
+  : bands.map(b => b.start + "–" + b.end + ": " + b.p_per_kwh + MINOR).join(", ");
+
+function renderCompare(data) {
+  const cell = (text, className) => {
+    const td = document.createElement("td");
+    td.textContent = text;
+    if (className) td.className = className;
+    return td;
+  };
+  const costCells = cost => cost
+    ? [money(cost.import_gbp), money(cost.export_credit_gbp), money(cost.standing_charge_gbp),
+       money(cost.net_gbp)].map(text => cell(text))
+    : [cell("–"), cell("–"), cell("–"), cell("–")];
+  const rows = [];
+  const yours = document.createElement("tr");
+  yours.append(cell("Your tariff (what you paid)"), ...costCells(data.actual), cell(""), cell(""), cell(""));
+  rows.push(yours);
+  for (const candidate of data.candidates) {
+    const tr = document.createElement("tr");
+    const name = cell(candidate.name);
+    const detail = document.createElement("div");
+    detail.className = "hint";
+    detail.style.margin = "2px 0 0";
+    detail.textContent = publishedNote(candidate.published) + ratesText(candidate.import_bands) +
+      (candidate.vat_percent ? " (+" + candidate.vat_percent + "% VAT)" : "") +
+      "; export " + candidate.export_p_per_kwh + MINOR + "; " + candidate.standing_charge_p_per_day + MINOR + " a day";
+    name.append(detail);
+    const diff = candidate.difference_gbp;
+    const against = diff === null ? cell("–")
+      : Math.abs(diff) < 0.005 ? cell("Same")
+      : cell(money(Math.abs(diff)) + (diff < 0 ? " cheaper" : " dearer"), diff < 0 ? "better" : "worse");
+    const actions = document.createElement("td");
+    const action = (label, onClick) => {
+      const button = document.createElement("button");
+      Object.assign(button, { className: "link", type: "button", textContent: label });
+      button.style.marginRight = "12px";
+      button.addEventListener("click", onClick);
+      actions.append(button);
+    };
+    action("Edit", () => {
+      editingComparison = candidate.id;
+      fillCompareForm(candidate);
+      document.getElementById("compare-editor").open = true;
+      compareMessage("Editing \"" + candidate.name + "\". Saving replaces it.");
+      compareForm.scrollIntoView({ block: "nearest" });
+    });
+    action("Remove", async () => {
+      if (!confirm("Remove \"" + candidate.name + "\" from the comparison?")) return;
+      try {
+        await sendTariff("api/compare/tariffs/" + candidate.id, { method: "DELETE" });
+        refreshCompare();
+        refreshPlanner();
+        refreshPayback();
+      } catch (err) { compareMessage(err.message, true); }
+    });
+    // The same tariff with battery and car charging moved to its cheapest times.
+    const moved = candidate.shifted;
+    const shifted = cell(moved ? money(moved.net_gbp) : "–");
+    if (moved) {
+      const gap = moved.difference_gbp;
+      const note = document.createElement("div");
+      note.className = Math.abs(gap) < 0.005 ? "hint" : gap < 0 ? "better" : "worse";
+      note.style.cssText = "margin: 2px 0 0; font-size: 13px;" +
+        (Math.abs(gap) < 0.005 ? "" : gap < 0 ? "color: var(--good); font-weight: 600;" : "color: var(--danger);");
+      note.textContent = Math.abs(gap) < 0.005 ? "Same as yours"
+        : money(Math.abs(gap)) + (gap < 0 ? " cheaper" : " dearer");
+      shifted.append(note);
+      shifted.title = moved.moved_kwh + " kWh of charging moved, at up to " + moved.fastest_kw + " kW";
+    }
+    tr.append(name, ...costCells(candidate.cost), against, shifted, actions);
+    rows.push(tr);
+  }
+  document.getElementById("compare-rows").replaceChildren(...rows);
+  const hint = document.getElementById("compare-hint");
+  if (!data.actual) {
+    hint.textContent = "No readings to compare yet.";
+  } else {
+    const from = new Date(data.from).toLocaleDateString([], { dateStyle: "medium" });
+    hint.textContent = "Counted from " + from + " (" + data.days + " days). " +
+      (data.candidates.length ? "" : "Add a tariff below to compare it with yours. ") +
+      "\"Net cost\" replays your usage exactly as it happened. \"With charging moved\" also moves " +
+      "what went into the battery and the car to the tariff's cheapest half hours of the same day, " +
+      "no faster than they have actually charged: a best case, since it does not check the battery " +
+      "would last until its next charge. " +
+      coverageHint({ ...data.actual, full_period: true });
+  }
+}
+
+async function refreshCompare() {
+  if (!sectionOpen("compare-heading")) return;  // fetched when the section is opened
+  try {
+    const period = document.getElementById("compare-period").value;
+    renderCompare(await getJson("api/compare?period=" + period));
+  } catch (err) {
+    document.getElementById("compare-hint").textContent = "Could not work out the comparison (" + err.message + ").";
+  }
+}
+document.getElementById("compare-period")?.addEventListener("change", refreshCompare);
+document.getElementById("compare-add-window")?.addEventListener("click", () => addWindow(windowsBox));
+document.getElementById("compare-copy")?.addEventListener("click", () => {
+  if (!currentRates) return compareMessage("Your current rates have not loaded yet.", true);
+  editingComparison = null;
+  fillCompareForm({ ...currentRates, name: currentRates.name + " (new prices)" });
+  compareMessage("Copied. Change the prices, then save.");
+});
+
+compareForm?.addEventListener("submit", async event => {
+  event.preventDefault();
+  try {
+    const f = compareForm.elements;
+    await sendTariff("api/compare/tariffs" + (editingComparison ? "?id=" + editingComparison : ""), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: f.name.value, export_p_per_kwh: Number(f.export.value),
+        standing_charge_p_per_day: Number(f.standing.value), vat_percent: Number(f.vat.value),
+        import_bands: bandsFromWindows(windowsBox, Number(f.other_rate.value)),
+        dynamic: getDynamic(f.dynamic_product, f.region),
+      }),
+    });
+    editingComparison = null;
+    compareMessage("Saved.");
+    refreshCompare();
+    refreshPlanner();
+    refreshPayback();
+  } catch (err) {
+    compareMessage(err.message, true);
+  }
+});
+
+// Looking up published prices. The list is fetched the first time either form is opened.
+let lookupLoaded = false;
+async function loadLookup() {
+  if (lookupLoaded) return;
+  lookupLoaded = true;
+  // Either form may be on this page: the tariff form on Settings, the comparison on Money.
+  const f = compareForm?.elements, own = form?.elements;
+  try {
+    const data = await sendTariff("api/lookup/octopus");
+    let region = "";
+    try { region = localStorage.getItem("region") ?? ""; } catch { /* no storage */ }
+    for (const select of [f?.region, own?.dynamic_region].filter(Boolean)) {
+      const chosen = select.value;
+      for (const r of data.regions) {
+        const existing = [...select.options].find(o => o.value === r.code);
+        if (existing) existing.textContent = r.name; else select.add(new Option(r.name, r.code));
+      }
+      select.value = chosen || region;
+    }
+    f?.product.replaceChildren(new Option("Choose a tariff", ""),
+      ...data.products.map(p => new Option(p.name, p.code)));
+    for (const select of [f?.dynamic_product, own?.dynamic_product].filter(Boolean)) {
+      const chosen = select.value;
+      const saved = [...select.options].filter(o => o.value && ![...data.half_hourly, ...data.products].some(p => p.code === o.value));
+      const group = (label, items) => {
+        const optgroup = Object.assign(document.createElement("optgroup"), { label });
+        optgroup.append(...items.map(p => new Option(p.name, p.code)));
+        return optgroup;
+      };
+      select.replaceChildren(new Option("Not used", ""), ...saved,
+        group("Price changes every half hour", data.half_hourly),
+        group("Same prices each day, changing from time to time", data.products));
+      select.value = chosen;
+    }
+  } catch (err) {
+    lookupLoaded = false;
+    f?.product.replaceChildren(new Option("Price list unavailable", ""));
+    const text = "The Octopus Energy price list could not be loaded: " + err.message + " You can still type prices in.";
+    if (f) compareMessage(text, true);
+    if (document.getElementById("tariff-editor")?.open) tariffMessage(text, true);
+  }
+}
+// Until the list loads, the region letters are still needed to show a saved choice.
+for (const select of [compareForm?.elements.region, form?.elements.dynamic_region].filter(Boolean)) {
+  select.addEventListener("change", () => {
+    try { if (select.value) localStorage.setItem("region", select.value); } catch { /* no storage */ }
+  });
+}
+document.getElementById("tariff-editor")?.addEventListener("toggle", event => { if (event.target.open) loadLookup(); });
+document.getElementById("compare-editor")?.addEventListener("toggle", event => {
+  if (!event.target.open) return;
+  const f = compareForm.elements;
+  if (!f.export.value && currentRates) f.export.value = currentRates.export_p_per_kwh;
+  loadLookup();
+});
+document.getElementById("compare-lookup")?.addEventListener("click", async () => {
+  const f = compareForm.elements;
+  if (!f.region.value || !f.product.value) return compareMessage("Choose a region and a tariff first.", true);
+  try { localStorage.setItem("region", f.region.value); } catch { /* no storage */ }
+  compareMessage("Fetching prices...");
+  try {
+    const tariff = await sendTariff("api/lookup/octopus/tariff?product=" +
+      encodeURIComponent(f.product.value) + "&region=" + f.region.value);
+    editingComparison = null;
+    fillCompareForm(tariff);
+    compareMessage("Filled in from " + tariff.source + ". Check the export rate, then save.");
+  } catch (err) {
+    compareMessage(err.message, true);
+  }
+});
+
+const importForm = document.getElementById("import-form");
+
+async function importHistory(dryRun) {
+  const message = document.getElementById("import-message");
+  const buttons = importForm.querySelectorAll("button");
+  const file = importForm.elements.file.files[0];
+  message.className = "";
+  message.textContent = "Working. This can take a minute...";
+  buttons.forEach(b => { b.disabled = true; });
+  try {
+    const data = await sendTariff("api/import-history?dry_run=" + (dryRun ? "true" : "false"), {
+      method: "POST",
+      headers: { "Content-Type": "application/octet-stream" },
+      body: file || "",
+    });
+    message.replaceChildren(...data.report.map(line => {
+      const row = document.createElement("div");
+      row.textContent = line;
+      return row;
+    }));
+    if (!dryRun) refreshEverything();
+  } catch (err) {
+    message.textContent = err.message;
+    message.className = "error";
+  } finally {
+    buttons.forEach(b => { b.disabled = false; });
+  }
+}
+
+importForm?.addEventListener("submit", event => { event.preventDefault(); importHistory(false); });
+document.getElementById("import-check")?.addEventListener("click", () => importHistory(true));
+
+async function removeTariff(effectiveFrom) {
+  if (!confirm("Remove the rates that start on " + effectiveFrom + "?")) return;
+  try {
+    renderTariffs(await sendTariff("api/tariffs/" + effectiveFrom, { method: "DELETE" }));
+    tariffMessage("Removed.");
+    refreshEverything();
+  } catch (err) {
+    tariffMessage(err.message, true);
+  }
+}
+
+const getJson = url => fetch(url).then(r => { if (!r.ok) throw new Error(r.status); return r.json(); });
+
+let knownMetrics = null;
+
+// Fetches the readings for the power charts' chosen period. A day is fetched fresh every
+// time; a week or a month is heavier, so it is reused for five minutes.
+let powerCache = { key: "", at: 0, raw: null };
+async function powerSeries(params) {
+  const choice = document.getElementById("power-range").value;
+  const now = Date.now();
+  const midnight = new Date(now);
+  midnight.setHours(0, 0, 0, 0);
+  const spans = { "24h": 24, "7d": 24 * 7, "30d": 24 * 30,
+                  today: Math.max(1, Math.ceil((now - midnight.getTime()) / 3600000)) };
+  const hours = spans[choice];
+  const bucketMinutes = Math.max(1, Math.floor(hours * 60 / 300));  // as the server groups them
+  powerRange = choice === "today"
+    ? { start: midnight.getTime(), end: midnight.getTime() + 24 * 3600 * 1000 }
+    : { start: now - hours * 3600 * 1000, end: now };
+  powerRange.gap = Math.max(GAP_MS, bucketMinutes * 2.5 * 60 * 1000);
+  const fresh = hours <= 24 ? 0 : 5 * 60 * 1000;
+  if (powerCache.key !== choice || now - powerCache.at >= fresh || !powerCache.raw) {
+    powerCache = { key: choice, at: now, raw: await getJson("api/series?hours=" + hours + "&" + params) };
+  }
+  return powerCache.raw;
+}
+document.getElementById("power-range")?.addEventListener("change", () => refreshCharts());
+
+// The "right now" tiles follow Home Assistant between stored readings: the newest value of
+// each sensor is fetched every couple of seconds while the page is in view.
+let stored = null;      // the latest stored reading of every metric
+let liveValues = {};    // newer values heard since, by metric
+let liveOn = false;
+function showNow() {
+  if (!stored) return;
+  const latest = { ...stored };
+  for (const [name, reading] of Object.entries(liveValues)) {
+    if (!latest[name] || new Date(reading.time) >= new Date(latest[name].time)) latest[name] = reading;
+  }
+  // Replace any stored heat pump reading with the calculated one.
+  delete latest.heat_pump_power;
+  const circuit = latest.smart_load_power;
+  if (circuit) {
+    latest.heat_pump_power = { time: circuit.time,
+      value: heatPumpPower(circuit.value, latest.ev_charger_power?.value) };
+  }
+  if (latest.load_power) {
+    latest.rest_power = { time: latest.load_power.time,
+      value: restOfHouse(latest.load_power.value, circuit?.value, latest.ev_charger_power?.value) };
+  }
+  renderTiles(document.getElementById("now"), NOW_TILES, latest);
+  renderTiles(document.getElementById("usage"), installed(USAGE_TILES), latest);
+}
+function showStatus() {
+  const status = document.getElementById("status");
+  const times = [...Object.values(stored ?? {}), ...Object.values(liveValues)].map(r => new Date(r.time).getTime());
+  if (!times.length) {
+    status.textContent = "Waiting for the first reading…";
+    status.className = "";
+    return;
+  }
+  const newest = Math.max(...times);
+  const stale = Date.now() - newest > 5 * 60 * 1000;
+  status.textContent = (stale ? "Stale: last reading " : liveOn ? "Live: " : "Updated ") +
+    new Date(newest).toLocaleTimeString();
+  status.className = stale ? "stale" : "";
+}
+async function refreshLive() {
+  if (document.hidden || !stored || !onPage("now")) return;
+  try {
+    const data = await getJson("api/live");
+    liveValues = data.values;
+    liveOn = data.live;
+    showNow();
+    showStatus();
+  } catch { /* the ten-second refresh reports a lost connection */ }
+}
+
+// After rates change, everything worked out from them is fetched again.
+function refreshEverything() {
+  refreshYearly();
+  refreshPlanner();
+  refresh();
+  refreshCharts();
+  refreshRates();
+  refreshCompare();
+  refreshPayback();
+  refreshPerformance();
+  refreshHistory();
+  refreshSummary();
+  refreshBills();
+  refreshDeviceCosts();
+  refreshHeating();
+  refreshAverages();
+}
+
+// The page is refreshed in three parts, each as often as it is worth: the tiles and today's
+// costs every ten seconds, the power charts every minute (each point on them is an average
+// over several minutes), and the rates and yearly tables every five minutes. A section that
+// is folded away is not fetched at all until it is opened.
+// A section is fetched only when it is open and has come near the screen: opening the page
+// asks for what is in view first, and the rest as it is scrolled to.
+const sectionsSeen = new Set();
+const sectionOpen = key => !folded.has(key) && sectionsSeen.has(key);
+
+async function refresh() {
+  const status = document.getElementById("status");
+  // Today's and the month's costs are only on the Now page; every page shows the status
+  // line, the storage note and any notice.
+  const costs = onPage("now");
+  try {
+    const [latest, today, month, found] = await Promise.all([
+      getJson("api/latest"),
+      costs ? getJson("api/today").catch(() => null) : null,
+      costs ? getJson("api/month" + (selectedMonth ? "?month=" + selectedMonth : "")).catch(() => null) : null,
+      getJson("api/setup").catch(() => null),
+    ]);
+    if (found) { setup = found; applyCurrency(found.currency); }
+    const anyDevice = setup.smart_load || setup.ev_charger;
+    document.getElementById("notice").hidden = setup.sigenergy_found;
+    document.getElementById("storage").textContent = setup.database_mb === undefined ? ""
+      : "Stored readings: " + setup.database_mb + " MB. Readings older than " +
+        setup.keep_years + " years are deleted.";
+    stored = latest;
+    if (costs) {
+      document.getElementById("devices-section").hidden = !anyDevice;
+      document.getElementById("usage-section").hidden = !anyDevice;
+      showNow();
+      renderTiles(document.getElementById("today"), TODAY_TILES, latest);
+      renderToday(today, month);
+    }
+    showStatus();
+  } catch (err) {
+    status.textContent = "Can't reach the server (" + err.message + ")";
+    status.className = "stale";
+  }
+}
+
+async function refreshCharts() {
+  if (!sectionOpen("flows-heading") && !sectionOpen("usage-heading")) return;
+  try {
+    // Ask only for metrics this installation collects (the list can be customised).
+    knownMetrics ??= new Set((await getJson("api/metrics")).map(m => m.name));
+    const params = SERIES_METRICS.filter(m => knownMetrics.has(m)).map(m => "metric=" + m).join("&");
+    lastPower = withDerived(await powerSeries(params));
+    renderFlows(lastPower);
+    renderUsage(lastPower);
+  } catch { /* the ten-second refresh reports a lost connection */ }
+}
+
+// The power and consumption charts share one fetch: asking again while it is under way
+// joins it rather than starting another.
+{
+  const fetchCharts = refreshCharts;
+  let underWay = null;
+  refreshCharts = () => underWay ??= fetchCharts().finally(() => { underWay = null; });
+}
+
+async function refreshRates() {
+  const [tariffs, years] = await Promise.all([
+    getJson("api/tariffs").catch(() => null),
+    sectionOpen("years-heading") ? getJson("api/years").catch(() => null) : null,
+  ]);
+  if (tariffs) renderTariffs(tariffs);
+  if (years) renderYears(years);
+}
+
+// --- Page layout: tidy labels, folding sections, and the section menu ---------------------
+
+// A label's words and any currency symbol inside them are kept together on one line, above
+// the field. Without this each piece would be stacked separately.
+for (const label of document.querySelectorAll("form label")) {
+  const words = [...label.childNodes].filter(node =>
+    !(node instanceof HTMLElement && node.matches("input, select, textarea, button")));
+  if (!words.length || label.classList.contains("wide")) continue;
+  const text = Object.assign(document.createElement("span"), { className: "label-text" });
+  label.prepend(text);
+  text.append(...words);
+}
+
+// Every section heading can be clicked to fold its section away. What is folded is
+// saved with the app, so it is the same on every device; the copy kept in this browser
+// only lets the page open already folded, without a flicker.
+const FOLD_KEY = "energy-tracker-folded";
+const mainEl = document.querySelector("main");
+const headings = [...mainEl.querySelectorAll("h2")];
+let folded = new Set();
+try { folded = new Set(JSON.parse(localStorage.getItem(FOLD_KEY) ?? "[]")); } catch { /* no storage */ }
+
+// The heading's row (it may share one with buttons) and everything up to the next heading.
+function sectionParts(h2) {
+  const row = h2.parentElement.matches(".filters, .section-head, .nav") ? h2.parentElement : h2;
+  const body = [];
+  for (let el = row.nextElementSibling; el; el = el.nextElementSibling) {
+    if (el.matches("h2, .section-marker") || el.querySelector("h2")) break;
+    body.push(el);
+  }
+  const controls = row === h2 ? [] : [...row.children].filter(el => el !== h2);
+  return [...controls, ...body];
+}
+// What to fetch when a section is opened, since nothing is fetched for it while folded.
+const SECTION_LOADERS = {
+  "flows-heading": () => refreshCharts(), "usage-heading": () => refreshCharts(),
+  "history-heading": () => refreshHistory(), "performance-heading": () => refreshPerformance(),
+  "summary-heading": () => refreshSummary(), "years-heading": () => refreshRates(),
+  "device-costs-heading": () => refreshDeviceCosts(), "roi-heading": () => refreshPayback(),
+  "income-heading": () => refreshIncome(), "bills-heading": () => refreshBills(),
+  "compare-heading": () => refreshCompare(), "planner-heading": () => refreshPlanner(),
+
+  "yearly-heading": () => refreshYearly(), "heating-heading": () => refreshHeating(),
+  "averages-heading": () => refreshAverages(),
+};
+function setFolded(h2, fold) {
+  const wasFolded = h2.getAttribute("aria-expanded") === "false";
+  h2.setAttribute("aria-expanded", String(!fold));
+  for (const el of sectionParts(h2)) el.classList.toggle("folded-away", fold);
+  if (fold) folded.add(h2.dataset.key); else folded.delete(h2.dataset.key);
+  try { localStorage.setItem(FOLD_KEY, JSON.stringify([...folded])); } catch { /* no storage */ }
+  saveLayout();
+  if (wasFolded && !fold) SECTION_LOADERS[h2.dataset.key]?.();
+}
+let layoutReady = false, layoutTimer = null;
+function saveLayout() {
+  if (!layoutReady) return;
+  clearTimeout(layoutTimer);
+  layoutTimer = setTimeout(() => {
+    fetch("api/layout", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ folded: [...folded], bill_years: [...billYearsFolded] }),
+    }).catch(() => { /* kept in this browser; saved on the next change */ });
+  }, 400);
+}
+async function loadLayout() {
+  try {
+    const saved = await getJson("api/layout");
+    if (saved.saved) {
+      for (const h2 of headings) setFolded(h2, saved.folded.includes(h2.dataset.key));
+      billYearsFolded = new Set(saved.bill_years);
+      try { localStorage.setItem("energy-tracker-bill-years-folded", JSON.stringify(saved.bill_years)); } catch { /* no storage */ }
+      if (lastBills) renderBills(lastBills);
+    }
+    layoutReady = true;
+    if (!saved.saved && (folded.size || billYearsFolded.size)) saveLayout();
+  } catch { layoutReady = true; }
+}
+for (const h2 of headings) {
+  h2.dataset.key = h2.id || h2.textContent.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-");
+  h2.tabIndex = 0;
+  h2.setAttribute("role", "button");
+  h2.title = "Show or hide this section";
+  setFolded(h2, folded.has(h2.dataset.key));
+  const toggle = () => setFolded(h2, h2.getAttribute("aria-expanded") === "true");
+  h2.addEventListener("click", toggle);
+  h2.addEventListener("keydown", event => {
+    if (event.key === "Enter" || event.key === " ") { event.preventDefault(); toggle(); }
+  });
+}
+loadLayout();
+
+// Watch a marker just above each section (sections that start hidden have no position of
+// their own) and fetch the section the first time it comes within a screen or so of view.
+const sectionMarkers = new Map();
+const nearScreen = new IntersectionObserver(entries => {
+  for (const entry of entries) {
+    if (!entry.isIntersecting) continue;
+    const key = sectionMarkers.get(entry.target);
+    nearScreen.unobserve(entry.target);
+    if (sectionsSeen.has(key)) continue;
+    sectionsSeen.add(key);
+    if (!folded.has(key)) SECTION_LOADERS[key]?.();
+  }
+}, { rootMargin: "1000px 0px" });
+for (const h2 of headings) {
+  let block = h2.parentElement.matches(".filters, .section-head, .nav") ? h2.parentElement : h2;
+  while (block.parentElement !== mainEl && block.parentElement.querySelectorAll("h2").length === 1) {
+    block = block.parentElement;
+  }
+  const marker = document.createElement("div");
+  marker.className = "section-marker";
+  marker.setAttribute("aria-hidden", "true");
+  block.before(marker);
+  sectionMarkers.set(marker, h2.dataset.key);
+  nearScreen.observe(marker);
+}
+
+// The Sections menu lists every heading; choosing one opens that section and scrolls to it.
+const jump = document.getElementById("jump");
+// The app's pages: key, name, address and what is on it.
+const PAGES = [
+  ["now", "Now", "./", "Live figures, today's and this month's cost, power charts"],
+  ["history", "History", "history", "Past days to years, reports, averages, performance"],
+  ["devices", "Devices", "devices", "Running costs by device, the heat pump and its SCOP"],
+  ["money", "Money", "money", "Return on investment, income, bills, other tariffs"],
+  ["settings", "Settings", "settings", "Tariff rates, notes, backup, older history"],
+];
+// The Sections menu: help, then the pages, with this page's own sections listed under it;
+// choosing a section opens it and scrolls to it.
+function buildJumpMenu() {
+  const item = (label, onClick, className) => {
+    const button = Object.assign(document.createElement("button"), { type: "button", textContent: label });
+    if (className) button.className = className;
+    button.addEventListener("click", () => { jump.open = false; onClick(); });
+    return button;
+  };
+  const shown = headings.filter(h2 => h2.getClientRects().length);  // skip sections that do not apply
+  const sections = shown.map(h2 => item(h2.textContent, () => {
+    setFolded(h2, false);
+    // Stop just below the header, however tall it is on this screen.
+    const header = document.querySelector("header").getBoundingClientRect().height;
+    window.scrollTo({ top: h2.getBoundingClientRect().top + window.scrollY - header - 10, behavior: "smooth" });
+  }, "section-link" + (h2.getAttribute("aria-expanded") === "false" ? " folded" : "")));
+  const pages = PAGES.flatMap(([key, label, href, about]) => {
+    const link = Object.assign(document.createElement("a"), { href, textContent: label,
+                                                             className: "page-link" + (key === PAGE ? " current" : "") });
+    link.append(Object.assign(document.createElement("small"), { textContent: about }));
+    if (key === PAGE) {
+      link.setAttribute("aria-current", "page");
+      link.addEventListener("click", event => {  // already here: back to the top
+        event.preventDefault();
+        jump.open = false;
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      });
+    }
+    return key === PAGE ? [link, ...sections] : [link];
+  });
+  document.getElementById("jump-panel").replaceChildren(
+    ...HELP_LINKS.map(([label, note, href]) => {
+      const link = Object.assign(document.createElement("a"), { href, target: "_blank", rel: "noopener", textContent: label + " \u2197" });
+      link.append(Object.assign(document.createElement("small"), { textContent: note }));
+      link.addEventListener("click", () => { jump.open = false; });
+      return link;
+    }),
+    document.createElement("hr"),
+    ...pages,
+    document.createElement("hr"),
+    item("Fold all sections", () => headings.forEach(h2 => setFolded(h2, true))),
+    item("Open all sections", () => headings.forEach(h2 => setFolded(h2, false))));
+}
+// Help, on the project's GitHub page (opens in a new tab).
+const REPOSITORY = "https://github.com/Suchabadpanda/ha-energy-tracker/blob/main/";
+const HELP_LINKS = [
+  ["User guide", "What every section shows and how its figures are worked out", REPOSITORY + "energy_tracker/DOCS.md"],
+  ["About this app", "Overview, screenshots and installing", REPOSITORY + "README.md"],
+  ["What's new", "Changes in each version", REPOSITORY + "energy_tracker/CHANGELOG.md"],
+];
+jump?.addEventListener("toggle", () => { if (jump.open) buildJumpMenu(); });
+document.addEventListener("click", event => { if (jump.open && !jump.contains(event.target)) jump.open = false; });
+document.addEventListener("keydown", event => { if (event.key === "Escape") jump.open = false; });
+
+// Fetch the currency before anything is drawn, so no figure flashes up with the wrong symbol.
+async function start() {
+  try { applyCurrency((await getJson("api/setup")).currency); } catch (err) { /* defaults stand */ }
+  // Nothing is fetched while the page is in a background tab; it catches up on return.
+  const every = (ms, work) => setInterval(() => { if (!document.hidden) work(); }, ms);
+  const MINUTE = 60 * 1000;
+  // The tiles first, so the top of the page appears before the heavier sections are asked for.
+  await refresh();
+  // Opened from another page at a section (a month under Costs by year, say): go to it now
+  // the tiles above it have been drawn.
+  if (location.hash) document.getElementById(location.hash.slice(1))?.scrollIntoView({ block: "start" });
+  every(10000, refresh);
+  refreshNotes();
+  if (onPage("now")) setInterval(refreshLive, 2000);
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) return;
+    refresh();
+    refreshLive();
+    refreshCharts();
+  });
+  refreshCharts();
+  every(MINUTE, refreshCharts);
+  refreshRates();
+  every(5 * MINUTE, refreshRates);
+  refreshHistory();
+  // Keep the latest period current; a past period being browsed is left alone.
+  every(5 * MINUTE, () => { if (!historyDay) refreshHistory(); });
+  refreshDeviceCosts();
+  every(10 * MINUTE, refreshDeviceCosts);
+  refreshHeating();
+  every(10 * MINUTE, refreshHeating);
+  refreshAverages();
+  every(10 * MINUTE, refreshAverages);
+  refreshPayback();
+  every(30 * MINUTE, refreshPayback);
+  refreshIncome();
+  every(5 * MINUTE, refreshIncome);
+  refreshPerformance();
+  every(30 * MINUTE, refreshPerformance);
+  refreshSummary();
+  every(60 * MINUTE, () => { if (!summaryMonth) refreshSummary(); });
+  refreshBills();
+  // The comparison prices a long period several times over, so it comes last.
+  refreshCompare();
+  every(30 * MINUTE, refreshCompare);
+  refreshPlanner();
+  every(60 * MINUTE, refreshPlanner);
+  refreshYearly();
+  every(60 * MINUTE, () => { if (!yearlyYear) refreshYearly(); });
+}
+start();

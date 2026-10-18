@@ -125,7 +125,7 @@ async def lifespan(_: FastAPI):
         await asyncio.to_thread(thread.join, 10)
 
 
-app = FastAPI(title="Energy Tracker", version="0.37.0", lifespan=lifespan)
+app = FastAPI(title="Energy Tracker", version="0.38.0", lifespan=lifespan)
 # The page and its chart data are mostly text: sent compressed, they are a quarter the size.
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
@@ -158,10 +158,46 @@ def counter_samples(
     )
 
 
-@app.get("/", include_in_schema=False)
-def dashboard() -> FileResponse:
+# The dashboard's pages, by address. Each holds some of the sections; they share one
+# stylesheet and one script.
+PAGES = {
+    "": "now",
+    "history": "history",
+    "devices": "devices",
+    "money": "money",
+    "settings": "settings",
+}
+PAGE_FILES = {"now": "index.html"}
+# When each page was last opened, so the figures it shows are only kept ready while it is in
+# use (see keep_figures_ready).
+page_opened: dict[str, float] = {}
+
+
+@lru_cache(maxsize=16)
+def page_text(name: str) -> str:
+    # The stylesheet and script are named with the version, so a browser keeps them until the
+    # app is updated, then fetches the new ones.
+    return (WEB_DIR / name).read_text().replace("__VERSION__", app.version)
+
+
+def page(key: str) -> Response:
+    opened = page_opened.get(key)
+    page_opened[key] = time.monotonic()
+    if opened is None or time.monotonic() - opened >= PAGE_IN_USE:
+        # Back in use: have its figures worked out in the background from now on.
+        _kept.cleared = True
+        _kept.wake.set()
     # Always fetched fresh, so an update shows up without clearing the browser's cache.
-    return FileResponse(WEB_DIR / "index.html", headers={"Cache-Control": "no-cache"})
+    return Response(
+        page_text(PAGE_FILES.get(key, f"{key}.html")),
+        media_type="text/html",
+        headers={"Cache-Control": "no-cache"},
+    )
+
+
+@app.get("/", include_in_schema=False)
+def dashboard() -> Response:
+    return page("now")
 
 
 @app.get("/healthz")
@@ -661,6 +697,7 @@ CACHE_SECONDS = 10 * 60  # a kept figure older than this is worked out again
 # Until then, a figure up to this old is still served at once, and brought up to date in the
 # background: opening the page never waits for one that is merely a little old.
 STALE_SECONDS = 12 * 3600
+PAGE_IN_USE = 24 * 3600  # a page's figures are kept ready for a day after it was last opened
 KEEP_FRESH_SECONDS = 10 * 60  # how often the page's opening figures are worked out again
 CACHE_SIZE = 200
 
@@ -750,22 +787,29 @@ def clear_caches() -> None:
 def keep_figures_ready(stop: threading.Event) -> None:
     """Work out the figures the page opens with, now and every few minutes after; at once
     after anything they depend on has changed; and any served while old."""
-    # In the order they appear on the page, so the top of it is ready first.
+    # By the page they are on, in the order they appear there, so the top is ready first.
+    # The battery's size is shown on every page.
     opening = (
-        (battery_size, ()),
-        (years, ()),
-        (monthly_summary, (None,)),
-        (yearly_report, (None,)),
-        (device_costs, ()),
-        (daily_averages, ()),
-        (heat_pump_and_weather, ()),
-        (system_performance, ("12m",)),
-        (more_panels, ()),
-        (payback_figures, ()),
-        (bills, ()),
-        (compare, ("12m",)),
-        (switch_planner, (None,)),
+        ("", battery_size, ()),
+        ("now", heat_pump_and_weather, ()),  # the heat pump's split and COP under the costs
+        ("history", years, ()),
+        ("history", monthly_summary, (None,)),
+        ("history", yearly_report, (None,)),
+        ("history", daily_averages, ()),
+        ("history", system_performance, ("12m",)),
+        ("history", more_panels, ()),
+        ("devices", device_costs, ()),
+        ("devices", heat_pump_and_weather, ()),
+        ("money", payback_figures, ()),
+        ("money", bills, ()),
+        ("money", compare, ("12m",)),
+        ("money", switch_planner, (None,)),
     )
+
+    def in_use(page_key: str) -> bool:
+        """True for a page opened in the last day (and for what every page shows)."""
+        opened = page_opened.get(page_key)
+        return not page_key or (opened is not None and time.monotonic() - opened < PAGE_IN_USE)
 
     def attempt(work) -> None:
         try:
@@ -781,9 +825,14 @@ def keep_figures_ready(stop: threading.Event) -> None:
         everything = time.monotonic() >= next_round
         if everything or _kept.cleared:
             _kept.cleared = False
-            for func, args in opening:
+            done = set()
+            for page_key, func, args in opening:
                 if stop.is_set():
                     return
+                # Only for pages in use: the rest are worked out when they are opened.
+                if not in_use(page_key) or (func, args) in done:
+                    continue
+                done.add((func, args))
                 # After a change, anything the page has already asked for again is kept.
                 attempt(lambda f=func, a=args, e=everything: f.fresh(*a) if e else f(*a))
             if everything:
@@ -2449,3 +2498,17 @@ async def import_older_history(
         raise HTTPException(status_code=422, detail=f"Import failed: {exc}") from exc
     clear_caches()
     return {"report": report, "dry_run": dry_run}
+
+
+# Last, so it never hides another address.
+@app.get("/{name}", include_in_schema=False)
+def other_page(name: str) -> Response:
+    if name in ("app.css", "app.js"):
+        return FileResponse(
+            WEB_DIR / name,
+            # Named with the version (?v=), so it can be kept until the app is updated.
+            headers={"Cache-Control": "public, max-age=31536000, immutable"},
+        )
+    if name not in PAGES or not name:
+        raise HTTPException(status_code=404, detail="Not found")
+    return page(PAGES[name])
