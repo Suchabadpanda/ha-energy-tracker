@@ -14,6 +14,7 @@ from datetime import UTC, date, datetime
 from pathlib import Path
 
 Row = tuple[datetime, str, float]
+HALF_HOUR = 1800  # seconds; the summary kept of energy counters (see half_hours below)
 Sample = tuple[datetime, float]
 
 SCHEMA = """
@@ -23,6 +24,21 @@ SCHEMA = """
         value  REAL    NOT NULL,
         PRIMARY KEY (metric, time)
     ) WITHOUT ROWID;
+
+    -- The last reading of each energy counter in every half hour, kept so that figures over
+    -- months and years need not read every stored reading each time. Filled in as it is
+    -- asked for; `half_hours_done` says how far each metric has been filled in.
+    CREATE TABLE IF NOT EXISTS half_hours (
+        metric TEXT    NOT NULL,
+        bucket INTEGER NOT NULL,              -- time // 1800
+        time   INTEGER NOT NULL,              -- of the reading itself
+        value  REAL    NOT NULL,
+        PRIMARY KEY (metric, bucket)
+    ) WITHOUT ROWID;
+    CREATE TABLE IF NOT EXISTS half_hours_done (
+        metric TEXT PRIMARY KEY,
+        until  INTEGER NOT NULL               -- every half hour before this is filled in
+    );
 
     CREATE TABLE IF NOT EXISTS tariff_periods (
         effective_from            TEXT PRIMARY KEY,
@@ -81,16 +97,6 @@ SCHEMA = """
         export_gbp  REAL
     );
 
-    -- Gas bills, typed in (there are no gas sensors). Optional: a home may have no gas.
-    CREATE TABLE IF NOT EXISTS gas_bills (
-        id          INTEGER PRIMARY KEY,
-        first_day   TEXT NOT NULL,
-        last_day    TEXT NOT NULL,
-        kwh         REAL,                     -- optional: not every bill gives it plainly
-        cost_gbp    REAL NOT NULL,            -- everything charged, standing charge and VAT
-        note        TEXT NOT NULL DEFAULT ''
-    );
-
     CREATE TABLE IF NOT EXISTS meta (
         key   TEXT PRIMARY KEY,
         value TEXT NOT NULL
@@ -140,6 +146,9 @@ class Database:
             if "regular" not in columns:
                 conn.execute("ALTER TABLE extra_income ADD COLUMN regular INTEGER")
             _sort_income(conn)
+            # Gas bills (0.39.0) were taken out again in 0.40.0.
+            conn.execute("DROP TABLE IF EXISTS gas_bills")
+            conn.execute("DELETE FROM meta WHERE key = 'gas'")
             conn.commit()
 
     def _connect(self) -> sqlite3.Connection:
@@ -152,10 +161,22 @@ class Database:
     def insert_readings(self, rows: Iterable[Row]) -> int:
         """Store readings, leaving any that already exist. Returns how many were new."""
         data = [(metric, _seconds(when), value) for when, metric, value in rows]
+        # The earliest reading of each metric: if it falls in a half hour already summarised
+        # (history brought in from Home Assistant, say), that summary is redone.
+        earliest: dict[str, int] = {}
+        for metric, seconds, _ in data:
+            if seconds < earliest.get(metric, seconds + 1):
+                earliest[metric] = seconds
         with closing(self._connect()) as conn, conn:
             before = conn.total_changes
             conn.executemany("INSERT OR IGNORE INTO readings VALUES (?, ?, ?)", data)
-            return conn.total_changes - before
+            added = conn.total_changes - before
+            if added and earliest:
+                conn.executemany(
+                    "UPDATE half_hours_done SET until = ? WHERE metric = ? AND until > ?",
+                    [(s - s % HALF_HOUR, m, s - s % HALF_HOUR) for m, s in earliest.items()],
+                )
+            return added
 
     def delete_before(self, metrics: list[str], before: datetime) -> int:
         """Remove all readings of these metrics older than `before`."""
@@ -165,6 +186,8 @@ class Database:
                 conn.execute(
                     "DELETE FROM readings WHERE metric = ? AND time < ?", (metric, _seconds(before))
                 )
+                # Summarised again from what is left, the next time it is asked for.
+                conn.execute("DELETE FROM half_hours_done WHERE metric = ?", (metric,))
             return conn.total_changes - start
 
     def latest(self, metrics: list[str], since: datetime) -> dict[str, Sample]:
@@ -200,8 +223,11 @@ class Database:
         """The last reading of each metric in every time bucket between `since` and `until`.
 
         One reading per bucket is plenty for energy totals, and keeps this fast however
-        often readings are collected.
+        often readings are collected. Half hours come from the kept summary (filled in
+        first, where new readings have arrived); the half hour under way from the readings.
         """
+        if bucket_seconds == HALF_HOUR:
+            return self._half_hours(metrics, _seconds(since), _seconds(until))
         result: dict[str, list[Sample]] = {}
         with closing(self._connect()) as conn:
             for metric in metrics:
@@ -212,6 +238,59 @@ class Database:
                     (metric, _seconds(since), _seconds(until), bucket_seconds),
                 ).fetchall()
                 result[metric] = [(_when(t), value) for t, value in rows]
+        return result
+
+    def _half_hours(self, metrics: list[str], since: int, until: int) -> dict[str, list[Sample]]:
+        """last_in_buckets for half hours, through the `half_hours` summary."""
+        now = int(datetime.now(UTC).timestamp())
+        finished = now - now % HALF_HOUR  # half hours before this are over
+        result: dict[str, list[Sample]] = {}
+        with closing(self._connect()) as conn, conn:
+            for metric in metrics:
+                row = conn.execute(
+                    "SELECT until FROM half_hours_done WHERE metric = ?", (metric,)
+                ).fetchone()
+                done = row[0] if row else 0
+                if done < finished:  # bring the summary up to date
+                    conn.execute(
+                        "DELETE FROM half_hours WHERE metric = ? AND bucket >= ?",
+                        (metric, done // HALF_HOUR),
+                    )
+                    conn.execute(
+                        "INSERT INTO half_hours SELECT metric, time / ?, max(time), value "
+                        "FROM readings WHERE metric = ? AND time >= ? AND time < ? "
+                        "GROUP BY time / ?",
+                        (HALF_HOUR, metric, done, finished, HALF_HOUR),
+                    )
+                    conn.execute(
+                        "INSERT INTO half_hours_done VALUES (?, ?) "
+                        "ON CONFLICT (metric) DO UPDATE SET until = excluded.until",
+                        (metric, finished),
+                    )
+                # The summary up to the half hour holding `until` (which may end part-way
+                # through it), the readings themselves from there.
+                split = min(finished, until - until % HALF_HOUR)
+                # SQLite returns `value` from the same row as max(time).
+                rows = conn.execute(
+                    "SELECT time, value FROM half_hours WHERE metric = ? AND bucket >= ? "
+                    "AND bucket < ? AND time >= ? AND time <= ? "
+                    "UNION ALL "
+                    "SELECT max(time), value FROM readings WHERE metric = ? AND time >= ? "
+                    "AND time >= ? AND time <= ? GROUP BY time / ? ORDER BY 1",
+                    (
+                        metric,
+                        since // HALF_HOUR,
+                        split // HALF_HOUR,
+                        since,
+                        until,
+                        metric,
+                        split,
+                        since,
+                        until,
+                        HALF_HOUR,
+                    ),
+                ).fetchall()
+                result[metric] = [(_when(t), value) for t, value in rows if t is not None]
         return result
 
     def first_time(self, metric: str) -> datetime | None:
@@ -272,7 +351,11 @@ class Database:
                 conn.execute(
                     "DELETE FROM readings WHERE metric = ? AND time < ?", (metric, _seconds(cutoff))
                 )
-            return conn.total_changes - before
+            removed = conn.total_changes - before
+            conn.execute(
+                "DELETE FROM half_hours WHERE bucket < ?", (_seconds(cutoff) // HALF_HOUR,)
+            )
+            return removed
 
     def size_bytes(self) -> int:
         """Space the database takes on disk, including its write-ahead log."""
@@ -388,7 +471,6 @@ class Database:
         "bills",
         "extra_income",
         "notes",
-        "gas_bills",
     )
 
     def dump(self) -> dict[str, list[dict]]:
@@ -586,42 +668,6 @@ class Database:
                 "WHERE id = ? AND amount_gbp IS NULL",
                 (kwh, amount, row_id),
             )
-
-    # --- gas bills ------------------------------------------------------------------------------
-
-    def gas_rows(self) -> list[dict]:
-        with closing(self._connect()) as conn:
-            conn.row_factory = sqlite3.Row
-            rows = conn.execute("SELECT * FROM gas_bills ORDER BY first_day, id").fetchall()
-        return [dict(row) for row in rows]
-
-    def save_gas(self, row: dict, row_id: int | None = None) -> int:
-        values = (
-            row["first_day"].isoformat(),
-            row["last_day"].isoformat(),
-            row["kwh"],
-            row["cost_gbp"],
-            row["note"],
-        )
-        with closing(self._connect()) as conn, conn:
-            if row_id is not None:
-                cursor = conn.execute(
-                    "UPDATE gas_bills SET first_day = ?, last_day = ?, kwh = ?, cost_gbp = ?, "
-                    "note = ? WHERE id = ?",
-                    (*values, row_id),
-                )
-                if cursor.rowcount:
-                    return row_id
-            cursor = conn.execute(
-                "INSERT INTO gas_bills (first_day, last_day, kwh, cost_gbp, note) "
-                "VALUES (?, ?, ?, ?, ?)",
-                values,
-            )
-            return cursor.lastrowid
-
-    def delete_gas(self, row_id: int) -> bool:
-        with closing(self._connect()) as conn, conn:
-            return conn.execute("DELETE FROM gas_bills WHERE id = ?", (row_id,)).rowcount > 0
 
     # --- bills entered for checking -------------------------------------------------------------
 

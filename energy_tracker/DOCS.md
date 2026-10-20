@@ -13,7 +13,7 @@ The app is split into five pages, linked at the top of every page:
 | **Now** | Right now, Where it's going, Today, Today by device, Cost today, the month's cost, the power and consumption charts |
 | **History** | History, Monthly summary, Yearly report, Costs by year, Averages, Performance |
 | **Devices** | Running costs by device, Heat pump and the weather (with the estimated SCOP) |
-| **Money** | Return on investment, Extra income, Bill check, Gas, Compare tariffs, Tariff switch planner |
+| **Money** | Return on investment, Extra income, Bill check, Compare tariffs, Tariff switch planner |
 | **Settings** | Tariff rates, Notes, Backup and restore, Older history |
 
 Each page only loads and keeps up to date what is on it, so pages open quickly, and the live
@@ -48,7 +48,13 @@ The long-range figures take a while to work out on a small machine, so the app p
 them in the background every ten minutes and keeps them ready, so the page never waits for
 them. It only does this for pages opened in the last day: a page you have not opened for a
 while works its figures out when you next open it, which can take a few seconds, and they
-are kept ready again from then on. They can therefore be a few minutes behind; saving rates, a bill, a tariff, a note or
+are kept ready again from then on. Which pages are in use is remembered across a restart.
+Figures over months and years are worked out afresh every hour rather than every ten
+minutes, unless something they depend on changes (saving rates, say).
+
+To keep long-range figures quick, the app also keeps the last reading of each energy counter
+in every half hour in a small summary, filled in as it is needed. The first time after an
+update it is filled in from all the stored readings, which can take a few seconds. They can therefore be a few minutes behind; saving rates, a bill, a tariff, a note or
 income works them out again straight away, in the background.
 
 Each section is only fetched once it is scrolled near, and not at all while it is folded,
@@ -205,14 +211,12 @@ month to open its costs on the Now page).
 
 With extra income entered (Axle payments and the like), two more columns appear: **Extra
 income**, shown as a minus as it comes off, and **Net after income**: the net cost less that
-income. With gas bills entered, a **Gas** column appears too and the last column becomes
-**Total, with gas**: the net cost plus gas, less extra income. All are over the same days as
-the electricity, so a year counted from November only includes November's income and gas.
-A gas figure marked * means the gas bills entered do not cover every day of that year.
+income. Income is counted over the same days as the electricity, so a year counted from
+November only includes November's income onwards.
 
-Above the month-by-month grid, tick **Take off extra income** (or **Add gas and take off
-extra income**) to show the total in the grid instead of the electricity's net cost. The
-choice is remembered on that device.
+Above the month-by-month grid, tick **Take off extra income** to show the net cost after
+income in the grid instead of the electricity's net cost. The choice is remembered on that
+device.
 
 ## Running costs by device
 
@@ -598,22 +602,6 @@ is then dropped. Changing the rate affects events measured afterwards, not earli
 
 Only export events are recorded. An event shown while the app was stopped is picked up
 from Home Assistant's history when it restarts, for as far back as `backfill_days`.
-
-## Gas
-
-On the Money page. There are no gas sensors to read, so enter each gas bill or statement
-under **Add a gas bill**: the first and last day it covers, everything it charged (standing
-charge and VAT included) and, if the bill gives it, the kWh used. Each bill's cost is
-spread evenly over its days, so a bill from mid-March to mid-April puts about half in each
-month. Each day can only be on one bill; dates that overlap another bill are refused.
-
-The table lists the bills, newest first, with each one's cost a day and all-in price per kWh
-(the standing charge included), and each year's total. Gas is added to the totals under
-**Costs by year**.
-
-Homes without gas: choose **This home has no gas: hide this**. Gas is then left out of the
-totals and the section shrinks to one line, with **This home has gas** to bring it back.
-Any bills already entered are kept. Gas bills and this choice are in the settings backup.
 
 ## Comparing tariffs
 

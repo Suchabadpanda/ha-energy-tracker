@@ -10,7 +10,7 @@ from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
 from .tariff import Schedule
-from .usage import Counter, half_hour_slots
+from .usage import Counter, half_hour_pieces
 
 SOLAR, LOAD = "pv_energy_total", "load_energy_total"
 IMPORT, EXPORT = "import_energy_total", "export_energy_total"
@@ -35,7 +35,7 @@ def daily(
     A counter with no readings is left out of the day (None), not counted as zero.
     """
     days: dict[date, dict] = {}
-    for piece_start, piece_end in half_hour_slots(start, end):
+    for piece_start, _, a, b in half_hour_pieces(start, end):
         local = piece_start.astimezone(timezone)
         tariff = schedule.on(local.date())
         day = days.setdefault(
@@ -51,11 +51,11 @@ def daily(
         )
         for name in COUNTERS:
             if counters.get(name):
-                day[name] += counters[name].between(piece_start, piece_end)
+                day[name] += counters[name].kwh(a, b)
         price = tariff.import_price(local)
         # A hair's allowance, so a price equal to the cheap rate is not counted as dear.
         if counters.get(IMPORT) and price > day["cheap_p"] + 1e-9:
-            imported = counters[IMPORT].between(piece_start, piece_end)
+            imported = counters[IMPORT].kwh(a, b)
             day["dear_kwh"] += imported
             day["dear_pence"] += imported * price
     return days

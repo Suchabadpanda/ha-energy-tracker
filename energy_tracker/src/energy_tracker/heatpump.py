@@ -20,7 +20,7 @@ SCOP is all the heat divided by all the electricity, never an average of per-day
 from __future__ import annotations
 
 import logging
-from bisect import bisect_right
+from bisect import bisect_left, bisect_right
 from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -316,11 +316,8 @@ def reheats(
         # The coolest the tank was around the start (a draw-off may still be settling), and
         # its peak: it keeps reading higher for a few minutes after the reheat stops.
         def readings(a: datetime, b: datetime) -> list[float]:
-            return [
-                v
-                for t, v in zip(tank.stamps, tank.values, strict=True)
-                if a.timestamp() <= t <= b.timestamp()
-            ]
+            low = bisect_left(tank.stamps, a.timestamp())
+            return tank.values[low : bisect_right(tank.stamps, b.timestamp(), low)]
 
         held = tank.mean(begun, begun + timedelta(minutes=1), 0.5)
         around = readings(begun - timedelta(minutes=10), begun + timedelta(minutes=10))

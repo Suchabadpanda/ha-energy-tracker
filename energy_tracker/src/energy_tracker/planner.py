@@ -20,7 +20,7 @@ from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
 from .tariff import Schedule, Tariff
-from .usage import Counter, half_hour_slots
+from .usage import Counter, half_hour_pieces
 
 DEFAULT_EFFICIENCY = 0.9  # battery round trip
 CHEAP_BAND = 0.25  # a half hour is cheap if within this share of the way from cheapest to dearest
@@ -109,18 +109,18 @@ def simulate(
 
     # Gather each day's half hours first: the car's charging is planned a day at a time.
     days: dict[date, list[dict]] = {}
-    for piece_start, piece_end in half_hour_slots(start, end):
+    for piece_start, piece_end, a, b in half_hour_pieces(start, end):
         local = piece_start.astimezone(timezone)
         tariff = schedule.on(local.date())
-        used = load.between(piece_start, piece_end)
-        car = min(used, ev.between(piece_start, piece_end)) if ev else 0.0
+        used = load.kwh(a, b)
+        car = min(used, ev.kwh(a, b)) if ev else 0.0
         days.setdefault(local.date(), []).append(
             {
                 "tariff": tariff,
                 "price": tariff.import_price(local),
                 "house": used - car,
                 "car": car,
-                "solar": solar.between(piece_start, piece_end) if solar else 0.0,
+                "solar": solar.kwh(a, b) if solar else 0.0,
                 "share": (piece_end - piece_start).total_seconds() / 1800,
             }
         )

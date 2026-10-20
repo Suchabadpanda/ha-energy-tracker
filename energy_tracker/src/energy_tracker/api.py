@@ -6,6 +6,7 @@ Run with:  python -m energy_tracker
 from __future__ import annotations
 
 import asyncio
+import gzip
 import inspect
 import json
 import logging
@@ -23,7 +24,7 @@ from typing import Annotated
 import httpx
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 
 from . import (
@@ -32,7 +33,6 @@ from . import (
     billreader,
     collector,
     devices,
-    gas,
     heating,
     heatpump,
     history,
@@ -126,7 +126,7 @@ async def lifespan(_: FastAPI):
         await asyncio.to_thread(thread.join, 10)
 
 
-app = FastAPI(title="Energy Tracker", version="0.39.0", lifespan=lifespan)
+app = FastAPI(title="Energy Tracker", version="0.40.0", lifespan=lifespan)
 # The page and its chart data are mostly text: sent compressed, they are a quarter the size.
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
@@ -181,13 +181,26 @@ def page_text(name: str) -> str:
     return (WEB_DIR / name).read_text().replace("__VERSION__", app.version)
 
 
+def load_pages_opened() -> None:
+    """When each page was last opened, as saved: so after a restart the figures for the
+    pages in use are worked out straight away, before anyone opens them."""
+    try:
+        saved = json.loads(database().get_setting("pages_opened") or "{}")
+        page_opened.update({k: float(v) for k, v in saved.items() if k in PAGES.values()})
+    except (ValueError, TypeError, sqlite3.Error):
+        pass
+
+
 def page(key: str) -> Response:
+    now = time.time()
     opened = page_opened.get(key)
-    page_opened[key] = time.monotonic()
-    if opened is None or time.monotonic() - opened >= PAGE_IN_USE:
+    page_opened[key] = now
+    if opened is None or now - opened >= PAGE_IN_USE:
         # Back in use: have its figures worked out in the background from now on.
         _kept.cleared = True
         _kept.wake.set()
+    if opened is None or now - opened >= 3600:  # saved now and then, not on every visit
+        database().set_setting("pages_opened", json.dumps(page_opened))
     # Always fetched fresh, so an update shows up without clearing the browser's cache.
     return Response(
         page_text(PAGE_FILES.get(key, f"{key}.html")),
@@ -699,6 +712,7 @@ CACHE_SECONDS = 10 * 60  # a kept figure older than this is worked out again
 # background: opening the page never waits for one that is merely a little old.
 STALE_SECONDS = 12 * 3600
 PAGE_IN_USE = 24 * 3600  # a page's figures are kept ready for a day after it was last opened
+SLOW_ROUNDS = 6  # figures over months and years: worked out afresh every hour
 KEEP_FRESH_SECONDS = 10 * 60  # how often the page's opening figures are worked out again
 CACHE_SIZE = 200
 
@@ -751,6 +765,10 @@ class Kept:
                     self._due.pop(key, None)
             return value
 
+    def holds(self, key: tuple) -> bool:
+        with self._lock:
+            return key in self._values
+
     def next_due(self) -> tuple[tuple, object] | None:
         """A figure that was served while old, to work out again."""
         with self._lock:
@@ -777,6 +795,7 @@ def kept(func):
     wrapper.fresh = lambda *args, **kwargs: _kept.get(
         key(args, kwargs), lambda: func(*args, **kwargs), fresh=True
     )
+    wrapper.held = lambda *args, **kwargs: _kept.holds(key(args, kwargs))
     return wrapper
 
 
@@ -790,27 +809,34 @@ def keep_figures_ready(stop: threading.Event) -> None:
     after anything they depend on has changed; and any served while old."""
     # By the page they are on, in the order they appear there, so the top is ready first.
     # The battery's size is shown on every page.
+    # Figures over months and years hardly change in ten minutes: those marked slow are
+    # worked out afresh every SLOW_ROUNDS rounds (an hour), unless something they depend on
+    # changes. A page asking for one more than ten minutes old still gets it brought up to
+    # date in the background.
     opening = (
-        ("", battery_size, ()),
-        ("now", heat_pump_and_weather, ()),  # the heat pump's split and COP under the costs
-        ("history", years, ()),
-        ("history", monthly_summary, (None,)),
-        ("history", yearly_report, (None,)),
-        ("history", daily_averages, ()),
-        ("history", system_performance, ("12m",)),
-        ("history", more_panels, ()),
-        ("devices", device_costs, ()),
-        ("devices", heat_pump_and_weather, ()),
-        ("money", payback_figures, ()),
-        ("money", bills, ()),
-        ("money", compare, ("12m",)),
-        ("money", switch_planner, (None,)),
+        ("", battery_size, (), True),
+        ("now", heat_pump_and_weather, (), False),  # the heat pump's split and COP
+        ("history", years, (), True),
+        ("history", monthly_summary, (None,), True),
+        ("history", yearly_report, (None,), True),
+        ("history", daily_averages, (), True),
+        ("history", system_performance, ("12m",), True),
+        ("history", more_panels, (), True),
+        ("devices", device_costs, (), False),
+        ("devices", heat_pump_and_weather, (), False),
+        ("money", payback_figures, (), True),
+        ("money", bills, (), True),
+        ("money", compare, ("12m",), True),
+        ("money", switch_planner, (None,), True),
     )
 
     def in_use(page_key: str) -> bool:
         """True for a page opened in the last day (and for what every page shows)."""
         opened = page_opened.get(page_key)
-        return not page_key or (opened is not None and time.monotonic() - opened < PAGE_IN_USE)
+        return not page_key or (opened is not None and time.time() - opened < PAGE_IN_USE)
+
+    load_pages_opened()
+    rounds = 0
 
     def attempt(work) -> None:
         try:
@@ -827,16 +853,20 @@ def keep_figures_ready(stop: threading.Event) -> None:
         if everything or _kept.cleared:
             _kept.cleared = False
             done = set()
-            for page_key, func, args in opening:
+            for page_key, func, args, slow in opening:
                 if stop.is_set():
                     return
                 # Only for pages in use: the rest are worked out when they are opened.
                 if not in_use(page_key) or (func, args) in done:
                     continue
                 done.add((func, args))
+                fresh = everything and (not slow or rounds % SLOW_ROUNDS == 0)
+                if slow and everything and not fresh and func.held(*args):
+                    continue  # kept, and not due to be worked out again yet
                 # After a change, anything the page has already asked for again is kept.
-                attempt(lambda f=func, a=args, e=everything: f.fresh(*a) if e else f(*a))
+                attempt(lambda f=func, a=args, e=fresh: f.fresh(*a) if e else f(*a))
             if everything:
+                rounds += 1
                 next_round = time.monotonic() + KEEP_FRESH_SECONDS
         while (due := _kept.next_due()) and not stop.is_set():
             key, work = due
@@ -871,14 +901,14 @@ def years() -> dict:
                     total["full_period"] and len(counted) == 12 and year < current.year
                 )
             result["years"].append({"year": year, "cost": total, "months": months})
-        add_income_and_gas(result, now)
+        add_income(result, now)
 
     return result
 
 
-def add_income_and_gas(result: dict, now: datetime) -> None:
-    """Extra income and gas for each month and year of `years`, over the same days as the
-    electricity, and the total: the electricity's net cost plus gas, less the income."""
+def add_income(result: dict, now: datetime) -> None:
+    """Extra income for each month and year of `years`, over the same days as the
+    electricity, and the net cost after it."""
     zone = local_timezone()
     today = now.astimezone(zone).date()
     income: dict[date, float] = {}
@@ -886,12 +916,9 @@ def add_income_and_gas(result: dict, now: datetime) -> None:
         if entry["amount_gbp"]:
             day = date.fromisoformat(entry["day"])
             income[day] = income.get(day, 0.0) + entry["amount_gbp"]
-    gas_on = gas_enabled()
-    daily_gas = gas.by_day(database().gas_rows()) if gas_on else {}
     result["has_income"] = bool(income)
-    result["has_gas"] = bool(daily_gas)
     for row in result["years"]:
-        totals = {"extra_income_gbp": 0.0, "gas_gbp": 0.0, "gas_days": 0, "days": 0}
+        earned_in_year = 0.0
         for month in row["months"]:
             if not month["cost"]:
                 continue
@@ -909,22 +936,12 @@ def add_income_and_gas(result: dict, now: datetime) -> None:
                 today,
             )
             earned = sum(v for d, v in income.items() if first <= d <= last)
-            used = gas.between(daily_gas, first, last)
             month["extra_income_gbp"] = round(earned, 2)
-            month["gas_gbp"] = used["gbp"] if daily_gas else None
-            month["gas_days"], month["days"] = used["days"], used["of_days"]
-            month["total_gbp"] = round(month["cost"]["net_gbp"] - earned + used["gbp"], 2)
-            totals["extra_income_gbp"] += earned
-            totals["gas_gbp"] += used["gbp"]
-            totals["gas_days"] += used["days"]
-            totals["days"] += used["of_days"]
+            month["total_gbp"] = round(month["cost"]["net_gbp"] - earned, 2)
+            earned_in_year += earned
         if row["cost"]:
-            row["extra_income_gbp"] = round(totals["extra_income_gbp"], 2)
-            row["gas_gbp"] = round(totals["gas_gbp"], 2) if daily_gas else None
-            row["gas_days"], row["days"] = totals["gas_days"], totals["days"]
-            row["total_gbp"] = round(
-                row["cost"]["net_gbp"] - totals["extra_income_gbp"] + totals["gas_gbp"], 2
-            )
+            row["extra_income_gbp"] = round(earned_in_year, 2)
+            row["total_gbp"] = round(row["cost"]["net_gbp"] - earned_in_year, 2)
 
 
 # --- Tariff rates ----------------------------------------------------------------------------
@@ -1480,7 +1497,8 @@ def heat_pump_and_weather() -> dict:
     counters = {name: Counter(series, HALF_HOURLY_GAP) for name, series in samples.items()}
     if not counters[devices.LOAD] or not counters[devices.IMPORT]:
         return result
-    days = devices.daily(counters, start, end, zone, schedule(), settings().ev_on_smart_load)
+    # Only the energy matters here, not the costs: the quick day-by-day kWh will do.
+    days = devices.daily_kwh(counters, start, end, zone, settings().ev_on_smart_load)
     used = {day: row["heat_pump_kwh"] for day, row in days.items() if "heat_pump_kwh" in row}
     hourly = database().series([weather.METRIC], start, 3600)[weather.METRIC]
     temperature = heating.daily_means(hourly, zone)
@@ -1522,42 +1540,54 @@ def heat_pump_and_weather() -> dict:
 # --- Running cost by device ----------------------------------------------------------------------
 
 
+@kept
+def device_days() -> dict:
+    """Each day's figures for the heat pump (or other smart load), the EV charger and the
+    rest of the house, from the first whole day every device counter was read. Worked out
+    once and shared: by Running costs by device, and by Averages."""
+    zone = local_timezone()
+    now = datetime.now(UTC)
+    firsts = [database().first_time(name) for name in (devices.LOAD, devices.IMPORT)]
+    if not all(firsts):
+        return {}
+    start = max(firsts).astimezone(zone)
+    samples = counter_samples(devices.ALL_COUNTERS, start - timedelta(days=1), HALF_HOURLY, now)
+    counters = {name: Counter(series, HALF_HOURLY_GAP) for name, series in samples.items()}
+    # From the first whole day every device counter was being read.
+    begun = devices.readings_start(counters)
+    if begun and begun > start:
+        midnight = local_midnight(begun, zone)
+        start = (midnight if midnight == begun else midnight + timedelta(days=1)).astimezone(zone)
+    return {
+        "days": devices.daily(counters, start, now, zone, schedule(), settings().ev_on_smart_load),
+        "heat_pump": bool(counters[devices.CIRCUIT] or counters[devices.HEAT_PUMP]),
+        "ev_charger": bool(counters[devices.EV]),
+    }
+
+
 @app.get("/api/devices")
 @kept
 def device_costs() -> dict:
     """What the heat pump (or other smart load), the EV charger and the rest of the house
     cost to run: today, and for every month and year with readings."""
-    zone = local_timezone()
-    now = datetime.now(UTC)
     result: dict = {"has_data": False, "smart_load_label": settings().smart_load_label}
-    firsts = [database().first_time(name) for name in (devices.LOAD, devices.IMPORT)]
-    if all(firsts):
-        start = max(firsts).astimezone(zone)
-        samples = counter_samples(devices.ALL_COUNTERS, start - timedelta(days=1), HALF_HOURLY, now)
-        counters = {name: Counter(series, HALF_HOURLY_GAP) for name, series in samples.items()}
-        # From the first whole day every device counter was being read.
-        begun = devices.readings_start(counters)
-        if begun and begun > start:
-            midnight = local_midnight(begun, zone)
-            start = (midnight if midnight == begun else midnight + timedelta(days=1)).astimezone(
-                zone
-            )
-        days = devices.daily(counters, start, now, zone, schedule(), settings().ev_on_smart_load)
-        today_local = now.astimezone(zone).date()
-        if days:
-            result = {
-                **result,
-                "has_data": True,
-                "from": min(days),
-                "heat_pump": bool(counters[devices.CIRCUIT] or counters[devices.HEAT_PUMP]),
-                "ev_charger": bool(counters[devices.EV]),
-                # Electricity stored in the battery and sold back to the grid.
-                "battery_export": any(
-                    row.get("battery_export_kwh", 0.0) >= 0.05 for row in days.values()
-                ),
-                "today": devices.total([days[today_local]]) if today_local in days else None,
-                **devices.by_month_and_year(days),
-            }
+    found = device_days()
+    days = found.get("days")
+    if days:
+        today_local = datetime.now(UTC).astimezone(local_timezone()).date()
+        result = {
+            **result,
+            "has_data": True,
+            "from": min(days),
+            "heat_pump": found["heat_pump"],
+            "ev_charger": found["ev_charger"],
+            # Electricity stored in the battery and sold back to the grid.
+            "battery_export": any(
+                row.get("battery_export_kwh", 0.0) >= 0.05 for row in days.values()
+            ),
+            "today": devices.total([days[today_local]]) if today_local in days else None,
+            **devices.by_month_and_year(days),
+        }
     return result
 
 
@@ -1587,29 +1617,16 @@ def daily_averages() -> dict:
     ).items():
         if day in days:
             days[day]["net_gbp"] = gbp
-    # The devices, from when every device counter was being read.
-    found = device_costs()
-    if found.get("has_data"):
-        device_samples = counter_samples(
-            devices.ALL_COUNTERS, start - timedelta(days=1), HALF_HOURLY, end
-        )
-        device_counters = {
-            name: Counter(series, HALF_HOURLY_GAP) for name, series in device_samples.items()
-        }
-        begun = devices.readings_start(device_counters)
-        device_start = (
-            max(start, local_midnight(begun, zone) + timedelta(days=1)) if begun else start
-        )
-        if device_start < end:
-            for day, row in devices.daily(
-                device_counters, device_start, end, zone, schedule(), settings().ev_on_smart_load
-            ).items():
-                if day in days:
-                    days[day].update(
-                        house_kwh=row.get("rest_kwh"),
-                        ev_kwh=row.get("ev_charger_kwh"),
-                        heat_pump_kwh=row.get("heat_pump_kwh"),
-                    )
+    # The devices, from when every device counter was being read (worked out once, for
+    # Running costs by device too).
+    found = device_days()
+    for day, row in found.get("days", {}).items():
+        if day in days:
+            days[day].update(
+                house_kwh=row.get("rest_kwh"),
+                ev_kwh=row.get("ev_charger_kwh"),
+                heat_pump_kwh=row.get("heat_pump_kwh"),
+            )
     # The outdoor temperature, where it has been recorded.
     hourly = database().series([weather.METRIC], start, 3600).get(weather.METRIC, [])
     for day, value in heating.daily_means(hourly, zone).items():
@@ -1843,7 +1860,7 @@ def yearly_report(year: Annotated[int | None, Query(ge=2000, le=2200)] = None) -
 
 # Settings worth carrying to another install. Left out: how far old readings have been
 # thinned, which belongs to this install's readings.
-BACKUP_SETTINGS = ("payback", "planner", "layout", "axle_rate_p", "heating_design", "gas")
+BACKUP_SETTINGS = ("payback", "planner", "layout", "axle_rate_p", "heating_design")
 BACKUP_FORMAT = 1
 
 
@@ -1898,7 +1915,7 @@ def checked_backup(body: bytes) -> tuple[dict[str, list[dict]], dict[str, str]]:
             build_tariff(**{**row, "import_bands": bands})
             if "effective_from" in row:
                 date.fromisoformat(row["effective_from"])
-        for row in [*tables.get("bills", []), *tables.get("gas_bills", [])]:
+        for row in tables.get("bills", []):
             date.fromisoformat(row["first_day"]), date.fromisoformat(row["last_day"])
         for row in tables.get("extra_income", []):
             date.fromisoformat(row["day"])
@@ -1910,7 +1927,7 @@ def checked_backup(body: bytes) -> tuple[dict[str, list[dict]], dict[str, str]]:
         settings_ = {}
         for key in BACKUP_SETTINGS:
             if key in stored:
-                if key not in ("axle_rate_p", "gas"):  # the rest are JSON
+                if key != "axle_rate_p":  # the rest are JSON
                     json.loads(stored[key])
                 settings_[key] = str(stored[key])
     except (KeyError, TypeError, ValueError) as exc:
@@ -1938,7 +1955,6 @@ async def restore_backup(request: Request, dry_run: bool = True) -> dict:
         "bills": len(tables.get("bills", [])),
         "extra_income": len(tables.get("extra_income", [])),
         "notes": len(tables.get("notes", [])),
-        "gas_bills": len(tables.get("gas_bills", [])),
         "settings": sorted(stored),
         "saved": json.loads(body).get("saved"),
         "version": json.loads(body).get("version"),
@@ -2092,68 +2108,6 @@ def delete_bill(row_id: int) -> dict:
         raise HTTPException(status_code=404, detail="That bill is not in the list")
     clear_caches()
     return bills()
-
-
-# --- Gas ----------------------------------------------------------------------------------------
-
-
-class GasIn(BaseModel):
-    """A gas bill: its dates, everything it charged and, if the bill says, the kWh used."""
-
-    first_day: date
-    last_day: date
-    cost_gbp: float = Field(ge=0, le=100_000)
-    kwh: float | None = Field(default=None, ge=0, le=1_000_000)
-    note: str = Field(default="", max_length=80)
-
-
-class GasSettingsIn(BaseModel):
-    enabled: bool
-
-
-def gas_enabled() -> bool:
-    """False once the user has said the home has no gas."""
-    return database().get_setting("gas") != "off"
-
-
-@app.get("/api/gas")
-def gas_bills() -> dict:
-    return {"enabled": gas_enabled(), **gas.summary(database().gas_rows())}
-
-
-@app.post("/api/gas")
-def save_gas_bill(body: GasIn, id: int | None = None) -> dict:  # noqa: A002 - matches the API
-    if body.last_day < body.first_day:
-        raise HTTPException(status_code=422, detail="The last day is before the first")
-    if (body.last_day - body.first_day).days > 400:
-        raise HTTPException(status_code=422, detail="A gas bill can cover at most about a year")
-    clash = gas.overlapping(database().gas_rows(), body.first_day, body.last_day, skip=id)
-    if clash:
-        raise HTTPException(
-            status_code=422,
-            detail=f"Those dates overlap the bill for {clash['first_day']} to "
-            f"{clash['last_day']}: each day can only be on one bill",
-        )
-    database().save_gas(body.model_dump(), id)
-    clear_caches()
-    return gas_bills()
-
-
-@app.delete("/api/gas/{row_id}")
-def delete_gas_bill(row_id: int) -> dict:
-    if not database().delete_gas(row_id):
-        raise HTTPException(status_code=404, detail="That gas bill is not in the list")
-    clear_caches()
-    return gas_bills()
-
-
-@app.post("/api/gas/settings")
-def save_gas_settings(body: GasSettingsIn) -> dict:
-    """Whether the home has gas. Off hides the gas section and leaves gas out of the totals;
-    any bills already entered are kept."""
-    database().set_setting("gas", "on" if body.enabled else "off")
-    clear_caches()
-    return gas_bills()
 
 
 # --- Extra income ----------------------------------------------------------------------------
@@ -2618,13 +2572,30 @@ async def import_older_history(
 
 
 # Last, so it never hides another address.
+@lru_cache(maxsize=4)
+def packed(name: str) -> tuple[bytes, bytes]:
+    """A shared file, and the same compressed once, so it is not compressed afresh for
+    every visit (the script is around 200 KB)."""
+    raw = (WEB_DIR / name).read_bytes()
+    return raw, gzip.compress(raw, compresslevel=9, mtime=0)
+
+
 @app.get("/{name}", include_in_schema=False)
-def other_page(name: str) -> Response:
+def other_page(name: str, request: Request) -> Response:
     if name in ("app.css", "app.js"):
-        return FileResponse(
-            WEB_DIR / name,
+        raw, small = packed(name)
+        compressed = "gzip" in request.headers.get("accept-encoding", "")
+        headers = {
             # Named with the version (?v=), so it can be kept until the app is updated.
-            headers={"Cache-Control": "public, max-age=31536000, immutable"},
+            "Cache-Control": "public, max-age=31536000, immutable",
+            "Vary": "Accept-Encoding",
+        }
+        if compressed:
+            headers["Content-Encoding"] = "gzip"
+        return Response(
+            small if compressed else raw,
+            media_type="text/css" if name.endswith(".css") else "text/javascript",
+            headers=headers,
         )
     if name not in PAGES or not name:
         raise HTTPException(status_code=404, detail="Not found")

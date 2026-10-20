@@ -192,54 +192,6 @@
     </details>
   </div>
 
-  <div id="gas-section">
-    <h2 id="gas-heading">Gas</h2>
-    <div class="chart">
-      <div id="gas-off" hidden>
-        <div class="hint" style="margin-top: 0;">Gas is switched off for this home, so it is left out of the totals
-          under Costs by year. Any gas bills entered before are kept.</div>
-        <div class="actions" style="margin-top: 10px;"><button type="button" id="gas-on-button">This home has gas</button></div>
-      </div>
-      <div id="gas-body">
-        <div class="hint" id="gas-summary" style="margin-top: 0;"></div>
-        <div class="table-scroll">
-          <table>
-            <thead><tr><th>Bill period</th><th class="num">Days</th><th class="num">Used</th><th class="num">Cost</th>
-              <th class="num">A day</th><th class="num">All-in price</th><th></th></tr></thead>
-            <tbody id="gas-rows"></tbody>
-            <tbody id="gas-years" style="border-top: 2px solid var(--line);"></tbody>
-          </table>
-        </div>
-        <details id="gas-editor">
-          <summary>Add a gas bill</summary>
-          <div class="hint">There are no gas sensors to read, so enter each gas bill or statement here: the dates it
-            covers and everything it charged, standing charge and VAT included. Add the kWh used if the bill gives it,
-            for the price per kWh. Each bill's cost is spread evenly over its days, and counted in Costs by year on the
-            History page. Each day can only be on one bill.</div>
-          <form id="gas-form">
-            <div class="field-row">
-              <label>First day billed <input type="date" name="first_day" required></label>
-              <label>Last day billed <input type="date" name="last_day" required></label>
-            </div>
-            <div class="field-row">
-              <label>Cost (<span class="major">£</span>) <input type="number" name="cost_gbp" min="0" step="0.01" required></label>
-              <label>Used (kWh, optional) <input type="number" name="kwh" min="0" step="0.1"></label>
-              <label style="flex: 2 1 220px;">Note (optional) <input type="text" name="note" maxlength="80"></label>
-            </div>
-            <div class="actions">
-              <button class="primary" type="submit">Save gas bill</button>
-              <button type="button" id="gas-cancel" hidden>Cancel</button>
-            </div>
-            <div id="gas-message" style="grid-column: 1 / -1; font-size: 13px; min-height: 18px; color: var(--muted);"></div>
-          </form>
-        </details>
-        <div class="actions" style="margin-top: 10px;">
-          <button type="button" class="link" id="gas-off-button" style="color: var(--muted);">This home has no gas: hide this</button>
-        </div>
-      </div>
-    </div>
-  </div>
-
   <div class="nav" style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
     <h2 id="compare-heading">Compare tariffs</h2>
     <select id="compare-period" aria-label="Period to compare over">

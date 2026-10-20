@@ -25,7 +25,7 @@ from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from .tariff import Schedule
-from .usage import Counter, half_hour_slots
+from .usage import Counter, half_hour_pieces
 
 LOAD = "load_energy_total"
 CIRCUIT = "smart_load_energy_total"
@@ -115,8 +115,50 @@ def _split(
     }
 
 
-def _kwh(counter: Counter, start: datetime, end: datetime) -> float:
-    return max(0.0, counter.between(start, end) or 0.0)
+def _kwh(counter: Counter | None, start: float, end: float) -> float:
+    """kWh a counter moved between two moments given in seconds (0 without readings)."""
+    if not counter:
+        return 0.0
+    return max(0.0, counter.at_stamp(end) - counter.at_stamp(start))
+
+
+def _slots(start: datetime, end: datetime):
+    """Each half-hour piece of the period: its start, and both ends in seconds."""
+    for piece_start, _, a, b in half_hour_pieces(start, end):
+        yield piece_start, a, b
+
+
+def daily_kwh(
+    counters: dict[str, Counter],
+    start: datetime,
+    end: datetime,
+    timezone: ZoneInfo,
+    ev_on_smart_load: bool = True,
+) -> dict[date, dict]:
+    """kWh each device used on each local day: as `daily` gives, without the costs, and much
+    quicker, as only each day's start and end readings are needed."""
+    load, circuit, ev, _, meter = (counters.get(name) for name in COUNTERS)
+    has = (bool(circuit), bool(ev))
+    days: dict[date, dict] = {}
+    day = start.astimezone(timezone).date()
+    while True:
+        midnight = datetime(day.year, day.month, day.day, tzinfo=timezone)
+        following = day + timedelta(days=1)
+        next_midnight = datetime(following.year, following.month, following.day, tzinfo=timezone)
+        a, b = max(midnight, start).timestamp(), min(next_midnight, end).timestamp()
+        if a >= b:
+            break
+        total, parts = _split(
+            _kwh(load, a, b),
+            _kwh(circuit, a, b),
+            _kwh(ev, a, b),
+            has,
+            ev_on_smart_load,
+            _kwh(meter, a, b) if meter else None,
+        )
+        days[day] = {"total_kwh": total, **{f"{name}_kwh": kwh for name, kwh in parts.items()}}
+        day = following
+    return days
 
 
 class _Battery:
@@ -166,20 +208,20 @@ def _followed(
     first = start - WARM_UP
 
     # Round-trip losses: the battery gives back less than it takes in.
-    charged = charge.between(first, end) or 0.0
-    returned = discharge.between(first, end) or 0.0
+    charged = _kwh(charge, first.timestamp(), end.timestamp())
+    returned = _kwh(discharge, first.timestamp(), end.timestamp())
     efficiency = min(1.0, max(0.7, returned / charged)) if charged > 1 else 0.9
 
     battery = _Battery(efficiency)
     days: dict[date, dict] = {}
     raw: dict[date, dict] = {}  # kWh each counter moved, by day
-    for piece_start, piece_end in half_hour_slots(first, end):
+    for piece_start, a, b in _slots(first, end):
         local = piece_start.astimezone(timezone)
         tariff = schedule.on(local.date())
         price = tariff.import_price(local) / 100
         export_price = tariff.export_p_per_kwh / 100
         sun, bought, sold, into, out_of = (
-            _kwh(c, piece_start, piece_end) for c in (solar, imports, exports, charge, discharge)
+            _kwh(c, a, b) for c in (solar, imports, exports, charge, discharge)
         )
 
         # Where each source went: export from solar first, the battery from solar before
@@ -206,10 +248,10 @@ def _followed(
         house_true = grid_used * price + sun_used * export_price + battery_cost_true
 
         used = {
-            "load": _kwh(load, piece_start, piece_end),
-            "circuit": _kwh(circuit, piece_start, piece_end) if circuit else 0.0,
-            "ev": _kwh(ev, piece_start, piece_end) if ev else 0.0,
-            "meter": _kwh(meter, piece_start, piece_end) if meter else 0.0,
+            "load": _kwh(load, a, b),
+            "circuit": _kwh(circuit, a, b),
+            "ev": _kwh(ev, a, b),
+            "meter": _kwh(meter, a, b),
         }
         total, parts = _split(
             used["load"],
@@ -268,7 +310,7 @@ def _shared_by_day(
     solar, exports = (counters.get(name) for name in SOLAR_COUNTERS)
     valued = bool(solar) and bool(exports)
     raw: dict[date, dict] = {}
-    for piece_start, piece_end in half_hour_slots(start, end):
+    for piece_start, a, b in _slots(start, end):
         local = piece_start.astimezone(timezone)
         day = raw.setdefault(
             local.date(),
@@ -283,12 +325,11 @@ def _shared_by_day(
             },
         )
         if valued:
-            day["solar"] += _kwh(solar, piece_start, piece_end)
-            day["export"] += _kwh(exports, piece_start, piece_end)
+            day["solar"] += _kwh(solar, a, b)
+            day["export"] += _kwh(exports, a, b)
         for key, counter in (("load", load), ("circuit", circuit), ("ev", ev), ("meter", meter)):
-            if counter:
-                day[key] += _kwh(counter, piece_start, piece_end)
-        imported = _kwh(imports, piece_start, piece_end)
+            day[key] += _kwh(counter, a, b)
+        imported = _kwh(imports, a, b)
         day["pence"] += imported * schedule.on(local.date()).import_price(local)
 
     days: dict[date, dict] = {}

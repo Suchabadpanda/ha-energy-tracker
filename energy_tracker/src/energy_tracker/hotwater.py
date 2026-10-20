@@ -15,7 +15,7 @@ from bisect import bisect_right
 from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from .usage import Counter, half_hour_slots
+from .usage import Counter, half_hour_pieces
 
 TANK = "hot_water_tank_temperature"
 RISE_C = 1.0  # a half hour in which the tank rose this much is a reheat
@@ -63,16 +63,16 @@ def split(
     Days with too few tank readings are left out, to be estimated instead.
     """
     days: dict[date, dict] = {}
-    for piece_start, piece_end in half_hour_slots(start, end):
+    for piece_start, piece_end, a, b in half_hour_pieces(start, end):
         day = days.setdefault(
             piece_start.astimezone(timezone).date(),
             {"hot_water_kwh": 0.0, "heating_kwh": 0.0, "covered_hours": 0.0, "hours": 0.0},
         )
         hours = (piece_end - piece_start).total_seconds() / 3600
         day["hours"] += hours
-        used = max(0.0, heat_pump.between(piece_start, piece_end) or 0.0)
+        used = max(0.0, heat_pump.kwh(a, b) or 0.0)
         if ev_on_circuit and ev:
-            used = max(0.0, used - (ev.between(piece_start, piece_end) or 0.0))
+            used = max(0.0, used - (ev.kwh(a, b) or 0.0))
         before, after = tank.at(piece_start), tank.at(piece_end)
         if before is None or after is None:
             day["heating_kwh"] += used  # unknown: kept out of the measured share below

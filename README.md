@@ -102,7 +102,6 @@ Five pages, linked at the top: **Now** (live figures and today's and this month'
 - **Notes**: pin a note to a day; it shows as a marker on the charts.
 - **Backup and restore**: everything you have entered saved as one file, to keep or to move
   to another install.
-- **Gas**: gas bills entered by hand, added to the costs by year (optional, for homes with gas).
 - **Bill check**: your bill's figures beside what the tracker measured for the same dates.
   It can read them from an E.ON Next or Octopus Energy bill PDF, without the file leaving
   your device. Bills are grouped by year, with totals for each year and overall. If a bill's

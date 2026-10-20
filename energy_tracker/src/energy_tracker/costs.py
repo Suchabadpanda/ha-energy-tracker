@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from .tariff import Schedule
-from .usage import Counter, half_hour_slots
+from .usage import Counter, half_hour_pieces
 
 
 def cost_between(
@@ -31,11 +31,11 @@ def cost_between(
     import_kwh = export_kwh = 0.0
     published_kwh = published_pence = 0.0  # import priced at published half-hourly prices
 
-    for piece_start, piece_end in half_hour_slots(start, end):
+    for piece_start, _, a, b in half_hour_pieces(start, end):
         local = piece_start.astimezone(timezone)
         tariff = schedule.on(local.date())
-        imported = imports.between(piece_start, piece_end)
-        exported = exports.between(piece_start, piece_end)
+        imported = imports.kwh(a, b)
+        exported = exports.kwh(a, b)
         published = tariff.published_price(piece_start)
         if published is not None:
             price = published

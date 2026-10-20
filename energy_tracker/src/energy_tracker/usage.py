@@ -94,6 +94,13 @@ class Counter:
             return None
         return max(0.0, self.at_stamp(end.timestamp()) - self.at_stamp(start.timestamp()))
 
+    def kwh(self, start: float, end: float) -> float | None:
+        """`between`, for moments given in seconds since 1970 (as `half_hour_pieces` gives):
+        quicker in loops over many half hours."""
+        if not self.times:
+            return None
+        return max(0.0, self.at_stamp(end) - self.at_stamp(start))
+
     def uncovered(self, start: datetime, end: datetime) -> timedelta:
         """How much of the period has no readings (so its figures are interpolated)."""
         if not self.times:
@@ -137,6 +144,20 @@ def _half_hour_slots(start: datetime, end: datetime) -> tuple[tuple[datetime, da
         slots.append((cursor, piece_end))
         cursor = piece_end
     return tuple(slots)
+
+
+def half_hour_pieces(
+    start: datetime, end: datetime
+) -> tuple[tuple[datetime, datetime, float, float], ...]:
+    """`half_hour_slots`, with each piece's ends also in seconds since 1970."""
+    return _half_hour_pieces(start.astimezone(UTC), end.astimezone(UTC))
+
+
+@lru_cache(maxsize=64)
+def _half_hour_pieces(
+    start: datetime, end: datetime
+) -> tuple[tuple[datetime, datetime, float, float], ...]:
+    return tuple((a, b, a.timestamp(), b.timestamp()) for a, b in _half_hour_slots(start, end))
 
 
 def window_start(counters: list[Counter], period_start: datetime) -> datetime | None:

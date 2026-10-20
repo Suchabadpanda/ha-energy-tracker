@@ -11,7 +11,7 @@ from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from .tariff import Schedule
-from .usage import Counter, half_hour_slots
+from .usage import Counter, half_hour_pieces
 
 YEAR = 365
 MAX_PROJECTION_DAYS = 60 * YEAR  # stop looking for a break-even date after 60 years
@@ -31,16 +31,16 @@ def daily_costs(
     Pass `exports=None` for a house that exports nothing.
     """
     pence: dict[date, float] = {}
-    for piece_start, piece_end in half_hour_slots(start, end):
+    for piece_start, _, a, b in half_hour_pieces(start, end):
         local = piece_start.astimezone(timezone)
         day = local.date()
         tariff = schedule.on(day)
         if day not in pence:
             pence[day] = tariff.standing_charge_p_per_day * tariff.vat_multiplier
-        imported = imports.between(piece_start, piece_end)
+        imported = imports.kwh(a, b)
         pence[day] += imported * tariff.import_price(local)
         if exports is not None:
-            pence[day] -= exports.between(piece_start, piece_end) * tariff.export_p_per_kwh
+            pence[day] -= exports.kwh(a, b) * tariff.export_p_per_kwh
     return {day: value / 100 for day, value in pence.items()}
 
 
@@ -60,11 +60,11 @@ def daily_solar_value(
     beyond this is put down to the battery.
     """
     pence: dict[date, float] = {}
-    for piece_start, piece_end in half_hour_slots(start, end):
+    for piece_start, _, a, b in half_hour_pieces(start, end):
         local = piece_start.astimezone(timezone)
         day = local.date()
-        generated = solar.between(piece_start, piece_end)
-        used = min(generated, load.between(piece_start, piece_end))
+        generated = solar.kwh(a, b)
+        used = min(generated, load.kwh(a, b))
         buying = import_prices.on(day)
         pence[day] = (
             pence.get(day, 0.0)

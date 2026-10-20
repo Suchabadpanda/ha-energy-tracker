@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.40.0
+
+- **Gas removed**: the Gas section, its column under Costs by year and its backup entries
+  are gone, and any gas bills entered in 0.39.0 are deleted. Extra income under Costs by
+  year stays.
+- **Quicker**, measured on a year of readings at full detail:
+  - Averages works out in about a third of the time, and in a fraction of a second when
+    Running costs by device has already been worked out, as both now share one set of
+    day-by-day device figures instead of each working them out.
+  - The last reading of each energy counter in every half hour is now kept in a small
+    summary table, so figures over months and years no longer read every stored reading
+    each time. Opening the History page from cold takes about 35% less time; the month's
+    cost, asked for every 10 seconds on the Now page, about 85% less.
+  - Heat pump and the weather only needs each day's kWh, and now works just that out.
+  - The half-hour loops behind every cost figure do less work per half hour.
+  - The page's script is compressed once (to about a quarter of its size) rather than for
+    every visit.
+- **Less work in the background**: figures over months and years (Costs by year, the
+  reports, Averages, Performance, Return on investment, Compare tariffs, the planner) are
+  worked out afresh every hour instead of every 10 minutes, unless something they depend on
+  changes. The pages in use are remembered across a restart, so their figures are ready
+  again straight after one.
+
+### How to check this release
+
+1. After updating, the add-on's log shows no errors. The first time a page with long-range
+   figures opens it may take a few seconds, while the half-hour summary is filled in; after
+   that it is quicker than before.
+2. Money page: there is no Gas section. History → Costs by year: no Gas column; with extra
+   income, the Extra income and Net after income columns are still there.
+3. History → Averages: opens noticeably quicker than in 0.39.0, with the same figures as
+   before (compare a month you noted down, if you have one).
+4. Devices → Running costs by device, and the costs on the Now page, show the same figures
+   as before for past months.
+5. Restart the add-on, wait a minute, then open the History page: its sections should be
+   ready straight away, as the page was in use before the restart.
+
 ## 0.39.0
 
 - **Costs by year** shows **Extra income** (as a minus) and **Net after income** when there

@@ -12,7 +12,7 @@ from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from .tariff import Schedule
-from .usage import Counter, half_hour_slots
+from .usage import Counter, half_hour_pieces
 
 # Column name -> the counter it is worked out from.
 ENERGY_COLUMNS = {
@@ -112,12 +112,12 @@ def rows(
         priced = imports and exports and row.get("import_kwh") is not None
         if priced:
             import_pence = export_pence = 0.0
-            for piece_start, piece_end in half_hour_slots(begin, upto):
+            for piece_start, _, a, b in half_hour_pieces(begin, upto):
                 local = piece_start.astimezone(timezone)
                 tariff = schedule.on(local.date())
                 rate = tariff.import_price(local)
-                import_pence += imports.between(piece_start, piece_end) * rate
-                export_pence += exports.between(piece_start, piece_end) * tariff.export_p_per_kwh
+                import_pence += imports.kwh(a, b) * rate
+                export_pence += exports.kwh(a, b) * tariff.export_p_per_kwh
             row["import_cost_gbp"] = round(import_pence / 100, 4)
             row["export_credit_gbp"] = round(export_pence / 100, 4)
         elif imports and exports:

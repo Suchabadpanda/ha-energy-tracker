@@ -24,11 +24,12 @@ def empty_database():
     with closing(sqlite3.connect(database.path)) as conn, conn:
         for table in (
             "readings",
+            "half_hours",
+            "half_hours_done",
             "tariff_periods",
             "comparison_tariffs",
             "extra_income",
             "bills",
-            "gas_bills",
             "slot_prices",
             "notes",
             "meta",

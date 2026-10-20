@@ -15,7 +15,7 @@ from zoneinfo import ZoneInfo
 
 from .planner import Battery, simulate
 from .tariff import Schedule
-from .usage import Counter, half_hour_slots
+from .usage import Counter, half_hour_pieces
 
 EXTRA_KWP = (1.0, 2.0, 3.0, 4.0)
 HALF_HOUR = timedelta(minutes=30)
@@ -39,6 +39,13 @@ class ScaledSolar:
             return made
         return min(made, self.limit_kw * (end - start) / timedelta(hours=1))
 
+    def kwh(self, start: float, end: float) -> float:
+        """`between`, for moments in seconds since 1970."""
+        made = self.measured.kwh(start, end) * self.scale
+        if self.limit_kw is None:
+            return made
+        return min(made, self.limit_kw * (end - start) / 3600)
+
 
 def estimate_kwp(solar: Counter, start: datetime, end: datetime) -> float | None:
     """A rough size for the panels: the most they have produced in any half hour, as power.
@@ -47,17 +54,17 @@ def estimate_kwp(solar: Counter, start: datetime, end: datetime) -> float | None
     user's own figure is better and is asked for.
     """
     best = 0.0
-    for piece_start, piece_end in half_hour_slots(start, end):
+    for piece_start, piece_end, a, b in half_hour_pieces(start, end):
         if piece_end - piece_start == HALF_HOUR:
-            best = max(best, solar.between(piece_start, piece_end) * 2)
+            best = max(best, solar.kwh(a, b) * 2)
     return round(best / 0.85, 1) if best > 0 else None
 
 
 def clipped(solar: Counter, start: datetime, end: datetime, scale: float, limit_kw: float) -> float:
     """kWh lost to the inverter limit with the panels scaled up."""
     lost = 0.0
-    for piece_start, piece_end in half_hour_slots(start, end):
-        made = solar.between(piece_start, piece_end) * scale
+    for piece_start, piece_end, a, b in half_hour_pieces(start, end):
+        made = solar.kwh(a, b) * scale
         lost += max(0.0, made - limit_kw * (piece_end - piece_start) / timedelta(hours=1))
     return lost
 

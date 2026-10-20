@@ -16,7 +16,7 @@ from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
 from .tariff import Schedule
-from .usage import Counter, half_hour_slots
+from .usage import Counter, half_hour_pieces
 
 
 def shifted_import(
@@ -37,10 +37,10 @@ def shifted_import(
         return None
     days: dict[date, list[tuple[float, float, float]]] = {}  # price, fixed kWh, movable kWh
     fastest = 0.0
-    for piece_start, piece_end in half_hour_slots(start, end):
+    for piece_start, _, a, b in half_hour_pieces(start, end):
         local = piece_start.astimezone(timezone)
-        imported = imports.between(piece_start, piece_end)
-        charging = sum(counter.between(piece_start, piece_end) for counter in flexible)
+        imported = imports.kwh(a, b)
+        charging = sum(counter.kwh(a, b) for counter in flexible)
         movable = min(imported, charging)
         fastest = max(fastest, movable)
         price = schedule.on(local.date()).import_price(local)
