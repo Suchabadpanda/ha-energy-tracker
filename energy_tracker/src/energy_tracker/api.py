@@ -32,6 +32,7 @@ from . import (
     billreader,
     collector,
     devices,
+    gas,
     heating,
     heatpump,
     history,
@@ -125,7 +126,7 @@ async def lifespan(_: FastAPI):
         await asyncio.to_thread(thread.join, 10)
 
 
-app = FastAPI(title="Energy Tracker", version="0.38.0", lifespan=lifespan)
+app = FastAPI(title="Energy Tracker", version="0.39.0", lifespan=lifespan)
 # The page and its chart data are mostly text: sent compressed, they are a quarter the size.
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
@@ -870,8 +871,60 @@ def years() -> dict:
                     total["full_period"] and len(counted) == 12 and year < current.year
                 )
             result["years"].append({"year": year, "cost": total, "months": months})
+        add_income_and_gas(result, now)
 
     return result
+
+
+def add_income_and_gas(result: dict, now: datetime) -> None:
+    """Extra income and gas for each month and year of `years`, over the same days as the
+    electricity, and the total: the electricity's net cost plus gas, less the income."""
+    zone = local_timezone()
+    today = now.astimezone(zone).date()
+    income: dict[date, float] = {}
+    for entry in database().income_rows():
+        if entry["amount_gbp"]:
+            day = date.fromisoformat(entry["day"])
+            income[day] = income.get(day, 0.0) + entry["amount_gbp"]
+    gas_on = gas_enabled()
+    daily_gas = gas.by_day(database().gas_rows()) if gas_on else {}
+    result["has_income"] = bool(income)
+    result["has_gas"] = bool(daily_gas)
+    for row in result["years"]:
+        totals = {"extra_income_gbp": 0.0, "gas_gbp": 0.0, "gas_days": 0, "days": 0}
+        for month in row["months"]:
+            if not month["cost"]:
+                continue
+            # The days the electricity was counted: from the first reading, up to today.
+            since = month["cost"]["since"]
+            first = max(
+                date.fromisoformat(month["key"] + "-01"),
+                (since if isinstance(since, datetime) else datetime.fromisoformat(since))
+                .astimezone(zone)
+                .date(),
+            )
+            last = min(
+                following_month(month_start(*map(int, month["key"].split("-")))).date()
+                - timedelta(days=1),
+                today,
+            )
+            earned = sum(v for d, v in income.items() if first <= d <= last)
+            used = gas.between(daily_gas, first, last)
+            month["extra_income_gbp"] = round(earned, 2)
+            month["gas_gbp"] = used["gbp"] if daily_gas else None
+            month["gas_days"], month["days"] = used["days"], used["of_days"]
+            month["total_gbp"] = round(month["cost"]["net_gbp"] - earned + used["gbp"], 2)
+            totals["extra_income_gbp"] += earned
+            totals["gas_gbp"] += used["gbp"]
+            totals["gas_days"] += used["days"]
+            totals["days"] += used["of_days"]
+        if row["cost"]:
+            row["extra_income_gbp"] = round(totals["extra_income_gbp"], 2)
+            row["gas_gbp"] = round(totals["gas_gbp"], 2) if daily_gas else None
+            row["gas_days"], row["days"] = totals["gas_days"], totals["days"]
+            row["total_gbp"] = round(
+                row["cost"]["net_gbp"] - totals["extra_income_gbp"] + totals["gas_gbp"], 2
+            )
 
 
 # --- Tariff rates ----------------------------------------------------------------------------
@@ -1790,7 +1843,7 @@ def yearly_report(year: Annotated[int | None, Query(ge=2000, le=2200)] = None) -
 
 # Settings worth carrying to another install. Left out: how far old readings have been
 # thinned, which belongs to this install's readings.
-BACKUP_SETTINGS = ("payback", "planner", "layout", "axle_rate_p", "heating_design")
+BACKUP_SETTINGS = ("payback", "planner", "layout", "axle_rate_p", "heating_design", "gas")
 BACKUP_FORMAT = 1
 
 
@@ -1845,7 +1898,7 @@ def checked_backup(body: bytes) -> tuple[dict[str, list[dict]], dict[str, str]]:
             build_tariff(**{**row, "import_bands": bands})
             if "effective_from" in row:
                 date.fromisoformat(row["effective_from"])
-        for row in tables.get("bills", []):
+        for row in [*tables.get("bills", []), *tables.get("gas_bills", [])]:
             date.fromisoformat(row["first_day"]), date.fromisoformat(row["last_day"])
         for row in tables.get("extra_income", []):
             date.fromisoformat(row["day"])
@@ -1857,12 +1910,13 @@ def checked_backup(body: bytes) -> tuple[dict[str, list[dict]], dict[str, str]]:
         settings_ = {}
         for key in BACKUP_SETTINGS:
             if key in stored:
-                if key != "axle_rate_p":
+                if key not in ("axle_rate_p", "gas"):  # the rest are JSON
                     json.loads(stored[key])
                 settings_[key] = str(stored[key])
     except (KeyError, TypeError, ValueError) as exc:
         raise ValueError(f"That settings file is damaged ({exc})") from None
-    return {table: tables.get(table, []) for table in Database.BACKED_UP}, settings_
+    # A table missing from an older file is left as it is when restoring.
+    return {table: tables[table] for table in Database.BACKED_UP if table in tables}, settings_
 
 
 @app.post("/api/restore")
@@ -1880,10 +1934,11 @@ async def restore_backup(request: Request, dry_run: bool = True) -> dict:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     found = {
         "tariff_periods": len(tables["tariff_periods"]),
-        "comparison_tariffs": len(tables["comparison_tariffs"]),
-        "bills": len(tables["bills"]),
-        "extra_income": len(tables["extra_income"]),
-        "notes": len(tables["notes"]),
+        "comparison_tariffs": len(tables.get("comparison_tariffs", [])),
+        "bills": len(tables.get("bills", [])),
+        "extra_income": len(tables.get("extra_income", [])),
+        "notes": len(tables.get("notes", [])),
+        "gas_bills": len(tables.get("gas_bills", [])),
         "settings": sorted(stored),
         "saved": json.loads(body).get("saved"),
         "version": json.loads(body).get("version"),
@@ -2037,6 +2092,68 @@ def delete_bill(row_id: int) -> dict:
         raise HTTPException(status_code=404, detail="That bill is not in the list")
     clear_caches()
     return bills()
+
+
+# --- Gas ----------------------------------------------------------------------------------------
+
+
+class GasIn(BaseModel):
+    """A gas bill: its dates, everything it charged and, if the bill says, the kWh used."""
+
+    first_day: date
+    last_day: date
+    cost_gbp: float = Field(ge=0, le=100_000)
+    kwh: float | None = Field(default=None, ge=0, le=1_000_000)
+    note: str = Field(default="", max_length=80)
+
+
+class GasSettingsIn(BaseModel):
+    enabled: bool
+
+
+def gas_enabled() -> bool:
+    """False once the user has said the home has no gas."""
+    return database().get_setting("gas") != "off"
+
+
+@app.get("/api/gas")
+def gas_bills() -> dict:
+    return {"enabled": gas_enabled(), **gas.summary(database().gas_rows())}
+
+
+@app.post("/api/gas")
+def save_gas_bill(body: GasIn, id: int | None = None) -> dict:  # noqa: A002 - matches the API
+    if body.last_day < body.first_day:
+        raise HTTPException(status_code=422, detail="The last day is before the first")
+    if (body.last_day - body.first_day).days > 400:
+        raise HTTPException(status_code=422, detail="A gas bill can cover at most about a year")
+    clash = gas.overlapping(database().gas_rows(), body.first_day, body.last_day, skip=id)
+    if clash:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Those dates overlap the bill for {clash['first_day']} to "
+            f"{clash['last_day']}: each day can only be on one bill",
+        )
+    database().save_gas(body.model_dump(), id)
+    clear_caches()
+    return gas_bills()
+
+
+@app.delete("/api/gas/{row_id}")
+def delete_gas_bill(row_id: int) -> dict:
+    if not database().delete_gas(row_id):
+        raise HTTPException(status_code=404, detail="That gas bill is not in the list")
+    clear_caches()
+    return gas_bills()
+
+
+@app.post("/api/gas/settings")
+def save_gas_settings(body: GasSettingsIn) -> dict:
+    """Whether the home has gas. Off hides the gas section and leaves gas out of the totals;
+    any bills already entered are kept."""
+    database().set_setting("gas", "on" if body.enabled else "off")
+    clear_caches()
+    return gas_bills()
 
 
 # --- Extra income ----------------------------------------------------------------------------

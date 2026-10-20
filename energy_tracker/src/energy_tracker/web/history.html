@@ -147,20 +147,25 @@
       <table>
         <thead><tr><th>Year</th><th class="num">Imported</th><th class="num">Import cost</th>
           <th class="num">Export credit</th><th class="num">Standing charge</th>
-          <th class="num">Net cost</th><th class="num">Saved by off-peak</th></tr></thead>
+          <th class="num">Net cost</th><th class="num" id="years-income-head" hidden>Extra income</th>
+          <th class="num" id="years-gas-head" hidden>Gas</th><th class="num" id="years-total-head" hidden>Net after income</th>
+          <th class="num">Saved by off-peak</th></tr></thead>
         <tbody id="year-rows"></tbody>
       </table>
     </div>
     <div class="hint" id="year-hint"></div>
     <details id="months-by-year">
       <summary>Net cost month by month</summary>
+      <div id="month-grid-choice" hidden style="margin: 8px 0; font-size: 14px;">
+        <label><input type="checkbox" id="month-grid-total"> <span id="month-grid-total-label">Take off extra income</span></label>
+      </div>
       <div class="table-scroll">
         <table>
           <thead id="month-grid-head"></thead>
           <tbody id="month-grid"></tbody>
         </table>
       </div>
-      <div class="hint">Choose a month to open its costs on the Now page. * means only part of the month was counted.</div>
+      <div class="hint">Choose a month to open its costs on the Now page. * means only part of the month was counted (or, with gas, that the gas bills do not cover all of it).</div>
     </details>
   </div>
 

@@ -81,6 +81,16 @@ SCHEMA = """
         export_gbp  REAL
     );
 
+    -- Gas bills, typed in (there are no gas sensors). Optional: a home may have no gas.
+    CREATE TABLE IF NOT EXISTS gas_bills (
+        id          INTEGER PRIMARY KEY,
+        first_day   TEXT NOT NULL,
+        last_day    TEXT NOT NULL,
+        kwh         REAL,                     -- optional: not every bill gives it plainly
+        cost_gbp    REAL NOT NULL,            -- everything charged, standing charge and VAT
+        note        TEXT NOT NULL DEFAULT ''
+    );
+
     CREATE TABLE IF NOT EXISTS meta (
         key   TEXT PRIMARY KEY,
         value TEXT NOT NULL
@@ -372,7 +382,14 @@ class Database:
 
     # --- backing up and restoring what the user has entered ---------------------------------
 
-    BACKED_UP = ("tariff_periods", "comparison_tariffs", "bills", "extra_income", "notes")
+    BACKED_UP = (
+        "tariff_periods",
+        "comparison_tariffs",
+        "bills",
+        "extra_income",
+        "notes",
+        "gas_bills",
+    )
 
     def dump(self) -> dict[str, list[dict]]:
         """Every row of the tables holding what the user has entered, as stored."""
@@ -395,6 +412,8 @@ class Database:
         with closing(self._connect()) as conn, conn:
             conn.executemany("DELETE FROM meta WHERE key = ?", [(key,) for key in unset])
             for table in self.BACKED_UP:
+                if table not in tables:
+                    continue  # a backup from before this table existed: leave it as it is
                 known = [row[1] for row in conn.execute(f"PRAGMA table_info({table})")]
                 conn.execute(f"DELETE FROM {table}")  # noqa: S608 - fixed table names
                 for row in tables.get(table, []):
@@ -567,6 +586,42 @@ class Database:
                 "WHERE id = ? AND amount_gbp IS NULL",
                 (kwh, amount, row_id),
             )
+
+    # --- gas bills ------------------------------------------------------------------------------
+
+    def gas_rows(self) -> list[dict]:
+        with closing(self._connect()) as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute("SELECT * FROM gas_bills ORDER BY first_day, id").fetchall()
+        return [dict(row) for row in rows]
+
+    def save_gas(self, row: dict, row_id: int | None = None) -> int:
+        values = (
+            row["first_day"].isoformat(),
+            row["last_day"].isoformat(),
+            row["kwh"],
+            row["cost_gbp"],
+            row["note"],
+        )
+        with closing(self._connect()) as conn, conn:
+            if row_id is not None:
+                cursor = conn.execute(
+                    "UPDATE gas_bills SET first_day = ?, last_day = ?, kwh = ?, cost_gbp = ?, "
+                    "note = ? WHERE id = ?",
+                    (*values, row_id),
+                )
+                if cursor.rowcount:
+                    return row_id
+            cursor = conn.execute(
+                "INSERT INTO gas_bills (first_day, last_day, kwh, cost_gbp, note) "
+                "VALUES (?, ?, ?, ?, ?)",
+                values,
+            )
+            return cursor.lastrowid
+
+    def delete_gas(self, row_id: int) -> bool:
+        with closing(self._connect()) as conn, conn:
+            return conn.execute("DELETE FROM gas_bills WHERE id = ?", (row_id,)).rowcount > 0
 
     # --- bills entered for checking -------------------------------------------------------------
 

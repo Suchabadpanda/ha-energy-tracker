@@ -13,7 +13,7 @@ The app is split into five pages, linked at the top of every page:
 | **Now** | Right now, Where it's going, Today, Today by device, Cost today, the month's cost, the power and consumption charts |
 | **History** | History, Monthly summary, Yearly report, Costs by year, Averages, Performance |
 | **Devices** | Running costs by device, Heat pump and the weather (with the estimated SCOP) |
-| **Money** | Return on investment, Extra income, Bill check, Compare tariffs, Tariff switch planner |
+| **Money** | Return on investment, Extra income, Bill check, Gas, Compare tariffs, Tariff switch planner |
 | **Settings** | Tariff rates, Notes, Backup and restore, Older history |
 
 Each page only loads and keeps up to date what is on it, so pages open quickly, and the live
@@ -196,6 +196,23 @@ published for it, so past price changes are included.
   published price, such as dates before the tariff existed.
 - Only a tariff code and a region letter are sent to Octopus Energy.
 - Performance treats the cheapest four hours of each day as that day's cheap rate.
+
+## Costs by year
+
+On the History page: every year's import, import cost, export credit, standing charge, net
+cost and what off-peak charging saved, with **Net cost month by month** underneath (choose a
+month to open its costs on the Now page).
+
+With extra income entered (Axle payments and the like), two more columns appear: **Extra
+income**, shown as a minus as it comes off, and **Net after income**: the net cost less that
+income. With gas bills entered, a **Gas** column appears too and the last column becomes
+**Total, with gas**: the net cost plus gas, less extra income. All are over the same days as
+the electricity, so a year counted from November only includes November's income and gas.
+A gas figure marked * means the gas bills entered do not cover every day of that year.
+
+Above the month-by-month grid, tick **Take off extra income** (or **Add gas and take off
+extra income**) to show the total in the grid instead of the electricity's net cost. The
+choice is remembered on that device.
 
 ## Running costs by device
 
@@ -581,6 +598,22 @@ is then dropped. Changing the rate affects events measured afterwards, not earli
 
 Only export events are recorded. An event shown while the app was stopped is picked up
 from Home Assistant's history when it restarts, for as far back as `backfill_days`.
+
+## Gas
+
+On the Money page. There are no gas sensors to read, so enter each gas bill or statement
+under **Add a gas bill**: the first and last day it covers, everything it charged (standing
+charge and VAT included) and, if the bill gives it, the kWh used. Each bill's cost is
+spread evenly over its days, so a bill from mid-March to mid-April puts about half in each
+month. Each day can only be on one bill; dates that overlap another bill are refused.
+
+The table lists the bills, newest first, with each one's cost a day and all-in price per kWh
+(the standing charge included), and each year's total. Gas is added to the totals under
+**Costs by year**.
+
+Homes without gas: choose **This home has no gas: hide this**. Gas is then left out of the
+totals and the section shrinks to one line, with **This home has gas** to bring it back.
+Any bills already entered are kept. Gas bills and this choice are in the settings backup.
 
 ## Comparing tariffs
 

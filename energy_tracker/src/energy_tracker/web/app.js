@@ -585,7 +585,19 @@ document.getElementById("month-current")?.addEventListener("click", () => showMo
 
 const money = value => (value < 0 ? "-" : "") + CUR + Math.abs(value).toFixed(2);  // a credit shows as -£12.97
 
+// Whether the month-by-month grid shows the total after extra income (and with gas), or the
+// electricity's net cost alone. Remembered on this device.
+let gridTotal = false;
+try { gridTotal = localStorage.getItem("energy-tracker-grid-total") === "1"; } catch { /* no storage */ }
+let lastYears = null;
+document.getElementById("month-grid-total")?.addEventListener("change", event => {
+  gridTotal = event.target.checked;
+  try { localStorage.setItem("energy-tracker-grid-total", gridTotal ? "1" : "0"); } catch { /* no storage */ }
+  if (lastYears) renderYears(lastYears);
+});
+
 function renderYears(data) {
+  lastYears = data;
   const cell = (text, numeric = true) => {
     const td = document.createElement("td");
     td.textContent = text;
@@ -593,6 +605,16 @@ function renderYears(data) {
     return td;
   };
   const years = data.years.filter(y => y.cost);
+  // Extra income and gas, where there are any: and the total once they are counted.
+  const extras = Boolean(data.has_income || data.has_gas);
+  const totalLabel = data.has_gas ? "Total, with gas" : "Net after income";
+  document.getElementById("years-income-head").hidden = !extras;
+  document.getElementById("years-gas-head").hidden = !data.has_gas;
+  const totalHead = document.getElementById("years-total-head");
+  totalHead.hidden = !extras;
+  totalHead.textContent = totalLabel;
+  // A gas figure that does not cover every day counted is marked, as bills may be missing.
+  const gasText = x => x.gas_gbp == null ? "" : money(x.gas_gbp) + (x.gas_days < x.days ? " *" : "");
 
   document.getElementById("year-rows").replaceChildren(...years.map(y => {
     const tr = document.createElement("tr");
@@ -605,18 +627,41 @@ function renderYears(data) {
     }
     tr.append(name, cell(y.cost.import_kwh.toFixed(0) + " kWh"), cell(money(y.cost.import_gbp)),
       cell(money(y.cost.export_credit_gbp)), cell(money(y.cost.standing_charge_gbp)),
-      cell(money(y.cost.net_gbp)), cell(money(y.cost.saved_gbp)));
+      cell(money(y.cost.net_gbp)));
+    if (extras) {
+      tr.append(cell(y.extra_income_gbp ? money(-y.extra_income_gbp) : money(0)));
+      if (data.has_gas) tr.append(cell(gasText(y)));
+      const total = cell(money(y.total_gbp));
+      total.style.fontWeight = "600";
+      tr.append(total);
+    }
+    tr.append(cell(money(y.cost.saved_gbp)));
     return tr;
   }));
-  document.getElementById("year-hint").textContent = years.length
-    ? years.filter(y => !y.cost.full_period)
-        .map(y => {
-          const since = new Date(y.cost.since);
-          const fromJanuary = since.getMonth() === 0 && since.getDate() === 1;
-          return fromJanuary ? y.year + " is the year so far."
-            : y.year + " is counted from " + since.toLocaleDateString([], { day: "numeric", month: "long" }) + ".";
-        }).join(" ")
-    : "No readings yet.";
+  const notes = years.filter(y => !y.cost.full_period)
+    .map(y => {
+      const since = new Date(y.cost.since);
+      const fromJanuary = since.getMonth() === 0 && since.getDate() === 1;
+      return fromJanuary ? y.year + " is the year so far."
+        : y.year + " is counted from " + since.toLocaleDateString([], { day: "numeric", month: "long" }) + ".";
+    });
+  if (extras) {
+    notes.push(totalLabel + " is the net cost" + (data.has_gas ? " plus gas," : "") + " less extra income (Axle payments and the like)," +
+      " over the same days. Extra income is shown as a minus, as it comes off.");
+  }
+  if (data.has_gas && years.some(y => y.gas_days < y.days)) {
+    notes.push("* The gas bills entered do not cover every day of that year, so its gas figure is short: add the missing bills on the Money page.");
+  }
+  document.getElementById("year-hint").textContent = years.length ? notes.join(" ") : "No readings yet.";
+
+  // The month grid can show the total instead of the electricity's net cost.
+  document.getElementById("month-grid-choice").hidden = !extras;
+  document.getElementById("month-grid-total").checked = gridTotal;
+  document.getElementById("month-grid-total-label").textContent =
+    data.has_gas ? "Add gas and take off extra income" : "Take off extra income";
+  const showTotal = extras && gridTotal;
+  document.querySelector("#months-by-year > summary").textContent =
+    (showTotal ? totalLabel : "Net cost") + " month by month";
 
   const head = document.createElement("tr");
   const corner = document.createElement("th");
@@ -638,7 +683,9 @@ function renderYears(data) {
         const button = document.createElement("button");
         button.className = "link";
         button.type = "button";
-        button.textContent = money(m.cost.net_gbp) + (m.cost.full_period ? "" : " *");
+        const partGas = showTotal && data.has_gas && m.gas_days < m.days;
+        button.textContent = money(showTotal ? m.total_gbp : m.cost.net_gbp) +
+          (m.cost.full_period && !partGas ? "" : " *");
         button.addEventListener("click", () => showMonth(m.key));
         td.replaceChildren(button);
       }
@@ -1431,7 +1478,8 @@ document.getElementById("restore-check")?.addEventListener("click", async () => 
       el("div", [count(found.tariff_periods, "set of tariff rates", "sets of tariff rates"),
                  count(found.comparison_tariffs, "tariff to compare", "tariffs to compare"),
                  count(found.bills, "bill", "bills"),
-                 count(found.extra_income, "extra income entry", "extra income entries")].join(", ") + "."),
+                 count(found.extra_income, "extra income entry", "extra income entries"),
+                 count(found.gas_bills, "gas bill", "gas bills")].join(", ") + "."),
       el("div", "Restoring replaces what is here now with these, and removes anything not in the file. Readings are not touched."),
       actions);
     box.hidden = false;
@@ -1944,6 +1992,107 @@ billsForm?.addEventListener("submit", async event => {
     billsMessage(err.message, true);
   }
 });
+
+// --- Gas -----------------------------------------------------------------------------------
+// Gas bills typed in by hand (there are no gas sensors), for the totals under Costs by year.
+
+const gasForm = document.getElementById("gas-form");
+let editingGas = null;
+function gasMessage(text, isError = false) {
+  const el = document.getElementById("gas-message");
+  el.textContent = text;
+  el.style.color = isError ? "var(--danger)" : "";
+}
+function renderGas(data) {
+  document.getElementById("gas-off").hidden = data.enabled;
+  document.getElementById("gas-body").hidden = !data.enabled;
+  const cell = (text, numeric = true) => Object.assign(document.createElement("td"),
+    { textContent: text, className: numeric ? "num" : "" });
+  const range = b => dayText(b.first_day) + " to " + dayText(b.last_day);
+  document.getElementById("gas-rows").replaceChildren(...data.bills.map(b => {
+    const tr = document.createElement("tr");
+    const period = cell(range(b), false);
+    if (b.note) period.append(Object.assign(document.createElement("div"), { className: "hint", textContent: b.note,
+                                                                             style: "margin: 2px 0 0" }));
+    const actions = document.createElement("td");
+    for (const [label, act] of [["Edit", () => editGas(b)], ["Remove", () => removeGas(b)]]) {
+      const button = Object.assign(document.createElement("button"), { type: "button", className: "link", textContent: label });
+      button.style.marginRight = "12px";
+      button.addEventListener("click", act);
+      actions.append(button);
+    }
+    tr.append(period, cell(String(b.days)), cell(b.kwh == null ? "" : b.kwh.toLocaleString() + " kWh"),
+              cell(money(b.cost_gbp)), cell(money(b.per_day_gbp)),
+              cell(b.p_per_kwh == null ? "" : b.p_per_kwh.toFixed(2) + MINOR + " per kWh"), actions);
+    return tr;
+  }));
+  document.getElementById("gas-years").replaceChildren(...data.years.map(y => {
+    const tr = document.createElement("tr");
+    tr.className = "year-row";
+    tr.append(cell(String(y.year), false), cell(String(y.days)),
+              cell(y.kwh == null ? "" : y.kwh.toLocaleString() + " kWh"), cell(money(y.gbp)),
+              cell(y.days ? money(y.gbp / y.days) : ""), cell(""), cell(""));
+    return tr;
+  }));
+  document.getElementById("gas-summary").textContent = data.bills.length
+    ? "Your gas bills, newest first, with each year's total below. Gas is counted in Costs by year on the History page."
+    : "No gas bills yet. Add them below to see gas alongside electricity under Costs by year, or hide this if your home has no gas.";
+}
+function editGas(bill) {
+  editingGas = bill.id;
+  const f = gasForm.elements;
+  f.first_day.value = bill.first_day;
+  f.last_day.value = bill.last_day;
+  f.cost_gbp.value = bill.cost_gbp;
+  f.kwh.value = bill.kwh ?? "";
+  f.note.value = bill.note ?? "";
+  document.getElementById("gas-editor").open = true;
+  gasForm.querySelector("button.primary").textContent = "Save changes";
+  document.getElementById("gas-cancel").hidden = false;
+  gasMessage("Editing the bill for " + dayText(bill.first_day) + " to " + dayText(bill.last_day) + ".");
+  gasForm.scrollIntoView({ block: "nearest" });
+}
+function stopEditingGas() {
+  editingGas = null;
+  gasForm.reset();
+  gasForm.querySelector("button.primary").textContent = "Save gas bill";
+  document.getElementById("gas-cancel").hidden = true;
+}
+async function removeGas(bill) {
+  if (!confirm("Remove the gas bill for " + dayText(bill.first_day) + " to " + dayText(bill.last_day) + "?")) return;
+  try {
+    renderGas(await sendTariff("api/gas/" + bill.id, { method: "DELETE" }));
+    gasMessage("Removed.");
+  } catch (err) { gasMessage(err.message, true); }
+}
+gasForm?.addEventListener("submit", async event => {
+  event.preventDefault();
+  const f = gasForm.elements;
+  try {
+    const data = await sendTariff("api/gas" + (editingGas ? "?id=" + editingGas : ""), {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ first_day: f.first_day.value, last_day: f.last_day.value, cost_gbp: Number(f.cost_gbp.value),
+                             kwh: f.kwh.value === "" ? null : Number(f.kwh.value), note: f.note.value.trim() }) });
+    stopEditingGas();
+    gasMessage("Saved.");
+    renderGas(data);
+  } catch (err) { gasMessage(err.message, true); }
+});
+document.getElementById("gas-cancel")?.addEventListener("click", () => { stopEditingGas(); gasMessage(""); });
+async function setGas(enabled) {
+  try {
+    renderGas(await sendTariff("api/gas/settings", { method: "POST", headers: { "Content-Type": "application/json" },
+                                                     body: JSON.stringify({ enabled }) }));
+  } catch (err) { gasMessage(err.message, true); }
+}
+document.getElementById("gas-off-button")?.addEventListener("click", () => {
+  if (confirm("Hide gas? It will be left out of the totals under Costs by year. Any gas bills entered are kept.")) setGas(false);
+});
+document.getElementById("gas-on-button")?.addEventListener("click", () => setGas(true));
+async function refreshGas() {
+  if (!sectionOpen("gas-heading")) return;  // fetched when the section is opened
+  try { renderGas(await getJson("api/gas")); } catch (err) { gasMessage("Could not load gas bills (" + err.message + ").", true); }
+}
 
 // --- Extra income --------------------------------------------------------------------------
 
@@ -3376,6 +3525,7 @@ function refreshEverything() {
   refreshHistory();
   refreshSummary();
   refreshBills();
+  refreshGas();
   refreshDeviceCosts();
   refreshHeating();
   refreshAverages();
@@ -3491,7 +3641,7 @@ const SECTION_LOADERS = {
   "history-heading": () => refreshHistory(), "performance-heading": () => refreshPerformance(),
   "summary-heading": () => refreshSummary(), "years-heading": () => refreshRates(),
   "device-costs-heading": () => refreshDeviceCosts(), "roi-heading": () => refreshPayback(),
-  "income-heading": () => refreshIncome(), "bills-heading": () => refreshBills(),
+  "income-heading": () => refreshIncome(), "bills-heading": () => refreshBills(), "gas-heading": () => refreshGas(),
   "compare-heading": () => refreshCompare(), "planner-heading": () => refreshPlanner(),
 
   "yearly-heading": () => refreshYearly(), "heating-heading": () => refreshHeating(),
@@ -3577,7 +3727,7 @@ const PAGES = [
   ["now", "Now", "./", "Live figures, today's and this month's cost, power charts"],
   ["history", "History", "history", "Past days to years, reports, averages, performance"],
   ["devices", "Devices", "devices", "Running costs by device, the heat pump and its SCOP"],
-  ["money", "Money", "money", "Return on investment, income, bills, other tariffs"],
+  ["money", "Money", "money", "Return on investment, income, bills, gas, other tariffs"],
   ["settings", "Settings", "settings", "Tariff rates, notes, backup, older history"],
 ];
 // The Sections menu: help, then the pages, with this page's own sections listed under it;
@@ -3676,6 +3826,7 @@ async function start() {
   refreshSummary();
   every(60 * MINUTE, () => { if (!summaryMonth) refreshSummary(); });
   refreshBills();
+  refreshGas();
   // The comparison prices a long period several times over, so it comes last.
   refreshCompare();
   every(30 * MINUTE, refreshCompare);

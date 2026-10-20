@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.39.0
+
+- **Costs by year** shows **Extra income** (as a minus) and **Net after income** when there
+  is extra income, such as Axle payments. A tick box above the month-by-month grid shows the
+  total there instead of the electricity's net cost.
+- **Gas**, on the Money page: enter gas bills by hand (dates, cost, and optionally kWh). The
+  cost is spread over each bill's days and added to Costs by year as a **Gas** column, with
+  the last column becoming **Total, with gas**. Optional: **This home has no gas** hides it
+  and leaves gas out of the totals. Gas bills are included in the settings backup; restoring
+  an older backup leaves them as they are.
+
+### How to check this release
+
+1. On History → Costs by year: with extra income entered, the Extra income and Net after
+   income columns appear, and Net after income is the net cost less the income.
+2. Under Net cost month by month, tick **Take off extra income**: the months change to the
+   totals and the heading changes. The tick is remembered after reloading.
+3. On Money → Gas, add a bill (say 1 to 31 January, £100, 1,000 kWh). It shows 31 days,
+   £3.23 a day and 10.00p per kWh. Adding a second bill whose dates overlap it is refused.
+4. Back on History → Costs by year: a Gas column appears with the January share, and the
+   last column is Total, with gas. A year not fully covered by gas bills is marked *.
+5. On Money → Gas, choose **This home has no gas: hide this**: the section shrinks to one
+   line and the Gas column leaves Costs by year. **This home has gas** brings both back.
+6. Settings → Backup and restore → Download settings: the file lists the gas bills when
+   checked with **Check file**.
+
 ## 0.38.0
 
 - **The app is now five pages** instead of one long one: **Now**, **History**, **Devices**,

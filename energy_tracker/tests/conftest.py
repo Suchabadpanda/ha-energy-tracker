@@ -28,6 +28,7 @@ def empty_database():
             "comparison_tariffs",
             "extra_income",
             "bills",
+            "gas_bills",
             "slot_prices",
             "notes",
             "meta",
