@@ -26,6 +26,7 @@ def empty_database():
             "readings",
             "half_hours",
             "half_hours_done",
+            "day_figures",
             "tariff_periods",
             "comparison_tariffs",
             "extra_income",

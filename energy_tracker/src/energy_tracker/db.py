@@ -10,7 +10,7 @@ import json
 import sqlite3
 from collections.abc import Iterable
 from contextlib import closing
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 Row = tuple[datetime, str, float]
@@ -39,6 +39,17 @@ SCHEMA = """
         metric TEXT PRIMARY KEY,
         until  INTEGER NOT NULL               -- every half hour before this is filled in
     );
+
+    -- Figures for whole days that are over, kept so they need not be worked out again:
+    -- each day's figures for Averages, and for each device. `version` says what they were
+    -- worked out with (the app's version, the rates and settings); others are ignored.
+    CREATE TABLE IF NOT EXISTS day_figures (
+        kind    TEXT NOT NULL,
+        day     TEXT NOT NULL,
+        version TEXT NOT NULL,
+        data    TEXT NOT NULL,
+        PRIMARY KEY (kind, day)
+    ) WITHOUT ROWID;
 
     CREATE TABLE IF NOT EXISTS tariff_periods (
         effective_from            TEXT PRIMARY KEY,
@@ -112,6 +123,16 @@ def _when(seconds: int) -> datetime:
     return datetime.fromtimestamp(seconds, UTC)
 
 
+LATE_SECONDS = 15 * 60  # readings older than this on arrival change days already kept
+
+
+def _forget_days(conn: sqlite3.Connection, since: date | None = None) -> None:
+    if since is None:
+        conn.execute("DELETE FROM day_figures")
+    else:
+        conn.execute("DELETE FROM day_figures WHERE day >= ?", (since.isoformat(),))
+
+
 def _sort_income(conn: sqlite3.Connection) -> None:
     """Decide, for income not yet sorted, whether it can be expected to carry on.
 
@@ -176,7 +197,41 @@ class Database:
                     "UPDATE half_hours_done SET until = ? WHERE metric = ? AND until > ?",
                     [(s - s % HALF_HOUR, m, s - s % HALF_HOUR) for m, s in earliest.items()],
                 )
+                # Readings for a time already past (history brought in after a break, say):
+                # the days kept from then on are worked out again. Live readings, a
+                # moment old, leave them be.
+                oldest = min(earliest.values())
+                if oldest < datetime.now(UTC).timestamp() - LATE_SECONDS:
+                    _forget_days(conn, _when(oldest).date() - timedelta(days=1))
             return added
+
+    # --- figures for whole days that are over ---------------------------------------------
+
+    def day_figures(self, kind: str, version: str) -> dict[date, dict]:
+        """The days kept for `kind`, worked out with `version`."""
+        with closing(self._connect()) as conn:
+            rows = conn.execute(
+                "SELECT day, data FROM day_figures WHERE kind = ? AND version = ?", (kind, version)
+            ).fetchall()
+        return {date.fromisoformat(day): json.loads(data) for day, data in rows}
+
+    def save_day_figures(self, kind: str, version: str, days: dict[date, dict]) -> None:
+        """Keep these days' figures, replacing any for the same days, and drop any of this
+        kind worked out with something else."""
+        with closing(self._connect()) as conn, conn:
+            conn.execute("DELETE FROM day_figures WHERE kind = ? AND version != ?", (kind, version))
+            conn.executemany(
+                "INSERT OR REPLACE INTO day_figures VALUES (?, ?, ?, ?)",
+                [
+                    (kind, day.isoformat(), version, json.dumps(row, default=str))
+                    for day, row in days.items()
+                ],
+            )
+
+    def forget_days(self, since: date | None = None) -> None:
+        """Forget the kept days from `since` on (all of them without it)."""
+        with closing(self._connect()) as conn, conn:
+            _forget_days(conn, since)
 
     def delete_before(self, metrics: list[str], before: datetime) -> int:
         """Remove all readings of these metrics older than `before`."""
@@ -188,7 +243,9 @@ class Database:
                 )
                 # Summarised again from what is left, the next time it is asked for.
                 conn.execute("DELETE FROM half_hours_done WHERE metric = ?", (metric,))
-            return conn.total_changes - start
+            removed = conn.total_changes - start
+            _forget_days(conn)
+            return removed
 
     def latest(self, metrics: list[str], since: datetime) -> dict[str, Sample]:
         """The most recent reading of each metric, ignoring anything older than `since`."""
@@ -355,6 +412,7 @@ class Database:
             conn.execute(
                 "DELETE FROM half_hours WHERE bucket < ?", (_seconds(cutoff) // HALF_HOUR,)
             )
+            conn.execute("DELETE FROM day_figures WHERE day < ?", (cutoff.date().isoformat(),))
             return removed
 
     def size_bytes(self) -> int:
@@ -411,6 +469,10 @@ class Database:
         data = [(source, int(time), float(price)) for time, price in rows]
         with closing(self._connect()) as conn, conn:
             conn.executemany("INSERT OR REPLACE INTO slot_prices VALUES (?, ?, ?)", data)
+            # Prices for half hours already past change what those days cost.
+            past = [time for _, time, _ in data if time < datetime.now(UTC).timestamp()]
+            if past:
+                _forget_days(conn, _when(min(past)).date() - timedelta(days=1))
         return len(data)
 
     def slot_prices(self, source: str) -> dict[int, float]:

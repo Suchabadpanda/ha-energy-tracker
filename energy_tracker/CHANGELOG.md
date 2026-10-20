@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.41.0
+
+- **Averages opens in a moment.** Each finished day's figures (energy, cost, devices, the
+  weather) are now kept in the database once worked out, so opening Averages only works
+  out the days since it was last opened, instead of the whole history every time. On a
+  year of readings it went from about 1 second to 0.04 seconds here, and should go from up
+  to 20 seconds to well under a second on a Home Assistant Green.
+- **Running costs by device** keeps finished days the same way (0.7 s to under 0.02 s), and
+  **Costs by year** keeps finished months (about 0.95 s to 0.3 s).
+- Kept figures are worked out again by themselves when something changes them: readings
+  arriving late for an earlier time (history brought in after a break, Import older
+  history), published prices for half hours already past, new or changed tariff rates, the
+  EV and heat pump options, and each update of the app. A day is only kept once it has
+  been over for an hour.
+
+### How to check this release
+
+1. After updating, open History → Averages once. The first time it works out every day,
+   which can take as long as before (up to about 20 seconds on a Green), and keeps them.
+2. Open another page, come back to History and open Averages again (or restart the add-on
+   first): it should now appear almost at once, with the same figures.
+3. Devices → Running costs by device and History → Costs by year: the same figures as
+   before, and quicker on the second opening.
+4. Add a test tariff under Settings → Tariff rates with a start date in the past, check
+   that Averages' cost per day changes to match, then remove it and check the figures
+   return.
+
 ## 0.40.0
 
 - **Gas removed**: the Gas section, its column under Costs by year and its backup entries

@@ -54,7 +54,13 @@ minutes, unless something they depend on changes (saving rates, say).
 
 To keep long-range figures quick, the app also keeps the last reading of each energy counter
 in every half hour in a small summary, filled in as it is needed. The first time after an
-update it is filled in from all the stored readings, which can take a few seconds. They can therefore be a few minutes behind; saving rates, a bill, a tariff, a note or
+update it is filled in from all the stored readings, which can take a few seconds.
+
+Figures for whole days that are over (Averages, Running costs by device) and months that
+are over (Costs by year) are kept in the database too, so only the days since need working
+out. They are worked out again by themselves when something would change them: readings
+arriving late for an earlier time, published prices for times already past, changed tariff
+rates or options, and each update of the app. They can therefore be a few minutes behind; saving rates, a bill, a tariff, a note or
 income works them out again straight away, in the background.
 
 Each section is only fetched once it is scrolled near, and not at all while it is folded,

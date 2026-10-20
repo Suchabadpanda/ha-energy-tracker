@@ -102,3 +102,89 @@ def test_pages_in_use_are_remembered_across_a_restart():
     api.page_opened.clear()
     api.load_pages_opened()
     assert api.page_opened["devices"] == pytest.approx(saved["devices"])
+
+
+def five_days_of_readings(now):
+    names = {
+        devices.LOAD: 2.0,
+        devices.IMPORT: 1.5,
+        devices.CIRCUIT: 0.8,
+        devices.EV: 0.3,
+        devices.SOLAR: 0.4,
+        devices.EXPORT: 0.1,
+        devices.CHARGE: 0.2,
+        devices.DISCHARGE: 0.18,
+    }
+    rows = []
+    for minutes in range(5 * 24 * 60, 0, -10):
+        when = now - timedelta(minutes=minutes)
+        for name, rate in names.items():
+            rows.append((when, name, 1000 + rate * (5 * 24 * 60 - minutes) / 60))
+    api.database().insert_readings(rows)
+
+
+def test_finished_days_are_kept_and_give_the_same_averages():
+    now = datetime.now(UTC).replace(microsecond=0)
+    five_days_of_readings(now)
+    first = client.get("/api/averages").json()
+    kept = api.database().day_figures("averages", api.figures_version())
+    assert kept and max(kept) < now.astimezone(api.local_timezone()).date()  # never today
+    assert api.database().day_figures("devices", api.figures_version())
+    # Worked out again from the kept days: the same answer.
+    api.clear_caches()
+    assert client.get("/api/averages").json() == first
+    # And the same as working every day out afresh.
+    api.database().forget_days()
+    api.clear_caches()
+    assert client.get("/api/averages").json() == first
+
+
+def test_kept_days_are_dropped_when_late_readings_or_new_rates_arrive():
+    now = datetime.now(UTC).replace(microsecond=0)
+    five_days_of_readings(now)
+    client.get("/api/averages")
+    version = api.figures_version()
+    kept = api.database().day_figures("averages", version)
+    assert len(kept) >= 2
+    # A reading for two days ago, arriving now: from the day before it on is worked out
+    # again; earlier days stay.
+    late = now - timedelta(days=2)
+    api.database().insert_readings([(late + timedelta(seconds=7), devices.LOAD, 1000.5)])
+    left = api.database().day_figures("averages", version)
+    assert left and all(day < late.date() - timedelta(days=1) for day in left)
+    # A live reading, a moment old, leaves them be.
+    api.clear_caches()
+    client.get("/api/averages")
+    before = api.database().day_figures("averages", version)
+    api.database().insert_readings([(datetime.now(UTC), devices.LOAD, 2000.0)])
+    assert api.database().day_figures("averages", version) == before
+    # New rates: the kept days no longer match, so they are worked out again.
+    body = {
+        "name": "Dearer",
+        "effective_from": "2020-01-01",
+        "export_p_per_kwh": 15,
+        "standing_charge_p_per_day": 60,
+        "vat_percent": 5,
+        "import_bands": [{"start": "00:00", "end": "24:00", "p_per_kwh": 30}],
+    }
+    assert client.post("/api/tariffs", json=body).status_code == 200
+    assert api.figures_version() != version
+
+
+def test_finished_months_are_kept_and_give_the_same_costs_by_year():
+    now = datetime.now(UTC).replace(microsecond=0)
+    rows = []
+    for hours in range(45 * 24, 0, -1):
+        when = now - timedelta(hours=hours)
+        rows += [
+            (when, "import_energy_total", 5000 - hours * 0.6),
+            (when, "export_energy_total", 900 - hours * 0.1),
+        ]
+    api.database().insert_readings(rows)
+    first = client.get("/api/years").json()
+    assert api.database().day_figures("month_cost", api.figures_version())
+    api.clear_caches()
+    assert client.get("/api/years").json() == first
+    api.database().forget_days()
+    api.clear_caches()
+    assert client.get("/api/years").json() == first

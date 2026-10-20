@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import gzip
+import hashlib
 import inspect
 import json
 import logging
@@ -126,7 +127,7 @@ async def lifespan(_: FastAPI):
         await asyncio.to_thread(thread.join, 10)
 
 
-app = FastAPI(title="Energy Tracker", version="0.40.0", lifespan=lifespan)
+app = FastAPI(title="Energy Tracker", version="0.41.0", lifespan=lifespan)
 # The page and its chart data are mostly text: sent compressed, they are a quarter the size.
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
@@ -884,14 +885,47 @@ def years() -> dict:
     if first is not None:
         rates = schedule()
         local_first = first.astimezone(local_timezone())
-        samples = counter_samples(COST_COUNTERS, first - timedelta(days=1), HALF_HOURLY)
         current = local_midnight(now, local_timezone()).replace(day=1)
+        # Months that are over are kept, by their last day: only the rest are worked out.
+        version = figures_version()
+        held = database().day_figures("month_cost", version)
+
+        def last_day(start: datetime) -> date:
+            return (following_month(start) - timedelta(days=1)).date()
+
+        def over(start: datetime) -> bool:
+            return following_month(start) + timedelta(hours=1) <= now
+
+        starts = [
+            month_start(year, number)
+            for year in range(local_first.year, current.year + 1)
+            for number in range(1, 13)
+        ]
+        to_do = [s for s in starts if s <= current and not (over(s) and last_day(s) in held)]
+        samples = (
+            counter_samples(COST_COUNTERS, max(first, min(to_do)) - timedelta(days=1), HALF_HOURLY)
+            if to_do
+            else {}
+        )
+        worked_out: dict[date, dict] = {}
+
+        def month_cost(start: datetime) -> dict | None:
+            if start > current:
+                return None
+            if start not in to_do:
+                cost = dict(held[last_day(start)])
+                cost["since"] = datetime.fromisoformat(cost["since"])
+                return cost
+            cost = cost_of_month(samples, start, now, rates)
+            if cost and over(start):
+                worked_out[last_day(start)] = cost
+            return cost
 
         for year in range(local_first.year, current.year + 1):
             months = []
             for number in range(1, 13):
                 start = month_start(year, number)
-                cost = cost_of_month(samples, start, now, rates) if start <= current else None
+                cost = month_cost(start)
                 months.append({"key": month_key(start), "label": f"{start:%b}", "cost": cost})
             counted = [m["cost"] for m in months if m["cost"]]
             total = combine(counted)
@@ -901,6 +935,8 @@ def years() -> dict:
                     total["full_period"] and len(counted) == 12 and year < current.year
                 )
             result["years"].append({"year": year, "cost": total, "months": months})
+        if worked_out:
+            database().save_day_figures("month_cost", version, worked_out)
         add_income(result, now)
 
     return result
@@ -1540,28 +1576,74 @@ def heat_pump_and_weather() -> dict:
 # --- Running cost by device ----------------------------------------------------------------------
 
 
+def figures_version() -> str:
+    """What kept day figures were worked out with: the app's version, the tariff rates and
+    the settings that change them. Kept days worked out with anything else are not used."""
+    tariff_store.load_periods(database())  # stores the starting rates on first use
+    tariffs = database().dump()["tariff_periods"]
+    basis = json.dumps(
+        [app.version, settings().ev_on_smart_load, settings().heat_pump_energy_entity, tariffs],
+        sort_keys=True,
+        default=str,
+    )
+    return hashlib.sha256(basis.encode()).hexdigest()[:16]
+
+
+def kept_days(kind: str, version: str, first: date, now: datetime) -> tuple[dict, date]:
+    """The finished days kept for `kind` from `first`, and the first day after them that
+    still needs working out. A day is only kept once it has been over for an hour, so
+    readings arriving a little late are in it."""
+    found = database().day_figures(kind, version)
+    held, day = {}, first
+    while day in found:
+        held[day] = found[day]
+        day += timedelta(days=1)
+    return held, day
+
+
+def keep_days(kind: str, version: str, days: dict, now: datetime) -> None:
+    """Keep the days that have been over for at least an hour."""
+    zone = local_timezone()
+    over = {
+        day: row
+        for day, row in days.items()
+        if datetime(day.year, day.month, day.day, tzinfo=zone) + timedelta(days=1, hours=1) <= now
+    }
+    if over:
+        database().save_day_figures(kind, version, over)
+
+
 @kept
 def device_days() -> dict:
     """Each day's figures for the heat pump (or other smart load), the EV charger and the
     rest of the house, from the first whole day every device counter was read. Worked out
-    once and shared: by Running costs by device, and by Averages."""
+    once and shared: by Running costs by device, and by Averages. Days that are over are
+    kept in the database, so only the days since need working out."""
     zone = local_timezone()
     now = datetime.now(UTC)
-    firsts = [database().first_time(name) for name in (devices.LOAD, devices.IMPORT)]
-    if not all(firsts):
+    first = {name: database().first_time(name) for name in devices.ALL_COUNTERS}
+    if not first[devices.LOAD] or not first[devices.IMPORT]:
         return {}
-    start = max(firsts).astimezone(zone)
-    samples = counter_samples(devices.ALL_COUNTERS, start - timedelta(days=1), HALF_HOURLY, now)
-    counters = {name: Counter(series, HALF_HOURLY_GAP) for name, series in samples.items()}
+    start = max(first[devices.LOAD], first[devices.IMPORT]).astimezone(zone)
     # From the first whole day every device counter was being read.
-    begun = devices.readings_start(counters)
-    if begun and begun > start:
+    meter = devices.HEAT_PUMP if first[devices.HEAT_PUMP] else devices.CIRCUIT
+    begun = max(
+        t for name in (devices.LOAD, devices.IMPORT, meter, devices.EV) if (t := first[name])
+    )
+    if begun > start:
         midnight = local_midnight(begun, zone)
         start = (midnight if midnight == begun else midnight + timedelta(days=1)).astimezone(zone)
+    version = figures_version()
+    held, needed = kept_days("devices", version, start.date(), now)
+    work_from = max(start, datetime(needed.year, needed.month, needed.day, tzinfo=zone))
+    samples = counter_samples(devices.ALL_COUNTERS, work_from - timedelta(days=1), HALF_HOURLY, now)
+    counters = {name: Counter(series, HALF_HOURLY_GAP) for name, series in samples.items()}
+    fresh = devices.daily(counters, work_from, now, zone, schedule(), settings().ev_on_smart_load)
+    keep_days("devices", version, fresh, now)
     return {
-        "days": devices.daily(counters, start, now, zone, schedule(), settings().ev_on_smart_load),
-        "heat_pump": bool(counters[devices.CIRCUIT] or counters[devices.HEAT_PUMP]),
-        "ev_charger": bool(counters[devices.EV]),
+        "days": {**held, **fresh},
+        "heat_pump": bool(first[devices.CIRCUIT] or first[devices.HEAT_PUMP]),
+        "ev_charger": bool(first[devices.EV]),
     }
 
 
@@ -1607,6 +1689,26 @@ def daily_averages() -> dict:
     start = local_midnight(max(firsts), zone) + timedelta(days=1)
     if start >= end:
         return {"has_data": False}
+    # Days that are over are kept: only the days since the last kept one are worked out.
+    version = figures_version()
+    held, needed = kept_days("averages", version, start.date(), now)
+    found = device_days()
+    days = dict(held)
+    work_from = max(start, datetime(needed.year, needed.month, needed.day, tzinfo=zone))
+    if work_from < end:
+        days.update(averages_for(work_from, end, found.get("days", {})))
+        keep_days("averages", version, {d: r for d, r in days.items() if d not in held}, now)
+    return {
+        **averages.build(days, end.date()),
+        "smart_load_label": settings().smart_load_label,
+        "heat_pump": bool(found.get("heat_pump")),
+        "ev_charger": bool(found.get("ev_charger")),
+    }
+
+
+def averages_for(start: datetime, end: datetime, device_rows: dict) -> dict:
+    """Each whole day's figures for Averages, from `start` to `end` (local midnights)."""
+    zone = local_timezone()
     samples = counter_samples(averages.COUNTERS, start - timedelta(days=1), HALF_HOURLY, end)
     counters = {name: Counter(series, HALF_HOURLY_GAP) for name, series in samples.items()}
     last_day = (end - timedelta(days=1)).date()
@@ -1617,10 +1719,8 @@ def daily_averages() -> dict:
     ).items():
         if day in days:
             days[day]["net_gbp"] = gbp
-    # The devices, from when every device counter was being read (worked out once, for
-    # Running costs by device too).
-    found = device_days()
-    for day, row in found.get("days", {}).items():
+    # The devices, from when every device counter was being read.
+    for day, row in device_rows.items():
         if day in days:
             days[day].update(
                 house_kwh=row.get("rest_kwh"),
@@ -1632,12 +1732,7 @@ def daily_averages() -> dict:
     for day, value in heating.daily_means(hourly, zone).items():
         if day in days:
             days[day]["temperature"] = value
-    return {
-        **averages.build(days, end.date()),
-        "smart_load_label": settings().smart_load_label,
-        "heat_pump": bool(found.get("heat_pump")),
-        "ev_charger": bool(found.get("ev_charger")),
-    }
+    return days
 
 
 # --- Performance and battery sizing --------------------------------------------------------------
