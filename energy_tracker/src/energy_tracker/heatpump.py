@@ -29,7 +29,7 @@ import httpx
 
 from . import weather
 from .db import Database
-from .hotwater import MIN_COVER, Tank
+from .hotwater import MIN_COVER, Tank, caught_up
 from .usage import half_hour_slots
 
 log = logging.getLogger("heatpump")
@@ -240,6 +240,7 @@ def split(
     start: datetime,
     end: datetime,
     timezone: ZoneInfo,
+    spells: list | None = None,
 ) -> dict[date, dict]:
     """Hot water, heating and standby kWh for each day the hot water mode covers.
 
@@ -248,6 +249,9 @@ def split(
     gathers, for heating, the electricity times the ideal efficiency at that half hour's
     flow and outdoor temperatures (multiplied by eta later, it gives the heat), and the
     (outdoor, flow) pairs for working out the weather compensation curve.
+
+    `spells` are catch-ups after the readings froze (hotwater.catch_ups): the modes read
+    then were stale, so electricity in them goes to hot water, unless heating was on.
     """
     days: dict[date, dict] = {}
     for piece_start, piece_end in half_hour_slots(start, end):
@@ -268,6 +272,10 @@ def split(
         day["hours"] += hours
         kwh = max(0.0, used(piece_start, piece_end) or 0.0)
         share = hot_water.mean(piece_start, piece_end)
+        heating_on = heating.mean(piece_start, piece_end) if heating else None
+        stale = caught_up(spells, piece_start, piece_end)
+        if stale and not (heating_on is not None and heating_on > 0):
+            share = max(share or 0.0, stale)
         if share is None:
             day["heating_kwh"] += kwh  # not known: left out of the measured days below
             continue
@@ -275,7 +283,6 @@ def split(
         water = kwh * share
         rest = kwh - water
         day["hot_water_kwh"] += water
-        heating_on = heating.mean(piece_start, piece_end) if heating else None
         if heating_on is not None and heating_on <= 0:
             day["other_kwh"] += rest
             continue

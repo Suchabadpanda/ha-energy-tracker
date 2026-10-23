@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.41.1
+
+- **Hot water is no longer lost when Samsung's readings freeze.** SmartThings sometimes
+  stops sending anything for hours while Home Assistant keeps showing the last values. On
+  the night of 22–23 Oct the tank read 16 °C and the water heater "off" from 23:43 to
+  03:00, then the tank jumped to 56 °C: the cylinder had been reheated 01:00–02:45 (about
+  3.5 kWh), but all of it was counted as heating. A jump faster than a heat pump can heat
+  the cylinder (3 °C or more at over 0.6 °C a minute) straight after a frozen spell, or
+  across a gap in the readings, now marks that spell as a catch-up: the heat pump's
+  electricity in it counts as hot water, unless the heating was switched on.
+- Days already kept are worked out again after updating, so past nights like this one are
+  corrected too (as far back as the readings go).
+
 ## 0.41.0
 
 - **Averages opens in a moment.** Each finished day's figures (energy, cost, devices, the

@@ -22,6 +22,16 @@ RISE_C = 1.0  # a half hour in which the tank rose this much is a reheat
 MAX_GAP = timedelta(hours=2)  # readings further apart than this tell nothing
 MIN_COVER = 0.8  # share of a day the tank readings must cover for it to count as measured
 
+# Catching up after the readings froze. SmartThings sometimes stops sending anything for
+# hours while Home Assistant keeps showing the last values: on the night of 22–23 Oct 2026
+# the tank read 16 °C (and the heat pump "not heating hot water") from 23:43 to 03:00, then
+# jumped to 56 °C, though the cylinder had been reheated 01:00–02:45. A rise faster than a
+# heat pump can manage (a 5 kW one warms 250 litres by about 0.3 °C a minute) right after a
+# frozen spell means the readings had stopped, not that nothing happened.
+CATCH_UP_C = 3.0  # at least this big a jump
+CATCH_UP_RATE = 0.6  # °C a minute, or faster
+CATCH_UP_MAX = timedelta(hours=8)  # look no further back for the frozen spell
+
 
 class Tank:
     """The tank temperature over time, interpolated between readings."""
@@ -47,6 +57,46 @@ class Tank:
         return v0 + (v1 - v0) * (stamp - s0) / (s1 - s0)
 
 
+def catch_ups(samples: list[tuple[datetime, float]]) -> list[tuple[datetime, datetime, float]]:
+    """(start, end, rise) of each spell where the tank reading froze and then jumped up.
+
+    The spell runs from the last time the frozen value was first read (it may have been a
+    true reading) to the first reading after the jump: the reheat happened somewhere in it.
+    A jump across a gap in the readings counts too.
+    """
+    points = sorted((t, v) for t, v in samples if v is not None)
+    found: list[tuple[datetime, datetime, float]] = []
+    for index in range(1, len(points)):
+        (t0, v0), (t1, v1) = points[index - 1], points[index]
+        rise = v1 - v0
+        if rise < CATCH_UP_C:
+            continue
+        minutes = (t1 - t0).total_seconds() / 60
+        gap = t1 - t0 > MAX_GAP
+        frozen = index >= 2 and points[index - 2][1] == v0
+        if not (gap or (frozen and (minutes <= 0 or rise / minutes >= CATCH_UP_RATE))):
+            continue
+        begun = index - 1
+        while (
+            begun > 0 and points[begun - 1][1] == v0 and t0 - points[begun - 1][0] <= CATCH_UP_MAX
+        ):
+            begun -= 1
+        found.append((points[begun][0], t1, rise))
+    return found
+
+
+def caught_up(spells: list | None, start: datetime, end: datetime) -> float:
+    """Share of [start, end) inside a catch-up spell (0 if none)."""
+    if not spells or end <= start:
+        return 0.0
+    inside = 0.0
+    for a, b, _ in spells:
+        low, high = max(a, start), min(b, end)
+        if high > low:
+            inside += (high - low).total_seconds()
+    return min(1.0, inside / (end - start).total_seconds())
+
+
 def split(
     tank: Tank,
     heat_pump: Counter,
@@ -55,8 +105,11 @@ def split(
     end: datetime,
     timezone: ZoneInfo,
     ev_on_circuit: bool = False,
+    spells: list | None = None,
 ) -> dict[date, dict]:
     """Hot water and heating kWh for each local day the tank readings cover.
+
+    Electricity in a catch-up spell (`spells`, see catch_ups) is counted as hot water.
 
     `heat_pump` is the heat pump's electricity: its own meter, or the smart load circuit (in
     which case `ev_on_circuit` takes the EV charger's use off it, half hour by half hour).
@@ -73,6 +126,12 @@ def split(
         used = max(0.0, heat_pump.kwh(a, b) or 0.0)
         if ev_on_circuit and ev:
             used = max(0.0, used - (ev.kwh(a, b) or 0.0))
+        share = caught_up(spells, piece_start, piece_end)
+        if share:
+            day["covered_hours"] += hours
+            day["hot_water_kwh"] += used * share
+            day["heating_kwh"] += used * (1 - share)
+            continue
         before, after = tank.at(piece_start), tank.at(piece_end)
         if before is None or after is None:
             day["heating_kwh"] += used  # unknown: kept out of the measured share below
@@ -173,8 +232,13 @@ def by_mode(
     gap: timedelta | None = None,
     modes: dict[str, list] | None = None,
     outdoor: list | None = None,
+    tank: list | None = None,
 ) -> dict[date, dict]:
-    """The split by the heat pump's own modes, day by day (see heatpump.split)."""
+    """The split by the heat pump's own modes, day by day (see heatpump.split).
+
+    `tank`: the cylinder's temperatures (else those in `samples`), to spot catch-ups after
+    the heat pump's readings froze.
+    """
     from . import heatpump  # it builds on this module
 
     if not modes or not modes.get(heatpump.HOT_WATER_MODE):
@@ -191,6 +255,7 @@ def by_mode(
         start,
         end,
         timezone,
+        spells=catch_ups(tank if tank is not None else samples.get(TANK, [])),
     )
 
 
@@ -209,19 +274,20 @@ def by_tank(
     tank = Tank(samples.get(TANK, []))
     if not tank:
         return {}
+    spells = catch_ups(samples.get(TANK, []))
 
     def counter(name: str) -> Counter:
         return Counter(samples.get(name, []), *([gap] if gap else []))
 
     circuit, ev, meter = counter(circuit_name), counter(ev_name), counter(meter_name)
     if circuit:
-        found = split(tank, circuit, ev, start, end, timezone, ev_on_circuit=ev_on_smart_load)
+        found = split(tank, circuit, ev, start, end, timezone, ev_on_smart_load, spells)
         # The circuit only carries the heat pump from when it was read; before, the meter.
         first = circuit.first_time
         if meter and first and first > start:
-            found = {**split(tank, meter, None, start, first, timezone), **found}
+            found = {**split(tank, meter, None, start, first, timezone, spells=spells), **found}
     elif meter:
-        found = split(tank, meter, None, start, end, timezone)
+        found = split(tank, meter, None, start, end, timezone, spells=spells)
     else:
         return {}
     return {day: row["hot_water_kwh"] for day, row in found.items()}

@@ -215,3 +215,43 @@ def test_heating_endpoint_gives_the_estimated_scop_from_the_modes():
         assert today["days"] == 1 and today["kwh"] > 0
     week = api._heat_pump_efficiency(midnight - timedelta(days=4), now)
     assert week["days"] >= 4 and week["scop"] and 1.5 < week["scop"] < 6
+
+
+def test_stale_modes_during_a_catch_up_count_as_hot_water():
+    """Water heater "off" and heating off all night, as SmartThings left them; the tank froze
+    then jumped. The reheat's electricity should be hot water, not standby or heating."""
+    from test_hotwater import NIGHT, REHEAT_KW, frozen_night
+
+    used, tank = frozen_night()
+    stamps = [t for t, _ in used]
+    off = heatpump.Steps([(t, 0.0) for t in stamps])
+    counter = Counter(used, timedelta(minutes=5))
+    found = heatpump.split(
+        off,
+        off,
+        heatpump.Steps([]),
+        hotwater.Tank([]),
+        lambda a, b: counter.between(a, b),
+        NIGHT,
+        NIGHT + timedelta(hours=5),
+        LONDON,
+        spells=hotwater.catch_ups(tank),
+    )
+    day = found[NIGHT.date()]
+    assert day["hot_water_kwh"] == pytest.approx(sum(REHEAT_KW.values()) / 4 + 0.025, abs=0.005)
+    assert day["heating_kwh"] == pytest.approx(0.0)
+
+    # Heating switched on in the spell: left as heating (it can't be told apart)
+    on = heatpump.Steps([(t, 1.0) for t in stamps])
+    found = heatpump.split(
+        off,
+        on,
+        heatpump.Steps([]),
+        hotwater.Tank([]),
+        lambda a, b: counter.between(a, b),
+        NIGHT,
+        NIGHT + timedelta(hours=5),
+        LONDON,
+        spells=hotwater.catch_ups(tank),
+    )
+    assert found[NIGHT.date()]["hot_water_kwh"] == pytest.approx(0.0)

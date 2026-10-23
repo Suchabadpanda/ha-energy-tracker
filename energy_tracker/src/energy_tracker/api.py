@@ -448,11 +448,14 @@ def split_by_modes(
     fine = counter_samples(
         [devices.CIRCUIT, devices.EV, devices.HEAT_PUMP], start - timedelta(hours=1), 2, end
     )
-    measured = hotwater.by_mode(fine, start, end, zone, *splitting, HALF_HOURLY_GAP, modes, outdoor)
+    # The tank by the minute: for the reheats, and to spot catch-ups after frozen readings
+    detail = database().series([hotwater.TANK], start - timedelta(hours=9), 60)
+    measured = hotwater.by_mode(
+        fine, start, end, zone, *splitting, HALF_HOURLY_GAP, modes, outdoor, detail[hotwater.TANK]
+    )
     used_by = hotwater.electricity(fine, *splitting, HALF_HOURLY_GAP)
     runs: list = []
     if litres and used_by:
-        detail = database().series([hotwater.TANK], start - timedelta(hours=1), 60)
         runs = heatpump.reheats(
             heatpump.Steps(modes[heatpump.HOT_WATER_MODE]),
             heatpump.Steps(detail[hotwater.TANK]),
