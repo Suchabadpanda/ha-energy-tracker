@@ -219,3 +219,7 @@
 .tile.split > .note { margin-top: 8px; }
 .tile.split .halves > div + div { border-left: 1px solid var(--line); padding-left: 12px; }
 .section-marker { height: 1px; margin-bottom: -1px; }
+
+/* View only (see api/access): forms and Edit / Remove links are hidden */
+body.view-only form, body.view-only .write { display: none !important; }
+.view-only-note { font-size: 0.9em; color: var(--muted); }

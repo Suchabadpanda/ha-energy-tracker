@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.42.0
+
+- **View only for everyone else.** The sidebar entry now shows for every Home Assistant
+  user, not just administrators. Only the people allowed by the new `edit_access` option
+  (administrators and the owner by default, or just the owner, or everyone) and anyone named
+  in `edit_users` can save or delete anything. Everyone else can look at every page, but the
+  forms and Edit / Remove links are hidden and the app refuses changes from them.
+
 ## 0.41.1
 
 - **Hot water is no longer lost when Samsung's readings freeze.** SmartThings sometimes

@@ -29,6 +29,7 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 
 from . import (
+    access,
     averages,
     billcheck,
     billreader,
@@ -127,9 +128,12 @@ async def lifespan(_: FastAPI):
         await asyncio.to_thread(thread.join, 10)
 
 
-app = FastAPI(title="Energy Tracker", version="0.41.0", lifespan=lifespan)
+app = FastAPI(title="Energy Tracker", version="0.42.0", lifespan=lifespan)
 # The page and its chart data are mostly text: sent compressed, they are a quarter the size.
 app.add_middleware(GZipMiddleware, minimum_size=1000)
+
+
+VIEW_ONLY = "View only: your Home Assistant account can't change Energy Tracker's settings."
 
 
 @app.middleware("http")
@@ -138,7 +142,21 @@ async def only_from_home_assistant(request: Request, call_next):
     allowed = settings().allowed_client
     if allowed and (request.client is None or request.client.host != allowed):
         return JSONResponse({"detail": "Open this from the Home Assistant sidebar"}, 403)
+    # Anyone signed into Home Assistant may look; saving or deleting needs edit rights.
+    if request.method not in ("GET", "HEAD", "OPTIONS"):
+        ok, why, who = await asyncio.to_thread(access.can_change, settings(), request.headers)
+        if not ok:
+            name = who.label if who else "?"
+            log.info("Refused %s %s for %s: %s", request.method, request.url.path, name, why)
+            return JSONResponse({"detail": VIEW_ONLY}, 403)
     return await call_next(request)
+
+
+@app.get("/api/access")
+def who_may_change(request: Request) -> dict:
+    """Whether the person viewing may change things, so the page can hide what they can't."""
+    ok, why, who = access.can_change(settings(), request.headers)
+    return {"can_change": ok, "why": why, "user": who.label if who else None}
 
 
 @app.exception_handler(sqlite3.Error)

@@ -11,6 +11,20 @@
 const PAGE = document.body.dataset.page || "now";
 const onPage = id => document.getElementById(id) !== null;
 
+// View only: anyone signed into Home Assistant can look, but only those allowed (the add-on's
+// edit_access / edit_users options) can save or delete. The server refuses changes from
+// everyone else; here the forms and Edit / Remove links are hidden for them.
+const isViewOnly = () => document.body.classList.contains("view-only");
+fetch("api/access").then(r => (r.ok ? r.json() : null)).then(a => {
+  if (!a || a.can_change) return;
+  document.body.classList.add("view-only");
+  for (const f of document.querySelectorAll("form")) {
+    const note = Object.assign(document.createElement("p"), { className: "view-only-note",
+      textContent: "View only: your Home Assistant account can look but not change this." });
+    f.before(note);
+  }
+}).catch(() => { /* can't tell: the server still checks every change */ });
+
 let CUR = "£", MINOR = "p";
 function applyCurrency(currency) {
   if (!currency) return;
@@ -837,7 +851,7 @@ function renderTariffs(data) {
     const actions = document.createElement("td");
     const action = (label, onClick) => {
       const button = document.createElement("button");
-      button.className = "link";
+      button.className = "link write";
       button.type = "button";
       button.textContent = label;
       button.style.marginRight = "12px";
@@ -1263,7 +1277,7 @@ function renderNotes() {
     const actions = document.createElement("td");
     actions.style.whiteSpace = "nowrap";
     const action = (label, onClick) => {
-      const button = Object.assign(document.createElement("button"), { className: "link", type: "button", textContent: label });
+      const button = Object.assign(document.createElement("button"), { className: "link write", type: "button", textContent: label });
       button.style.marginRight = "12px";
       button.addEventListener("click", onClick);
       actions.append(button);
@@ -1704,7 +1718,7 @@ function renderBills(data) {
     const actions = document.createElement("td");
     actions.rowSpan = 3;
     const action = (label, onClick) => {
-      const button = Object.assign(document.createElement("button"), { className: "link", type: "button", textContent: label });
+      const button = Object.assign(document.createElement("button"), { className: "link write", type: "button", textContent: label });
       button.style.marginRight = "12px";
       button.addEventListener("click", onClick);
       actions.append(button);
@@ -2030,7 +2044,7 @@ function renderIncome(data) {
     }
     const actions = document.createElement("td");
     const action = (label, onClick) => {
-      const button = Object.assign(document.createElement("button"), { className: "link", type: "button", textContent: label });
+      const button = Object.assign(document.createElement("button"), { className: "link write", type: "button", textContent: label });
       button.style.marginRight = "12px";
       button.addEventListener("click", onClick);
       actions.append(button);
@@ -3108,7 +3122,7 @@ function renderCompare(data) {
     const actions = document.createElement("td");
     const action = (label, onClick) => {
       const button = document.createElement("button");
-      Object.assign(button, { className: "link", type: "button", textContent: label });
+      Object.assign(button, { className: "link write", type: "button", textContent: label });
       button.style.marginRight = "12px";
       button.addEventListener("click", onClick);
       actions.append(button);
@@ -3541,7 +3555,7 @@ function setFolded(h2, fold) {
 }
 let layoutReady = false, layoutTimer = null;
 function saveLayout() {
-  if (!layoutReady) return;
+  if (!layoutReady || isViewOnly()) return;  // a viewer's folding stays in their own browser
   clearTimeout(layoutTimer);
   layoutTimer = setTimeout(() => {
     fetch("api/layout", {

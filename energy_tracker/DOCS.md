@@ -116,6 +116,12 @@ their own mean cheaper or better, and dearer or a problem.
 | `heating_mode_entity` | (empty) | An entity that is `heat` while space heating is switched on, such as `climate.heat_pump_indoor1`. Its `current_temperature` is read as the flow temperature. |
 | `flow_temperature_entity` | (empty) | Only if the flow temperature is a separate sensor rather than the heating entity's current temperature. |
 | `ev_on_smart_load` | true | On if the EV charger is wired through smart load port 1. Its use is then taken off the smart load figure. Turn off if the charger is on its own circuit. |
+| `edit_access` | admins | Who can save or delete anything (rates, bills, income, notes, settings, restores, imports): `admins` (Home Assistant administrators and the owner), `owner` (only the owner) or `everyone`. Everyone else signed into Home Assistant can still open the app and look. |
+| `edit_users` | (empty) | Home Assistant users (username or display name) who can always make changes, whatever `edit_access` says. |
+
+### Who can see it and who can change things
+
+The app's sidebar entry shows for every Home Assistant user. Anyone who isn't allowed to make changes (see `edit_access` and `edit_users`) gets a view-only app: the forms and the Edit and Remove links are hidden, and the app refuses any change they try to send. Folding sections stays in their own browser. Home Assistant tells the app who opened it; when the app can't read Home Assistant's list of users, it lets changes through rather than locking everyone out, and says so in its log.
 
 ## Optional equipment
 

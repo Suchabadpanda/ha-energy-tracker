@@ -116,6 +116,11 @@ class Settings:
     # True if the EV charger is wired through the smart load port, so its use is taken off
     # the smart load figure. False if the EV charger is on its own circuit.
     ev_on_smart_load: bool = True
+    # Who may save or delete anything (see access.py): "everyone", "admins" (Home Assistant
+    # administrators and the owner) or "owner". Anyone else signed into Home Assistant can
+    # view only. edit_users names people (username, display name or id) always allowed.
+    edit_access: str = "admins"
+    edit_users: tuple[str, ...] = ()
 
     @property
     def collecting(self) -> bool:
@@ -132,6 +137,11 @@ def _int(value: object, default: int, low: int, high: int) -> int:
 def _text(value: object, default: str) -> str:
     text = str(value).strip() if value is not None else ""
     return text[:40] or default
+
+
+def _choice(value: object, allowed: tuple[str, ...], default: str) -> str:
+    text = str(value or "").strip().lower()
+    return text if text in allowed else default
 
 
 def _flag(value: object, default: bool) -> bool:
@@ -175,6 +185,12 @@ def load_settings() -> Settings:
             heating_mode_entity=str(options.get("heating_mode_entity") or "").strip(),
             flow_temperature_entity=str(options.get("flow_temperature_entity") or "").strip(),
             ev_on_smart_load=_flag(options.get("ev_on_smart_load"), True),
+            edit_access=_choice(
+                options.get("edit_access"), ("everyone", "admins", "owner"), "admins"
+            ),
+            edit_users=tuple(
+                str(n).strip() for n in (options.get("edit_users") or []) if str(n).strip()
+            ),
         )
 
     ha_url = env.get("HA_URL", "").strip().rstrip("/")

@@ -1,6 +1,6 @@
 # Home Assistant add-on definition. Home Assistant reads this to know how to run the app.
 name: Energy Tracker
-version: "0.41.1"
+version: "0.42.0"
 slug: energy_tracker
 url: https://github.com/Suchabadpanda/ha-energy-tracker
 description: For Sigenergy solar and battery systems. Live energy use and running costs on your tariff
@@ -16,6 +16,8 @@ ingress: true
 ingress_port: 8099
 panel_icon: mdi:lightning-bolt
 panel_title: Energy Tracker
+# Shown to every Home Assistant user; who may change anything is set by edit_access below.
+panel_admin: false
 # Lets the app read sensor values and history from Home Assistant. No token to manage.
 homeassistant_api: true
 # The add-on's own config folder, for an optional metrics.toml that replaces the built-in one.
@@ -39,6 +41,8 @@ options:
   flow_temperature_entity: ""
   currency_symbol: "£"
   currency_minor: p
+  edit_access: admins
+  edit_users: []
 schema:
   poll_seconds: int(10,3600)
   backfill_days: int(0,30)
@@ -55,3 +59,6 @@ schema:
   flow_temperature_entity: str?
   currency_symbol: str
   currency_minor: str
+  edit_access: list(everyone|admins|owner)
+  edit_users:
+    - str
