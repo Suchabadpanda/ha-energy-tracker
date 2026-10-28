@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.42.1
+
+- **A reheat is no longer counted as heating when Samsung's mode changes go missing.**
+  SmartThings sometimes stops sending the heat pump's mode changes while its temperatures
+  keep coming. On the morning of 28 Oct the heat pump switched from heating to hot water at
+  05:56, but Home Assistant kept showing the heating on and the water heater off until
+  06:19, so the reheat was counted as heating. Space heating here never sends the flow
+  above about 45 °C, while a reheat climbs it to 53–60 °C: a climb of the flow past 48 °C
+  now counts as hot water whatever the mode entities say, from where the climb began
+  (rising 0.2 °C a minute or faster) to where it stops rising. The half hour the flow stays
+  hot afterwards while it cools is left alone.
+- Days already kept are worked out again after updating, so 28 Oct is corrected too (as
+  far back as the readings go).
+
 ## 0.42.0
 
 - **View only for everyone else.** The sidebar entry now shows for every Home Assistant

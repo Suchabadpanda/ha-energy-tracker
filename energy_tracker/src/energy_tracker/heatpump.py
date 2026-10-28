@@ -55,6 +55,10 @@ HOT_WATER_COP_RANGE = (1.0, 5.0)  # outside this, a reading or setting is wrong
 MIN_HEATING_KWH = 5.0  # below this a period's heating SCOP means little
 MIN_HOT_WATER_KWH = 2.0
 DAY_MINIMUM = 1.0  # kWh: a single day's COP needs less behind it
+REHEAT_FLOW_C = 48.0  # space heating flow stays below this; a cylinder reheat climbs past it
+REHEAT_RISE_RATE = 0.2  # °C a minute: how fast the flow climbs at the start of a reheat
+REHEAT_STEP = timedelta(minutes=10)  # flow readings further apart than this say nothing
+REHEAT_WINDOW = timedelta(minutes=5)  # the climb's rate is judged over this long
 
 UNKNOWN = {"unavailable", "unknown", ""}
 OFF = {"off", "idle", "standby", "none", "false", "0"}
@@ -223,6 +227,59 @@ class Steps:
         return [(datetime.fromtimestamp(s, UTC), datetime.fromtimestamp(e, UTC)) for s, e in found]
 
 
+def flow_reheats(flow: Steps) -> list[tuple[datetime, datetime, float]]:
+    """(start, end, rise) of each climb of the flow past REHEAT_FLOW_C.
+
+    Only a cylinder reheat sends the flow that hot, so the climb is hot water whatever the
+    mode entities say: SmartThings sometimes stops sending the mode changes while the flow
+    temperature keeps coming (28 Oct 2026: heating "on", water heater "off" through a
+    reheat). Each climb is followed back to where it began, while it was rising by
+    REHEAT_RISE_RATE or more, and forward until it stops rising. Only the climb counts: the
+    flow stays hot for half an hour after a reheat while it cools.
+    """
+    points = [(t, v) for t, v in zip(flow.stamps, flow.values) if v is not None]
+    stamps = [t for t, _ in points]
+    step = REHEAT_STEP.total_seconds()
+    window = REHEAT_WINDOW.total_seconds()
+
+    def rise_before(index: int) -> float:
+        """How much the flow rose in the window up to this reading."""
+        earlier = bisect_right(stamps, stamps[index] - window) - 1
+        return points[index][1] - points[earlier][1] if earlier >= 0 else 0.0
+
+    found: list[tuple[datetime, datetime, float]] = []
+    index = 1
+    while index < len(points):
+        (t0, v0), (t1, v1) = points[index - 1], points[index]
+        if not (v1 > v0 and v1 >= REHEAT_FLOW_C and t1 - t0 <= step):
+            index += 1
+            continue
+        end, risen = index, t1
+        ahead = index + 1
+        while ahead < len(points):
+            (ta, va), (tb, vb) = points[ahead - 1], points[ahead]
+            if tb - ta > step or vb < va or (vb == va and tb - risen > window):
+                break
+            if vb > va:
+                end, risen = ahead, tb
+            ahead += 1
+        begun = index - 1
+        while begun >= 1:
+            (ta, va), (tb, vb) = points[begun - 1], points[begun]
+            if tb - ta > step or va > vb or rise_before(begun) < REHEAT_RISE_RATE * window / 60:
+                break
+            begun -= 1
+        found.append(
+            (
+                datetime.fromtimestamp(points[begun][0], UTC),
+                datetime.fromtimestamp(points[end][0], UTC),
+                points[end][1] - points[begun][1],
+            )
+        )
+        index = ahead
+    return found
+
+
 def carnot(flow_c: float, outdoor_c: float) -> float:
     """The ideal efficiency between outdoor air and the flow water, allowing for the
     few degrees each heat exchanger needs (3 °C above the flow, 5 °C below outside)."""
@@ -251,8 +308,10 @@ def split(
     (outdoor, flow) pairs for working out the weather compensation curve.
 
     `spells` are catch-ups after the readings froze (hotwater.catch_ups): the modes read
-    then were stale, so electricity in them goes to hot water, unless heating was on.
+    then were stale, so electricity in them goes to hot water, unless heating was on. A
+    climb of the flow past REHEAT_FLOW_C (flow_reheats) is hot water even if heating was on.
     """
+    climbs = flow_reheats(flow) if flow else []
     days: dict[date, dict] = {}
     for piece_start, piece_end in half_hour_slots(start, end):
         day = days.setdefault(
@@ -276,6 +335,9 @@ def split(
         stale = caught_up(spells, piece_start, piece_end)
         if stale and not (heating_on is not None and heating_on > 0):
             share = max(share or 0.0, stale)
+        climbing = caught_up(climbs, piece_start, piece_end)
+        if climbing and share is not None:
+            share = max(share, climbing)
         if share is None:
             day["heating_kwh"] += kwh  # not known: left out of the measured days below
             continue
