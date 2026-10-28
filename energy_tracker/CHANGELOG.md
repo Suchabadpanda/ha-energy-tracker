@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.42.2
+
+- **Hot water gets the electricity it actually used.** Each half hour used to be split by
+  time: if the hot water was on for 21 of its 30 minutes, it got 21/30 of the half hour's
+  electricity. But a reheat draws hardest near its end (3–5 kW, against 1–2 kW for the
+  heating), so part of every reheat was counted as heating. Now hot water gets the
+  electricity used during its own minutes, read from the finer meter readings. On 28 Oct the
+  06:00 reheat goes from about 0.5 to about 0.8 kWh; most days move a little from heating to
+  hot water. Days already kept are worked out again after updating.
+
 ## 0.42.1
 
 - **A reheat is no longer counted as heating when Samsung's mode changes go missing.**

@@ -350,3 +350,45 @@ def test_a_climate_entity_also_gives_the_flow_the_heating_asks_for():
     assert metrics[heatpump.FLOW] == 40
     assert metrics[heatpump.FLOW_TARGET] == 44
     assert heatpump.FLOW_TARGET not in {m for _, m, _ in heatpump.sources("", "switch.hp", "")}
+
+
+def test_hot_water_gets_the_electricity_used_in_its_own_minutes():
+    """28 Oct 2026: a reheat 06:00-06:21 drew about 1.5 kW, then 4 kW in its last six
+    minutes, while the heating drew 0.5 kW the rest of the half hour. Hot water should get
+    what it used, not 21/30 of the half hour's electricity."""
+    used, modes, total = [], [], 0.0
+    t = DAY + timedelta(hours=6)
+    while t <= DAY + timedelta(hours=6, minutes=30):
+        minute = (t - DAY - timedelta(hours=6)).total_seconds() / 60
+        used.append((t, total))
+        modes.append((t, 1.0 if minute < 21 else 0.0))
+        total += (1.5 if minute < 15 else 4.0 if minute < 21 else 0.5) / 60
+        t += timedelta(minutes=1)
+    counter = Counter(used, timedelta(minutes=5))
+    stamps = [w for w, _ in modes]
+    found = heatpump.split(
+        heatpump.Steps(modes),
+        heatpump.Steps([(w, 1.0) for w in stamps]),
+        heatpump.Steps([]),
+        hotwater.Tank([]),
+        lambda a, b: counter.between(a, b),
+        DAY + timedelta(hours=6),
+        DAY + timedelta(hours=6, minutes=30),
+        LONDON,
+    )
+    day = found[DAY.date()]
+    reheat = 1.5 * 15 / 60 + 4.0 * 6 / 60  # 0.775 kWh
+    assert day["hot_water_kwh"] == pytest.approx(reheat, abs=0.03)
+    assert day["heating_kwh"] == pytest.approx(0.5 * 9 / 60, abs=0.03)
+
+
+def test_used_in_counts_overlapping_spans_once():
+    start = DAY
+    end = DAY + timedelta(minutes=30)
+    spans = [
+        (DAY - timedelta(minutes=10), DAY + timedelta(minutes=10)),
+        (DAY + timedelta(minutes=5), DAY + timedelta(minutes=20)),
+    ]
+    minutes = lambda a, b: (b - a).total_seconds() / 60  # noqa: E731
+    assert heatpump.used_in(spans, minutes, start, end) == pytest.approx(20)
+    assert heatpump.used_in([], minutes, start, end) is None

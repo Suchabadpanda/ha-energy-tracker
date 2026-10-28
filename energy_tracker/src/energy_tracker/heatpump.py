@@ -314,6 +314,28 @@ def carnot(flow_c: float, outdoor_c: float) -> float:
     return (hot + 273.15) / lift
 
 
+def used_in(
+    spans: list[tuple[datetime, datetime]],
+    used: Callable[[datetime, datetime], float],
+    start: datetime,
+    end: datetime,
+) -> float | None:
+    """The electricity used in the parts of [start, end) the spans cover (overlaps counted
+    once); None if they cover none of it."""
+    pieces = sorted((max(a, start), min(b, end)) for a, b in spans if a < end and b > start)
+    merged: list[list[datetime]] = []
+    for a, b in pieces:
+        if b <= a:
+            continue
+        if merged and a <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], b)
+        else:
+            merged.append([a, b])
+    if not merged:
+        return None
+    return sum(max(0.0, used(a, b) or 0.0) for a, b in merged)
+
+
 def split(
     hot_water: Steps,
     heating: Steps,
@@ -328,8 +350,10 @@ def split(
 ) -> dict[date, dict]:
     """Hot water, heating and standby kWh for each day the hot water mode covers.
 
-    Each half hour's electricity goes to hot water for the share of it the hot water mode
-    was on; the rest to heating if heating was switched on, otherwise to standby. Also
+    In each half hour, hot water gets the electricity used while the hot water mode was on
+    (or the half hour's electricity times the share of it the mode was on, where its minutes
+    can't be told apart); the rest goes to heating if heating was switched on, otherwise to
+    standby. Also
     gathers, for heating, the electricity times the ideal efficiency at that half hour's
     flow and outdoor temperatures (multiplied by eta later, it gives the heat), and the
     (outdoor, flow) pairs for working out the weather compensation curve.
@@ -370,7 +394,17 @@ def split(
             day["heating_kwh"] += kwh  # not known: left out of the measured days below
             continue
         day["covered_hours"] += hours
-        water = kwh * share
+        # Hot water gets the electricity used in its own minutes, not the half hour's average:
+        # a reheat draws hardest near its end (3-5 kW against 1-2 kW for the heating), so a
+        # share of time would leave part of it in heating.
+        spans = hot_water.runs(piece_start, piece_end)
+        spans += [(a, b) for a, b, _ in climbs]
+        if stale and not (heating_on is not None and heating_on > 0):
+            spans += [(a, b) for a, b, _ in spells or []]
+        water = used_in(spans, used, piece_start, piece_end) if share > 0 else 0.0
+        if water is None:
+            water = kwh * share
+        water = min(kwh, water)
         rest = kwh - water
         day["hot_water_kwh"] += water
         if heating_on is not None and heating_on <= 0:
