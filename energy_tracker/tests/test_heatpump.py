@@ -32,6 +32,7 @@ def test_modes_and_flow_are_read_from_home_assistant_states():
             (now, heatpump.HOT_WATER_MODE, 0.0),
             (now, heatpump.HEATING_MODE, 1.0),
             (now, heatpump.FLOW, 38.5),
+            (now, heatpump.FLOW_TARGET, 45.0),
         ]
     )
 
@@ -310,3 +311,42 @@ def test_flow_that_stays_below_48_c_or_only_cools_is_not_a_reheat():
     warm_up = [(start + timedelta(minutes=n), 20 + n * 0.5) for n in range(55)]  # to 47 °C
     cooling = [(start + timedelta(hours=2, minutes=n), 56 - n * 0.5) for n in range(20)]
     assert heatpump.flow_reheats(heatpump.Steps(warm_up + cooling)) == []
+
+
+def test_a_flow_climb_the_heating_asked_for_is_not_a_reheat():
+    """27 Oct 2026: a plumber set the heating's flow to 50 then 64 °C to test a radiator,
+    with the hot water off, and the flow climbed past 48 °C. That is heating, not a reheat.
+    On 28 Oct the heating was asking for 43 °C when a reheat climbed the flow past 50 °C."""
+    counter, flow = reheat_morning()
+    stamps = [t for t, _ in flow]
+    asked_for_heat = heatpump.Steps(
+        [
+            (DAY + timedelta(hours=4), 43.0),
+            (DAY + timedelta(hours=5, minutes=58), 50.0),
+            (DAY + timedelta(hours=6, minutes=10), 64.0),
+        ]
+    )
+    assert heatpump.flow_reheats(heatpump.Steps(flow), asked_for_heat) == []
+    found = heatpump.split(
+        heatpump.Steps([(t, 0.0) for t in stamps]),
+        heatpump.Steps([(t, 1.0) for t in stamps]),
+        heatpump.Steps(flow),
+        hotwater.Tank([]),
+        lambda a, b: counter.between(a, b),
+        DAY + timedelta(hours=4),
+        DAY + timedelta(hours=8),
+        LONDON,
+        target=asked_for_heat,
+    )
+    assert found[DAY.date()]["hot_water_kwh"] == pytest.approx(0.0)
+
+    weather_compensated = heatpump.Steps([(DAY + timedelta(hours=4), 43.0)])
+    assert len(heatpump.flow_reheats(heatpump.Steps(flow), weather_compensated)) == 1
+
+
+def test_a_climate_entity_also_gives_the_flow_the_heating_asks_for():
+    state = {"state": "heat", "attributes": {"current_temperature": 40, "temperature": 44}}
+    metrics = {metric: read(state) for _, metric, read in heatpump.sources("", "climate.hp", "")}
+    assert metrics[heatpump.FLOW] == 40
+    assert metrics[heatpump.FLOW_TARGET] == 44
+    assert heatpump.FLOW_TARGET not in {m for _, m, _ in heatpump.sources("", "switch.hp", "")}

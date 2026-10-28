@@ -37,7 +37,8 @@ log = logging.getLogger("heatpump")
 HOT_WATER_MODE = "hot_water_mode"  # 1 while heating the hot water, 0 otherwise
 HEATING_MODE = "heating_mode"  # 1 while space heating is switched on
 FLOW = "flow_temperature"  # °C of the water leaving the heat pump
-METRICS = [HOT_WATER_MODE, HEATING_MODE, FLOW]
+FLOW_TARGET = "flow_target"  # °C the heating is asking for (a climate entity's set temperature)
+METRICS = [HOT_WATER_MODE, HEATING_MODE, FLOW, FLOW_TARGET]
 
 HOLD = timedelta(hours=2)  # a reading says nothing about the time this long after it
 HISTORY_DAYS = 10  # what Home Assistant's recorder keeps by default
@@ -95,6 +96,14 @@ def flow_value(state: dict | None, from_attribute: bool) -> float | None:
     return value if value is not None and 5 <= value <= 85 else None
 
 
+def target_value(state: dict | None) -> float | None:
+    """The flow temperature the heating is asking for: a climate entity's set temperature."""
+    if not state:
+        return None
+    value = weather.celsius(state.get("attributes", {}).get("temperature"), None)
+    return value if value is not None and 5 <= value <= 85 else None
+
+
 def sources(hot_water: str, heating: str, flow: str) -> list[tuple[str, str, Callable]]:
     """(entity, metric, how to read a state) for each entity named in the options."""
     found = []
@@ -106,6 +115,8 @@ def sources(hot_water: str, heating: str, flow: str) -> list[tuple[str, str, Cal
         found.append((flow, FLOW, lambda s: flow_value(s, False)))
     elif heating.startswith("climate."):
         found.append((heating, FLOW, lambda s: flow_value(s, True)))
+    if heating.startswith("climate."):
+        found.append((heating, FLOW_TARGET, target_value))
     return found
 
 
@@ -209,6 +220,11 @@ class Steps:
             weighted += length * value
         return weighted / seconds if b > a and seconds >= cover * (b - a) else None
 
+    def highest(self, start: datetime, end: datetime) -> float | None:
+        """The highest reading in force at any time between two moments; None if none."""
+        values = [value for _, value in self._pieces(start.timestamp(), end.timestamp())]
+        return max(values) if values else None
+
     def runs(self, start: datetime, end: datetime) -> list[tuple[datetime, datetime]]:
         """Stretches during which the mode was on (an average of a half or more)."""
         found: list[list[float]] = []
@@ -227,7 +243,9 @@ class Steps:
         return [(datetime.fromtimestamp(s, UTC), datetime.fromtimestamp(e, UTC)) for s, e in found]
 
 
-def flow_reheats(flow: Steps) -> list[tuple[datetime, datetime, float]]:
+def flow_reheats(
+    flow: Steps, target: Steps | None = None
+) -> list[tuple[datetime, datetime, float]]:
     """(start, end, rise) of each climb of the flow past REHEAT_FLOW_C.
 
     Only a cylinder reheat sends the flow that hot, so the climb is hot water whatever the
@@ -236,8 +254,14 @@ def flow_reheats(flow: Steps) -> list[tuple[datetime, datetime, float]]:
     reheat). Each climb is followed back to where it began, while it was rising by
     REHEAT_RISE_RATE or more, and forward until it stops rising. Only the climb counts: the
     flow stays hot for half an hour after a reheat while it cools.
+
+    `target` is the flow the heating was asking for. A climb that reached REHEAT_FLOW_C
+    while it asked for that much or more is the heating doing as told, not a reheat: on
+    27 Oct 2026 a plumber set the heating to 50–64 °C to test a radiator and the flow
+    climbed to 55 °C with the hot water off. Weather compensation could ask for that much
+    in a hard frost.
     """
-    points = [(t, v) for t, v in zip(flow.stamps, flow.values) if v is not None]
+    points = [(t, v) for t, v in zip(flow.stamps, flow.values, strict=True) if v is not None]
     stamps = [t for t, _ in points]
     step = REHEAT_STEP.total_seconds()
     window = REHEAT_WINDOW.total_seconds()
@@ -269,13 +293,15 @@ def flow_reheats(flow: Steps) -> list[tuple[datetime, datetime, float]]:
             if tb - ta > step or va > vb or rise_before(begun) < REHEAT_RISE_RATE * window / 60:
                 break
             begun -= 1
-        found.append(
-            (
-                datetime.fromtimestamp(points[begun][0], UTC),
-                datetime.fromtimestamp(points[end][0], UTC),
-                points[end][1] - points[begun][1],
-            )
-        )
+        first = datetime.fromtimestamp(points[begun][0], UTC)
+        last = datetime.fromtimestamp(points[end][0], UTC)
+        # What the heating asked for when the flow reached REHEAT_FLOW_C: Samsung's set
+        # temperature can jump later in a real reheat, so only that moment counts.
+        crossed = next(t for t, v in points[begun : end + 1] if v >= REHEAT_FLOW_C)
+        moment = datetime.fromtimestamp(crossed, UTC)
+        asked = target.highest(moment - timedelta(seconds=1), moment) if target else None
+        if asked is None or asked < REHEAT_FLOW_C:
+            found.append((first, last, points[end][1] - points[begun][1]))
         index = ahead
     return found
 
@@ -298,6 +324,7 @@ def split(
     end: datetime,
     timezone: ZoneInfo,
     spells: list | None = None,
+    target: Steps | None = None,
 ) -> dict[date, dict]:
     """Hot water, heating and standby kWh for each day the hot water mode covers.
 
@@ -309,9 +336,10 @@ def split(
 
     `spells` are catch-ups after the readings froze (hotwater.catch_ups): the modes read
     then were stale, so electricity in them goes to hot water, unless heating was on. A
-    climb of the flow past REHEAT_FLOW_C (flow_reheats) is hot water even if heating was on.
+    climb of the flow past REHEAT_FLOW_C (flow_reheats) is hot water even if heating was on,
+    unless the heating's `target` flow was that high itself.
     """
-    climbs = flow_reheats(flow) if flow else []
+    climbs = flow_reheats(flow, target) if flow else []
     days: dict[date, dict] = {}
     for piece_start, piece_end in half_hour_slots(start, end):
         day = days.setdefault(

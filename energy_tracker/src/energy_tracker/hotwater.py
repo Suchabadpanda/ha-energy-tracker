@@ -256,6 +256,7 @@ def by_mode(
         end,
         timezone,
         spells=catch_ups(tank if tank is not None else samples.get(TANK, [])),
+        target=heatpump.Steps(modes.get(heatpump.FLOW_TARGET, [])),
     )
 
 

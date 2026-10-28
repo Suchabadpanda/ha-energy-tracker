@@ -11,6 +11,11 @@
   now counts as hot water whatever the mode entities say, from where the climb began
   (rising 0.2 °C a minute or faster) to where it stops rising. The half hour the flow stays
   hot afterwards while it cools is left alone.
+- Not when the heating itself asked for that much. The climate entity's set temperature is
+  now recorded too (`flow_target`, brought in from history once). If the heating was asking
+  for 48 °C or more when the flow reached 48 °C, the climb stays heating: on 27 Oct a
+  plumber set the heating to 50–64 °C to test a radiator, with the hot water off, and that
+  half hour is not counted as a reheat. A hard frost asking for a hot flow is safe too.
 - Days already kept are worked out again after updating, so 28 Oct is corrected too (as
   far back as the readings go).
 
