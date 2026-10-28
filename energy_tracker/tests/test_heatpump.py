@@ -32,6 +32,7 @@ def test_modes_and_flow_are_read_from_home_assistant_states():
             (now, heatpump.HOT_WATER_MODE, 0.0),
             (now, heatpump.HEATING_MODE, 1.0),
             (now, heatpump.FLOW, 38.5),
+            (now, heatpump.FLOW_TARGET, 45.0),
         ]
     )
 
@@ -255,3 +256,97 @@ def test_stale_modes_during_a_catch_up_count_as_hot_water():
         spells=hotwater.catch_ups(tank),
     )
     assert found[NIGHT.date()]["hot_water_kwh"] == pytest.approx(0.0)
+
+
+def reheat_morning():
+    """2 kWh an hour, read every minute, 04:00–08:00. The heating warms the flow slowly from
+    30 °C, a reheat climbs it 43 → 54 °C 06:00–06:22, then it cools back to 40 °C."""
+    used, flow, total = [], [], 0.0
+    t = DAY + timedelta(hours=4)
+    while t <= DAY + timedelta(hours=8):
+        minutes = (t - DAY).total_seconds() / 60 - 360
+        if minutes < 0:
+            temp = 30 + (minutes + 120) * 0.1  # 30 → 42 °C over two hours
+        elif minutes <= 22:
+            temp = 43 + minutes * 0.5
+        else:
+            temp = max(40.0, 54 - (minutes - 22) * 0.25)
+        used.append((t, total))
+        flow.append((t, round(temp * 2) / 2))  # SmartThings reports half degrees
+        total += 2 / 60
+        t += timedelta(minutes=1)
+    return Counter(used, timedelta(minutes=5)), flow
+
+
+def test_a_flow_climb_past_48_c_is_hot_water_when_the_modes_froze():
+    """28 Oct 2026: SmartThings left heating "on" and the water heater "off" through a
+    reheat. The flow's climb past 48 °C should count as hot water; the slow warm-up before
+    it and the cooling after it stay heating."""
+    counter, flow = reheat_morning()
+    climbs = heatpump.flow_reheats(heatpump.Steps(flow))
+    assert len(climbs) == 1
+    start, end, rise = climbs[0]
+    assert abs(start - (DAY + timedelta(hours=6))) <= timedelta(minutes=2)
+    assert abs(end - (DAY + timedelta(hours=6, minutes=22))) <= timedelta(minutes=1)
+    assert rise == pytest.approx(11.0, abs=1.0)  # may start a reading early, at 42 °C
+
+    stamps = [t for t, _ in flow]
+    found = heatpump.split(
+        heatpump.Steps([(t, 0.0) for t in stamps]),
+        heatpump.Steps([(t, 1.0) for t in stamps]),
+        heatpump.Steps(flow),
+        hotwater.Tank([]),
+        lambda a, b: counter.between(a, b),
+        DAY + timedelta(hours=4),
+        DAY + timedelta(hours=8),
+        LONDON,
+    )
+    day = found[DAY.date()]
+    assert day["hot_water_kwh"] == pytest.approx(2 * 22 / 60, abs=0.1)
+    assert day["heating_kwh"] == pytest.approx(8 - 2 * 22 / 60, abs=0.1)
+
+
+def test_flow_that_stays_below_48_c_or_only_cools_is_not_a_reheat():
+    start = DAY + timedelta(hours=1)
+    warm_up = [(start + timedelta(minutes=n), 20 + n * 0.5) for n in range(55)]  # to 47 °C
+    cooling = [(start + timedelta(hours=2, minutes=n), 56 - n * 0.5) for n in range(20)]
+    assert heatpump.flow_reheats(heatpump.Steps(warm_up + cooling)) == []
+
+
+def test_a_flow_climb_the_heating_asked_for_is_not_a_reheat():
+    """27 Oct 2026: a plumber set the heating's flow to 50 then 64 °C to test a radiator,
+    with the hot water off, and the flow climbed past 48 °C. That is heating, not a reheat.
+    On 28 Oct the heating was asking for 43 °C when a reheat climbed the flow past 50 °C."""
+    counter, flow = reheat_morning()
+    stamps = [t for t, _ in flow]
+    asked_for_heat = heatpump.Steps(
+        [
+            (DAY + timedelta(hours=4), 43.0),
+            (DAY + timedelta(hours=5, minutes=58), 50.0),
+            (DAY + timedelta(hours=6, minutes=10), 64.0),
+        ]
+    )
+    assert heatpump.flow_reheats(heatpump.Steps(flow), asked_for_heat) == []
+    found = heatpump.split(
+        heatpump.Steps([(t, 0.0) for t in stamps]),
+        heatpump.Steps([(t, 1.0) for t in stamps]),
+        heatpump.Steps(flow),
+        hotwater.Tank([]),
+        lambda a, b: counter.between(a, b),
+        DAY + timedelta(hours=4),
+        DAY + timedelta(hours=8),
+        LONDON,
+        target=asked_for_heat,
+    )
+    assert found[DAY.date()]["hot_water_kwh"] == pytest.approx(0.0)
+
+    weather_compensated = heatpump.Steps([(DAY + timedelta(hours=4), 43.0)])
+    assert len(heatpump.flow_reheats(heatpump.Steps(flow), weather_compensated)) == 1
+
+
+def test_a_climate_entity_also_gives_the_flow_the_heating_asks_for():
+    state = {"state": "heat", "attributes": {"current_temperature": 40, "temperature": 44}}
+    metrics = {metric: read(state) for _, metric, read in heatpump.sources("", "climate.hp", "")}
+    assert metrics[heatpump.FLOW] == 40
+    assert metrics[heatpump.FLOW_TARGET] == 44
+    assert heatpump.FLOW_TARGET not in {m for _, m, _ in heatpump.sources("", "switch.hp", "")}
