@@ -54,6 +54,15 @@
     <div class="chart" id="efficiency-box" style="margin-top: 12px;" hidden>
       <h3 style="margin: 0 0 8px; font-size: 15px;">Estimated SCOP</h3>
       <div class="tiles" id="efficiency-tiles"></div>
+      <div class="segmented" id="scop-periods" role="group" aria-label="SCOP by" style="margin-top: 12px;">
+        <button type="button" data-period="days">Daily</button>
+        <button type="button" data-period="weeks">Weekly</button>
+        <button type="button" data-period="months">Monthly</button>
+        <button type="button" data-period="years">Yearly</button>
+      </div>
+      <svg id="scop-chart" viewBox="0 0 900 260" role="img" style="margin-top: 8px;"
+           aria-label="The heat pump's estimated SCOP, heating SCOP and hot water COP over time"></svg>
+      <div class="legend" id="scop-legend"></div>
       <div class="table-scroll" style="margin-top: 12px;">
         <table>
           <thead><tr><th>Period</th><th class="num">Days</th><th class="num">Electricity</th><th class="num">Hot water</th>

@@ -39,6 +39,7 @@ MIN_FIT_DAYS = 14  # days with heat and temperature needed for a prediction
 MIN_FIT_DEGREE_DAYS = 3.0  # spread of degree days needed to fit the heating part
 RECENT_DAYS = 31
 RECENT_WEEKS = 13
+MIN_PART_KWH = 0.5  # electricity behind a hot water COP or heating SCOP figure
 
 
 def _as_date(value) -> date:
@@ -50,6 +51,8 @@ def _total(members: list[dict]) -> dict:
     heat = sum(m["heating_heat_kwh"] for m in members)
     electricity = sum(m["hot_water_kwh"] + m["heating_kwh"] + m["other_kwh"] for m in members)
     total = water + heat
+    water_kwh = sum(m["hot_water_kwh"] for m in members)
+    heating_kwh = sum(m["heating_kwh"] for m in members)
     return {
         "days": len(members),
         "heat_kwh": round(total, 1),
@@ -57,7 +60,17 @@ def _total(members: list[dict]) -> dict:
         "heating_heat_kwh": round(heat, 1),
         "electricity_kwh": round(electricity, 1),
         "cop": round(total / electricity, 2) if electricity >= 1 else None,
+        "hot_water_cop": round(water / water_kwh, 2) if water_kwh >= MIN_PART_KWH else None,
+        "heating_scop": round(heat / heating_kwh, 2) if heating_kwh >= MIN_PART_KWH else None,
     }
+
+
+def _heat(row: dict) -> float:
+    return row["hot_water_heat_kwh"] + row["heating_heat_kwh"]
+
+
+def _electricity(row: dict) -> float:
+    return row["hot_water_kwh"] + row["heating_kwh"] + row["other_kwh"]
 
 
 def _grouped(days: list[dict], key) -> list[dict]:
@@ -116,14 +129,12 @@ def predict_year(
     temperature: dict[date, float],
     model: dict,
     base_c: float,
+    value=_heat,
 ) -> dict:
-    """The year's heat: days with a figure as they are, the rest from the fit."""
+    """The year's heat (or electricity, with `value`): days with a figure as they are, the
+    rest from the fit."""
     first, last = date(year, 1, 1), date(year, 12, 31)
-    known = sum(
-        row["hot_water_heat_kwh"] + row["heating_heat_kwh"]
-        for day, row in actual.items()
-        if first <= day <= last
-    )
+    known = sum(value(row) for day, row in actual.items() if first <= day <= last)
     predicted, count, degree_days = 0.0, 0, 0.0
     sources = {"read": 0, "earlier year": 0, "typical": 0}
     day = first
@@ -201,18 +212,30 @@ def summary(
                 "heating_heat_kwh": y["heating_heat_kwh"],
                 "electricity_kwh": y["kwh"],
                 "cop": y["scop"],
+                "hot_water_cop": y.get("hot_water_cop"),
+                "heating_scop": y.get("heating_scop"),
             }
             for y in whole_years
             if y["name"] != current  # this year's from `daily`, which stops at yesterday
         ] + [y for y in years if y["name"] == current]
     last_7 = [by_day[d] for d in (today - timedelta(days=i) for i in range(1, 8)) if d in by_day]
-    points = [
-        (max(0.0, base_c - temperature[d]), row["hot_water_heat_kwh"] + row["heating_heat_kwh"])
-        for d, row in by_day.items()
-        if d in temperature and (today - d).days <= 365
-    ]
+    fitted = [d for d in by_day if d in temperature and (today - d).days <= 365]
+    points = [(max(0.0, base_c - temperature[d]), _heat(by_day[d])) for d in fitted]
     model = fit(points)
-    prediction = predict_year(today.year, by_day, temperature, model, base_c) if model else None
+    used = fit([(max(0.0, base_c - temperature[d]), _electricity(by_day[d])) for d in fitted])
+    prediction = None
+    if model and used:
+        prediction = predict_year(today.year, by_day, temperature, model, base_c)
+        electricity = predict_year(
+            today.year, by_day, temperature, used, base_c, value=_electricity
+        )
+        # The SCOP the year is heading for: all its heat over all its electricity.
+        prediction["electricity_kwh"] = electricity["heat_kwh"]
+        prediction["scop"] = (
+            round(prediction["heat_kwh"] / electricity["heat_kwh"], 2)
+            if electricity["heat_kwh"] > 0
+            else None
+        )
     return {
         "has_data": True,
         "base_c": base_c,

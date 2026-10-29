@@ -2494,7 +2494,7 @@ function renderHeating(data) {
          change || (latest ? latest.degree_days + " degree days so far" : "Needs a colder spell")),
     tile("Days compared", String(data.days), "With both readings"),
     ...scopTiles(data, tile));
-  renderEfficiency(data.efficiency, tile, data.design);
+  renderEfficiency(data.efficiency, tile, data.design, data.heat_generated);
   renderHeatGenerated(data.heat_generated, tile);
 
   // Scatter: each day's use against its average temperature, with the fitted line.
@@ -2568,7 +2568,7 @@ function renderHeating(data) {
 }
 
 // The estimated SCOP from the heat pump's modes: tiles, and a table by year and month.
-function renderEfficiency(eff, tile, design) {
+function renderEfficiency(eff, tile, design, hg) {
   const box = document.getElementById("efficiency-box");
   box.hidden = !eff?.has_data;
   if (!eff?.has_data) return;
@@ -2587,6 +2587,7 @@ function renderEfficiency(eff, tile, design) {
          eff.hot_water_cop_source === "measured" ? "Measured from " + eff.reheats + " reheats"
          : eff.hot_water_cop_source === "out of range" ? "Typical figure: the measured " + eff.hot_water_cop_measured + " looks wrong (check the cylinder size)"
          : "Typical figure, until reheats are measured"),
+    predictedScopTile(hg, tile),
     tile("Measured days", String(year?.measured_days ?? 0),
          eff.modes_from ? "Split by the heat pump's modes since " + new Date(eff.modes_from + "T00:00").toLocaleDateString([], { day: "numeric", month: "short" }) : ""));
   const cell = (text, cls) => Object.assign(document.createElement("td"), { textContent: text, className: cls ?? "" });
@@ -2617,6 +2618,15 @@ function renderEfficiency(eff, tile, design) {
       + eff.curve.at_minus_3 + " °C at −3 °C outside, " + eff.curve.at_7 + " °C at 7 °C.",
   ];
   if (design?.design_scop) notes.push("Design SCOP: " + design.design_scop.toFixed(2) + ".");
+  if (hg?.prediction?.scop != null) {
+    notes.push("The predicted SCOP for " + hg.prediction.year + " is the predicted heat for the year (see Heat generated) over its predicted electricity, "
+      + hg.prediction.electricity_kwh.toLocaleString() + " kWh, worked out the same way.");
+  }
+  scopChartData = { hg, design };
+  for (const button of document.querySelectorAll("#scop-periods button")) {
+    button.setAttribute("aria-pressed", String(button.dataset.period === scopPeriod));
+  }
+  drawScopChart();
   document.getElementById("efficiency-hint").textContent = notes.join(" ");
 }
 
@@ -2771,6 +2781,125 @@ document.getElementById("heatgen-periods")?.addEventListener("click", event => {
     b.setAttribute("aria-pressed", String(b === button));
   }
   drawHeatGenerated();
+});
+
+// The year's predicted SCOP: all the heat the year is heading for over all its electricity.
+function predictedScopTile(hg, tile) {
+  const pred = hg?.prediction;
+  const year = pred?.year ?? new Date().getFullYear();
+  if (pred?.scop == null) {
+    return tile("Predicted SCOP, " + year, "–", !hg?.has_data ? ""
+      : hg.fit_days < hg.fit_days_needed ? "Needs " + hg.fit_days_needed + " days of figures (" + hg.fit_days + " so far)"
+      : "Needs some colder days first");
+  }
+  return tile("Predicted SCOP, " + year, pred.scop.toFixed(2),
+              pred.heat_kwh.toLocaleString() + " kWh of heat from " + pred.electricity_kwh.toLocaleString() + " kWh");
+}
+
+// The estimated SCOP over time, by day, week, month or year, with the year's prediction.
+let scopChartData = null;
+let scopPeriod = (() => { try { return localStorage.getItem("scop-period") || "weeks"; } catch { return "weeks"; } })();
+function drawScopChart() {
+  const hg = scopChartData?.hg;
+  const chart = document.getElementById("scop-chart");
+  const legend = document.getElementById("scop-legend");
+  chart.replaceChildren();
+  if (!hg?.has_data) { legend.replaceChildren(); return; }
+  const rows = hg[scopPeriod] ?? [];
+  const label = {
+    days: k => new Date(k + "T00:00").toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" }),
+    weeks: k => "w/c " + new Date(k + "T00:00").toLocaleDateString([], { day: "numeric", month: "short", year: "numeric" }),
+    months: k => new Date(k + "-01T00:00").toLocaleDateString([], { month: "long", year: "numeric" }),
+    years: k => k,
+  }[scopPeriod];
+  const short = {
+    days: k => new Date(k + "T00:00").toLocaleDateString([], { day: "numeric", month: "short" }),
+    weeks: k => new Date(k + "T00:00").toLocaleDateString([], { day: "numeric", month: "short" }),
+    months: k => new Date(k + "-01T00:00").toLocaleDateString([], { month: "short" }) + (k.endsWith("-01") ? " " + k.slice(2, 4) : ""),
+    years: k => k,
+  }[scopPeriod];
+  const series = [
+    { key: "cop", name: "SCOP", colour: "var(--text)", width: 2.5 },
+    { key: "heating_scop", name: "Heating", colour: "var(--heatpump)", width: 1.5 },
+    { key: "hot_water_cop", name: "Hot water", colour: "var(--hotwater)", width: 1.5 },
+  ];
+  const pred = hg.prediction?.scop != null ? hg.prediction : null;
+  const design = scopChartData.design?.design_scop ?? null;
+  const NS = "http://www.w3.org/2000/svg";
+  const add = (tag, attrs, text, parent = chart) => {
+    const node = document.createElementNS(NS, tag);
+    for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v);
+    if (text != null) node.textContent = text;
+    parent.append(node);
+    return node;
+  };
+  const left = 56, right = 800, top = 20, bottom = 226;
+  const values = rows.flatMap(r => series.map(s => r[s.key])).filter(v => v != null);
+  // Odd days (a defrost, a day away) can be wild: keep the axis to what a heat pump can do.
+  const yMax = Math.min(8, Math.max(5, Math.ceil(Math.max(...values, pred?.scop ?? 0, design ?? 0))));
+  const y = v => bottom - Math.min(v, yMax) / yMax * (bottom - top);
+  for (let v = 0; v <= yMax; v += 1) {
+    add("line", { x1: left, x2: right, y1: y(v), y2: y(v), class: "gridline" });
+    add("text", { x: left - 8, y: y(v) + 4, "text-anchor": "end", "font-size": 12, fill: "var(--muted)" }, String(v));
+  }
+  add("text", { x: 8, y: 12, "font-size": 12, fill: "var(--muted)" }, "COP");
+  const slot = (right - left) / Math.max(rows.length, 1);
+  const xAt = i => left + slot * (i + 0.5);
+  const every = Math.ceil(rows.length / 12);
+  rows.forEach((r, i) => {
+    if (i % every === 0) add("text", { x: xAt(i), y: bottom + 18, "text-anchor": "middle", "font-size": 12, fill: "var(--muted)" }, short(r.name));
+  });
+  add("line", { x1: left, x2: right, y1: bottom, y2: bottom, stroke: "var(--muted)", "stroke-width": 1 });
+  // Reference lines, labelled at the right: the design SCOP, and the year's prediction.
+  const reference = (value, text, colour) => {
+    add("line", { x1: left, x2: right, y1: y(value), y2: y(value), stroke: colour, "stroke-width": 1.5, "stroke-dasharray": "5 4" });
+    add("text", { x: right + 6, y: y(value) + 4, "font-size": 12, fill: colour }, text);
+  };
+  if (design) reference(design, "Design " + design.toFixed(2), "var(--muted)");
+  if (pred) reference(pred.scop, "Predicted " + pred.scop.toFixed(2), "var(--text)");
+  for (const s of series) {
+    let path = "", pen = false;
+    rows.forEach((r, i) => {
+      const v = r[s.key];
+      if (v == null) { pen = false; return; }
+      path += (pen ? "L" : "M") + xAt(i).toFixed(1) + " " + y(v).toFixed(1);
+      pen = true;
+    });
+    if (path) add("path", { d: path, fill: "none", stroke: s.colour, "stroke-width": s.width, "stroke-linejoin": "round" });
+    if (rows.length <= 40) {
+      rows.forEach((r, i) => {
+        if (r[s.key] != null) add("circle", { cx: xAt(i), cy: y(r[s.key]), r: (s.key === "cop" ? 3.5 : 2.5) * (rows.length <= 5 ? 1.8 : 1), fill: s.colour });
+      });
+    }
+  }
+  // A strip per period to hover, with all its figures.
+  const fixed = v => v == null ? "–" : v.toFixed(2);
+  rows.forEach((r, i) => {
+    const hit = add("rect", { x: xAt(i) - slot / 2, y: top, width: slot, height: bottom - top, fill: "transparent" });
+    const title = document.createElementNS(NS, "title");
+    title.textContent = label(r.name) + "\nSCOP " + fixed(r.cop) + "\nHeating " + fixed(r.heating_scop)
+      + ", hot water " + fixed(r.hot_water_cop) + "\n" + Math.round(r.heat_kwh).toLocaleString() + " kWh of heat from "
+      + Math.round(r.electricity_kwh).toLocaleString() + " kWh";
+    hit.append(title);
+  });
+  const key = (text, colour, cls = "") => {
+    const span = Object.assign(document.createElement("span"), { textContent: text, className: cls });
+    span.style.setProperty("--c", colour);
+    return span;
+  };
+  legend.replaceChildren(...series.map(s => key(s.name === "SCOP" ? "SCOP (all heat ÷ all electricity)" : s.name, s.colour)),
+    ...(pred ? [key("Predicted for " + pred.year, "var(--text)", "dashed")] : []),
+    ...(design ? [key("Design SCOP", "var(--muted)", "dashed")] : []));
+}
+document.getElementById("scop-periods")?.addEventListener("click", event => {
+  const button = event.target.closest("button[data-period]");
+  if (!button) return;
+  scopPeriod = button.dataset.period;
+  try { localStorage.setItem("scop-period", scopPeriod); } catch { /* not kept */ }
+  for (const b of document.querySelectorAll("#scop-periods button")) {
+    b.setAttribute("aria-pressed", String(b === button));
+  }
+  drawScopChart();
 });
 
 // The estimated SCOP: a tile, and how it compares with what the survey expected.

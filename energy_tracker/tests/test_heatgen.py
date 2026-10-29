@@ -110,3 +110,19 @@ def test_temperatures_for_days_without_a_reading():
     assert heatgen._temperature_for(date(2026, 12, 10), temps) == (3.0, "earlier year")
     assert heatgen._temperature_for(date(2026, 12, 11), temps) == (heatgen.TYPICAL_C[12], "typical")
     assert heatgen._temperature_for(date(2028, 2, 29), {})[1] == "typical"
+
+
+def test_the_years_scop_is_predicted_from_heat_and_electricity():
+    first = date(2025, 11, 1)
+    today = date(2026, 6, 1)
+    rows, temps = weather_year(first, (today - first).days)
+    found = heatgen.summary(rows, temps, today)
+    pred = found["prediction"]
+    # Every day's electricity is its heat at fixed COPs (3 for hot water, 3.5 heating)
+    # plus 0.1 kWh standby, so the year's SCOP sits between the standby-diluted figures.
+    assert pred["electricity_kwh"] > 0
+    assert pred["scop"] == pytest.approx(pred["heat_kwh"] / pred["electricity_kwh"], abs=0.01)
+    assert 2.8 < pred["scop"] < 3.5
+    month = found["months"][-1]
+    assert month["hot_water_cop"] == pytest.approx(3.0, abs=0.01)
+    assert month["heating_scop"] == pytest.approx(3.5, abs=0.01)

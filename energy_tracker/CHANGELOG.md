@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.44.0
+
+- **A chart of the estimated SCOP**, in Devices → Heat pump and the weather → Estimated
+  SCOP. Daily, Weekly (the default), Monthly and Yearly buttons, as for Heat generated, show
+  the SCOP (all the heat over all the electricity, standby included), the heating SCOP and
+  the hot water COP over time. Hover a period for its figures. The design SCOP, if entered
+  under Your heat pump's details, is drawn as a dashed line. The choice is remembered on
+  this device.
+- **A predicted SCOP for the year**: a new tile, and a dashed line on the chart. It is the
+  heat predicted for the year (from Heat generated) over the electricity predicted for the
+  year, fitted against the weather the same way: days with figures as they are, the rest
+  from their temperatures, so the winter still to come is allowed for. Like the heat prediction, it needs 14 days of figures and some
+  heating weather.
+
+### How to check this release
+
+1. Devices → Heat pump and the weather → Estimated SCOP: a **Predicted SCOP** tile, and
+   Daily / Weekly / Monthly / Yearly buttons above a chart.
+2. Monthly: each month's points should match the SCOP, Heating SCOP and Hot water COP
+   columns for that month in the table below (to within rounding).
+3. Yearly: this year's point matches the year row in the table; the dashed "Predicted"
+   line matches the tile.
+4. The tile's "kWh of heat" should match the Predicted tile under Heat generated.
+5. Reload the page: the chosen period is kept.
+
 ## 0.43.0
 
 - **Heat generated**, in Devices → Heat pump and the weather, under Estimated SCOP. Tiles

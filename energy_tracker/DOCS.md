@@ -335,6 +335,15 @@ electricity, including standby), the hot water COP, and a table by year and mont
 heating and hot water figures apart. If a measured figure is far outside what a heat pump
 can do (a wrong cylinder size, say), the typical figure is used and the hint says so.
 
+Under the tiles, the Daily, Weekly, Monthly and Yearly buttons switch a chart of the SCOP
+over time: overall (all the heat ÷ all the electricity, standby included), heating and hot
+water. Hover a period for its figures. The design SCOP, if entered, is a dashed line.
+
+The **Predicted SCOP** tile, also a dashed line on the chart, is where this year is heading:
+the predicted heat for the year (see Heat generated) over the predicted electricity, which is
+fitted to the weather the same way. Days still to come are predicted from their usual
+temperatures, so the winter ahead, when the heat pump works harder, is allowed for.
+
 ### Heat generated
 
 Below it, **Heat generated** shows the heat the heat pump put out: yesterday, the last 7
