@@ -35,6 +35,7 @@ from . import (
     billreader,
     collector,
     devices,
+    heatgen,
     heating,
     heatpump,
     history,
@@ -128,7 +129,7 @@ async def lifespan(_: FastAPI):
         await asyncio.to_thread(thread.join, 10)
 
 
-app = FastAPI(title="Energy Tracker", version="0.42.2", lifespan=lifespan)
+app = FastAPI(title="Energy Tracker", version="0.43.0", lifespan=lifespan)
 # The page and its chart data are mostly text: sent compressed, they are a quarter the size.
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
@@ -1584,6 +1585,13 @@ def heat_pump_and_weather() -> dict:
             result.get("warm_day_kwh"),
             yesterday,
             litres,
+        )
+        result["heat_generated"] = heatgen.summary(
+            result["efficiency"]["daily"],
+            temperature,
+            end.astimezone(zone).date(),
+            (design or {}).get("base_c") or heating.BASE_C,
+            result["efficiency"]["years"],
         )
     if design and design.get("heat_loss_kw"):
         hot_water = {

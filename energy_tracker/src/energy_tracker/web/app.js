@@ -2495,6 +2495,7 @@ function renderHeating(data) {
     tile("Days compared", String(data.days), "With both readings"),
     ...scopTiles(data, tile));
   renderEfficiency(data.efficiency, tile, data.design);
+  renderHeatGenerated(data.heat_generated, tile);
 
   // Scatter: each day's use against its average temperature, with the fitted line.
   const NS = "http://www.w3.org/2000/svg";
@@ -2618,6 +2619,159 @@ function renderEfficiency(eff, tile, design) {
   if (design?.design_scop) notes.push("Design SCOP: " + design.design_scop.toFixed(2) + ".");
   document.getElementById("efficiency-hint").textContent = notes.join(" ");
 }
+
+// Heat generated: tiles, the year's prediction, and a chart and table by day, week, month or year.
+let heatGenerated = null;
+let heatGenPeriod = (() => { try { return localStorage.getItem("heatgen-period") || "days"; } catch { return "days"; } })();
+function renderHeatGenerated(hg, tile) {
+  const box = document.getElementById("heatgen-box");
+  box.hidden = !hg?.has_data;
+  if (!hg?.has_data) return;
+  heatGenerated = hg;
+  const kwh = v => v == null ? "–" : Math.round(v).toLocaleString() + " kWh";
+  const split = p => p ? "Hot water " + kwh(p.hot_water_heat_kwh) + ", heating " + kwh(p.heating_heat_kwh) : "";
+  const monthName = key => new Date(key + "-01T00:00").toLocaleDateString([], { month: "long", year: "numeric" });
+  const pred = hg.prediction;
+  let predNote;
+  if (pred) {
+    predNote = kwh(pred.low_kwh) + " to " + kwh(pred.high_kwh) + "; " + kwh(pred.so_far_kwh) + " so far";
+  } else {
+    predNote = hg.fit_days < hg.fit_days_needed
+      ? "Needs " + hg.fit_days_needed + " days of figures (" + hg.fit_days + " so far)"
+      : "Needs some colder days to see how heating use grows";
+  }
+  document.getElementById("heatgen-tiles").replaceChildren(
+    tile("Yesterday", kwh(hg.yesterday?.heat_kwh), hg.yesterday ? split(hg.yesterday) : "No figure for yesterday"),
+    tile("Last 7 days", kwh(hg.last_7_days?.heat_kwh),
+         hg.last_7_days ? (hg.last_7_days.days < 7 ? hg.last_7_days.days + " days with figures; " : "")
+           + "about " + kwh(hg.last_7_days.heat_kwh / hg.last_7_days.days) + " a day" : ""),
+    tile(hg.this_month ? monthName(hg.this_month.name) + " so far" : "This month", kwh(hg.this_month?.heat_kwh),
+         hg.this_month ? split(hg.this_month) : "No whole days yet this month"),
+    tile(hg.this_year ? hg.this_year.name + " so far" : "This year", kwh(hg.this_year?.heat_kwh),
+         hg.this_year ? hg.this_year.days + " days with figures" : ""),
+    tile("Predicted for " + (pred?.year ?? new Date().getFullYear()), kwh(pred?.heat_kwh), predNote));
+  for (const button of document.querySelectorAll("#heatgen-periods button")) {
+    button.setAttribute("aria-pressed", String(button.dataset.period === heatGenPeriod));
+  }
+  drawHeatGenerated();
+  const notes = [
+    "An estimate, from the same figures as the estimated SCOP above: there is no heat meter.",
+    "Today is left out until it is over.",
+  ];
+  if (pred) {
+    const src = pred.temperature_sources;
+    const from = [src["read"] && src["read"] + " with this year's readings",
+                  src["earlier year"] && src["earlier year"] + " from the same dates in an earlier year",
+                  src["typical"] && src["typical"] + " from typical southern England temperatures"].filter(Boolean);
+    notes.push("The prediction fits each day's heat to how cold it was (about " + pred.hot_water_kwh_a_day
+      + " kWh a day even in mild weather, mostly hot water, plus " + pred.per_degree_day_kwh + " kWh for every degree day below " + hg.base_c
+      + " °C, from " + pred.fit_days + " days), then adds the " + pred.predicted_days + " days of " + pred.year
+      + " without a figure: " + from.join(", ") + ". The range allows for how well the fit matches, not for an unusually cold winter.");
+  }
+  document.getElementById("heatgen-hint").textContent = notes.join(" ");
+}
+
+function drawHeatGenerated() {
+  const hg = heatGenerated;
+  if (!hg) return;
+  const rows = hg[heatGenPeriod] ?? [];
+  const label = {
+    days: k => new Date(k + "T00:00").toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" }),
+    weeks: k => "w/c " + new Date(k + "T00:00").toLocaleDateString([], { day: "numeric", month: "short", year: "numeric" }),
+    months: k => new Date(k + "-01T00:00").toLocaleDateString([], { month: "short", year: "numeric" }),
+    years: k => k,
+  }[heatGenPeriod];
+  const short = {
+    days: k => new Date(k + "T00:00").toLocaleDateString([], { day: "numeric", month: "short" }),
+    weeks: k => new Date(k + "T00:00").toLocaleDateString([], { day: "numeric", month: "short" }),
+    months: k => new Date(k + "-01T00:00").toLocaleDateString([], { month: "short" }) + (k.endsWith("-01") ? " " + k.slice(2, 4) : ""),
+    years: k => k,
+  }[heatGenPeriod];
+  // The chart: stacked bars, hot water under heating; this year's prediction as an outline.
+  const chart = document.getElementById("heatgen-chart");
+  const NS = "http://www.w3.org/2000/svg";
+  const add = (tag, attrs, text, parent = chart) => {
+    const node = document.createElementNS(NS, tag);
+    for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v);
+    if (text != null) node.textContent = text;
+    parent.append(node);
+    return node;
+  };
+  chart.replaceChildren();
+  const left = 56, right = 884, top = 20, bottom = 226;
+  const pred = heatGenPeriod === "years" ? hg.prediction : null;
+  const peak = Math.max(1, ...rows.map(r => r.heat_kwh), pred?.high_kwh ?? 0);
+  const step = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000].find(s => peak / s <= 5) ?? 50000;
+  const yMax = Math.ceil(peak / step) * step;
+  const y = v => bottom - v / yMax * (bottom - top);
+  for (let v = 0; v <= yMax; v += step) {
+    add("line", { x1: left, x2: right, y1: y(v), y2: y(v), class: "gridline" });
+    add("text", { x: left - 8, y: y(v) + 4, "text-anchor": "end", "font-size": 12, fill: "var(--muted)" }, v.toLocaleString());
+  }
+  add("text", { x: 8, y: 12, "font-size": 12, fill: "var(--muted)" }, "kWh of heat");
+  const slot = (right - left) / Math.max(rows.length, 1);
+  const width = Math.max(2, Math.min(60, slot * 0.7));
+  const every = Math.ceil(rows.length / 12);
+  rows.forEach((r, i) => {
+    const cx = left + slot * (i + 0.5);
+    const g = add("g", {});
+    const title = document.createElementNS(NS, "title");
+    title.textContent = label(r.name) + "\n" + Math.round(r.heat_kwh).toLocaleString() + " kWh of heat"
+      + "\nHot water " + Math.round(r.hot_water_heat_kwh).toLocaleString() + " kWh, heating " + Math.round(r.heating_heat_kwh).toLocaleString() + " kWh"
+      + (r.cop != null ? "\nCOP " + r.cop.toFixed(2) : "");
+    g.append(title);
+    const water = r.hot_water_heat_kwh, heat = r.heating_heat_kwh;
+    add("rect", { x: cx - width / 2, y: y(water), width, height: Math.max(0, bottom - y(water)), fill: "var(--hotwater)" }, null, g);
+    add("rect", { x: cx - width / 2, y: y(water + heat), width, height: Math.max(0, y(water) - y(water + heat)), fill: "var(--heatpump)" }, null, g);
+    if (pred && r.name === String(pred.year)) {
+      add("rect", { x: cx - width / 2, y: y(pred.heat_kwh), width, height: Math.max(0, y(r.heat_kwh) - y(pred.heat_kwh)),
+                    fill: "none", stroke: "var(--heatpump)", "stroke-width": 1.5, "stroke-dasharray": "4 3" }, null, g);
+      add("line", { x1: cx, x2: cx, y1: y(pred.high_kwh), y2: y(pred.low_kwh), stroke: "var(--muted)", "stroke-width": 1.5 }, null, g);
+      add("text", { x: cx + width / 2 + 6, y: y(pred.heat_kwh) + 4, "font-size": 12, fill: "var(--muted)" },
+          "Predicted " + pred.heat_kwh.toLocaleString(), g);
+    }
+    if (i % every === 0) {
+      add("text", { x: cx, y: bottom + 18, "text-anchor": "middle", "font-size": 12, fill: "var(--muted)" }, short(r.name));
+    }
+  });
+  add("line", { x1: left, x2: right, y1: bottom, y2: bottom, stroke: "var(--muted)", "stroke-width": 1 });
+  const legend = document.getElementById("heatgen-legend");
+  const key = (text, colour, cls = "box") => {
+    const span = Object.assign(document.createElement("span"), { textContent: text, className: cls });
+    span.style.setProperty("--c", colour);
+    return span;
+  };
+  legend.replaceChildren(key("Hot water", "var(--hotwater)"), key("Heating", "var(--heatpump)"),
+                         ...(pred ? [key("Predicted rest of " + pred.year, "var(--heatpump)", "dashed")] : []));
+  // The table, newest first.
+  const cell = (text, cls) => Object.assign(document.createElement("td"), { textContent: text, className: cls ?? "" });
+  const kwh = v => (v < 100 ? v.toFixed(1) : Math.round(v).toLocaleString()) + " kWh";
+  const body = [...rows].reverse().map(r => {
+    const tr = document.createElement("tr");
+    tr.append(cell(label(r.name)), cell(String(r.days), "num"), cell(kwh(r.heat_kwh), "num"),
+              cell(kwh(r.hot_water_heat_kwh), "num"), cell(kwh(r.heating_heat_kwh), "num"),
+              cell(kwh(r.electricity_kwh), "num"), cell(r.cop == null ? "–" : r.cop.toFixed(2), "num"));
+    return tr;
+  });
+  if (pred) {
+    const tr = document.createElement("tr");
+    tr.className = "year-row";
+    tr.append(cell(pred.year + " predicted"), cell(String(pred.known_days + pred.predicted_days), "num"), cell(kwh(pred.heat_kwh), "num"),
+              cell(""), cell(""), cell(""), cell(""));
+    body.unshift(tr);
+  }
+  document.getElementById("heatgen-rows").replaceChildren(...body);
+}
+document.getElementById("heatgen-periods")?.addEventListener("click", event => {
+  const button = event.target.closest("button[data-period]");
+  if (!button) return;
+  heatGenPeriod = button.dataset.period;
+  try { localStorage.setItem("heatgen-period", heatGenPeriod); } catch { /* not kept */ }
+  for (const b of document.querySelectorAll("#heatgen-periods button")) {
+    b.setAttribute("aria-pressed", String(b === button));
+  }
+  drawHeatGenerated();
+});
 
 // The estimated SCOP: a tile, and how it compares with what the survey expected.
 function scopTiles(data, tile) {

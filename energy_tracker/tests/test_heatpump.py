@@ -209,6 +209,15 @@ def test_heating_endpoint_gives_the_estimated_scop_from_the_modes():
     assert latest["scop"] and 1.5 < latest["scop"] < 6
     assert found["yesterday"]["scop"] and found["daily"]
 
+    # Heat generated: the same heat as the SCOP figures, by day, week, month and year.
+    generated = data["heat_generated"]
+    assert generated["has_data"] and generated["days"] and generated["weeks"] and generated["years"]
+    yesterday = generated["yesterday"]
+    assert yesterday["heat_kwh"] == pytest.approx(
+        yesterday["hot_water_heat_kwh"] + yesterday["heating_heat_kwh"], abs=0.2
+    )
+    assert generated["prediction"] is None  # under two weeks of figures
+
     # The tiles under the costs: today so far, and a stretch of whole days.
     midnight = api.local_midnight(now, LONDON)
     today = api._heat_pump_efficiency(midnight, now)

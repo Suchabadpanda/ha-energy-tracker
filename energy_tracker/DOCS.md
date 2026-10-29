@@ -12,7 +12,7 @@ The app is split into five pages, linked at the top of every page:
 |---|---|
 | **Now** | Right now, Where it's going, Today, Today by device, Cost today, the month's cost, the power and consumption charts |
 | **History** | History, Monthly summary, Yearly report, Costs by year, Averages, Performance |
-| **Devices** | Running costs by device, Heat pump and the weather (with the estimated SCOP) |
+| **Devices** | Running costs by device, Heat pump and the weather (with the estimated SCOP and heat generated) |
 | **Money** | Return on investment, Extra income, Bill check, Compare tariffs, Tariff switch planner |
 | **Settings** | Tariff rates, Notes, Backup and restore, Older history |
 
@@ -334,6 +334,24 @@ The **Estimated SCOP** box shows yesterday's COP, this month's and this year's S
 electricity, including standby), the hot water COP, and a table by year and month with the
 heating and hot water figures apart. If a measured figure is far outside what a heat pump
 can do (a wrong cylinder size, say), the typical figure is used and the hint says so.
+
+### Heat generated
+
+Below it, **Heat generated** shows the heat the heat pump put out: yesterday, the last 7
+days, this month and this year so far, and a **prediction for the whole year**. The Daily,
+Weekly, Monthly and Yearly buttons switch the chart (hot water and heating stacked) and the
+table, which also gives the electricity used and the COP. Weeks start on Monday. The heat
+is the same estimate as the SCOP above, so it is only there once the heat pump's modes are
+set up, and today is left out until it is over.
+
+The prediction fits each day's heat over the last year to how cold the day was: a daily
+amount for hot water (and mild days), plus so much for every degree day below 15.5 °C (or
+the base set under Your heat pump's details). Days of the year with a figure count as they
+are. Every other day is predicted from its outdoor temperature if one was read, the same
+date in an earlier year if not, and otherwise a typical southern England temperature for
+the month. The range allows for how well the fit matches, not for an unusually cold
+winter. It needs 14 days of figures, including some needing heating, so in a first summer
+there is no prediction until the weather turns.
 
 **From the heat loss survey.** Under **Your heat pump's details**, enter the figures from the heat loss survey done for the heat
 pump (an MCS heat loss report, say): the total heat loss in kW, and the outdoor and indoor

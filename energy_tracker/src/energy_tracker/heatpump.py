@@ -563,6 +563,8 @@ def summarise(name: str, members: list[dict], minimum: float = MIN_HEATING_KWH) 
         "heating_kwh": round(heating_kwh, 1),
         "other_kwh": round(other, 1),
         "heat_kwh": round(water_heat + heating_heat),
+        "hot_water_heat_kwh": round(water_heat, 1),
+        "heating_heat_kwh": round(heating_heat, 1),
         "hot_water_cop": round(water_heat / water, 2) if water >= water_minimum else None,
         "heating_scop": round(heating_heat / heating_kwh, 2) if heating_kwh >= minimum else None,
         "scop": (

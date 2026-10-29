@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.43.0
+
+- **Heat generated**, in Devices → Heat pump and the weather, under Estimated SCOP. Tiles
+  for yesterday, the last 7 days, this month and this year so far, and a **prediction for
+  the whole year**. Daily, Weekly, Monthly and Yearly buttons switch a chart (hot water
+  and heating stacked) and a table with the heat, its split, the electricity and the COP.
+  The choice is remembered on this device. The heat is the same estimate the SCOP figures
+  already make (there is no heat meter); today is left out until it is over.
+- The prediction fits each day's heat to how cold it was over the last year (a daily
+  amount for hot water and mild days, plus so much per degree day below 15.5 °C). Days of
+  the year that already have a figure count as they are; every other day is predicted from
+  its own outdoor temperature if one was read, the same date in an earlier year if not,
+  and otherwise a typical southern England month. A range is given for how well the fit
+  matches. It needs 14 days of figures and some heating weather first.
+
+### How to check this release
+
+1. Devices → Heat pump and the weather: under Estimated SCOP there is a **Heat generated**
+   box. Yesterday's heat should match yesterday's COP × its electricity in the Estimated
+   SCOP box, roughly.
+2. The month's and the year's tiles should match the heat in the Estimated SCOP tiles
+   (this year's tile there says "… kWh of heat from …").
+3. Click Daily, Weekly, Monthly and Yearly: the chart and table change, newest first in the
+   table. Reload the page: the last choice is kept.
+4. Yearly shows this year's bar with a dashed outline up to the predicted total, and a
+   "predicted" row in the table. The hint says how many days were predicted and where
+   their temperatures came from.
+5. Running costs and Estimated SCOP figures are unchanged.
+
 ## 0.42.2
 
 - **Hot water gets the electricity it actually used.** Each half hour used to be split by

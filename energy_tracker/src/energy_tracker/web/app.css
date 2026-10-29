@@ -3,7 +3,7 @@
     /* Energy colours follow Sigenergy's own app: solar yellow, consumption purple, grid
        lilac-blue, battery cyan (a little deeper here, to show on a light background). */
     --solar: #c9a800; --load: #9a3fe6; --grid: #6c6cf0; --battery: #10b3ac;
-    --export: #2f8f6b; --heatpump: #b8592a; --ev: #2f7fc1; --house: #9a3fe6;
+    --export: #2f8f6b; --heatpump: #b8592a; --hotwater: #2f7fc1; --ev: #2f7fc1; --house: #9a3fe6;
     /* Colours with a meaning of their own, apart from any energy flow. */
     --accent: #3b6fb6; --danger: #b0483c; --good: #2f8f6b; --warn: #c98a00;
   }
@@ -11,7 +11,7 @@
     :root {
       --bg: #151917; --card: #1e2421; --text: #e8ece9; --muted: #98a39e; --line: #2e3632;
       --solar: #f2e24a; --load: #b266f5; --grid: #8f8ffb; --battery: #4ee6e0;
-      --export: #5cc79e; --heatpump: #e8956a; --ev: #6db3ea; --house: #b266f5;
+      --export: #5cc79e; --heatpump: #e8956a; --hotwater: #6db3ea; --ev: #6db3ea; --house: #b266f5;
       --accent: #7aa7e6; --danger: #e5796c; --good: #5cc79e; --warn: #f0b429;
     }
   }
@@ -200,6 +200,9 @@
   .legend span::before { content: ""; display: inline-block; width: 14px; height: 3px;
                          border-radius: 2px; margin-right: 6px; vertical-align: middle;
                          background: var(--c); }
+  /* A row of buttons choosing one of a few views: Daily, Weekly, Monthly, Yearly. */
+  .segmented { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+  .segmented button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
   .empty { color: var(--muted); padding: 30px 0; text-align: center; }
   /* Sharing the yearly report: everything about money is left out. */
   #yearly-section.sharing .money { display: none; }
