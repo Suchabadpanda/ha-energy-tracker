@@ -29,6 +29,8 @@ missing: set[str] = set()
 polled = False
 # How the Axle Energy event sensors stood at the last poll: "ok", "unavailable" or "missing".
 axle_status = "missing"
+# When a poll last went all the way through (None until the first one does).
+last_poll_ok: datetime | None = None
 
 
 def fetch_states(client: httpx.Client) -> dict[str, dict]:
@@ -204,10 +206,16 @@ def run(settings: Settings, db: Database, metrics: list[Metric], stop: threading
                             settings.detail_days,
                             removed,
                         )
+                global last_poll_ok
+                last_poll_ok = now
             except httpx.HTTPStatusError as exc:
                 log.error("Home Assistant returned HTTP %s", exc.response.status_code)
             except (httpx.HTTPError, sqlite3.Error) as exc:
                 log.error("Collection cycle failed: %s", exc)
+            except Exception:  # noqa: BLE001 - anything else must not stop collecting for good
+                # A sensor in an unexpected state, say. Logged in full, and tried again next
+                # time: the thread carrying on matters more than this one cycle.
+                log.exception("Collection cycle failed unexpectedly")
             stop.wait(settings.poll_seconds)
 
     log.info("Collector stopped")

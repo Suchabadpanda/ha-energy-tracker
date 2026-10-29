@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.44.2
+
+A health check of the app, with these fixes:
+
+- **Collecting can no longer stop for good.** A poll that failed in a way nobody had
+  foreseen (a sensor in an odd state, say) used to end the collector quietly: the
+  dashboard carried on showing the last readings while nothing new came in until the
+  add-on was restarted. Now any failure is logged in full and the next poll goes ahead as
+  usual. The same goes for fetching published prices.
+- **`/healthz` says when a poll last went through** (`last_poll_seconds_ago`), so a stall
+  can be spotted.
+- **Long-range figures are a little quicker to work out**: each day's rates are looked up
+  once rather than for every half hour, and Performance no longer sets up each day's row
+  afresh for every half hour. Performance takes about a quarter less time after a restart
+  or a change of rates; the Yearly report a little less. The figures are unchanged.
+- The add-on build uses a fixed minor release of uv rather than the latest, so an update
+  cannot be broken by a new uv release.
+- The user guide said Octopus's price list was only contacted for the tariff lookup; it is
+  also read every few hours while a tariff follows published prices.
+- A test that failed when run between 11 pm and midnight (UTC) now passes at any time.
+
+### How to check this release
+
+1. After updating, the add-on's log shows collecting as usual, with no new errors.
+2. Open `/healthz` through the add-on (or check from the Claude Code session on the Green
+   with `curl` against the add-on): `last_poll_seconds_ago` is a small number, below a
+   minute with the default 30-second polling, and goes back down after each poll.
+3. History → Yearly report and Performance show the same figures as before the update.
+4. Settings: nothing has changed.
+
 ## 0.44.1
 
 - **The SCOP chart's Design and Predicted labels no longer overlap.** When the design SCOP

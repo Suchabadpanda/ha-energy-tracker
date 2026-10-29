@@ -52,3 +52,43 @@ def test_missing_sensors_are_remembered_and_reported_once(caplog):
     states["sensor.ev"] = {"state": "7", "attributes": {"unit_of_measurement": "kW"}}
     collector.build_rows(states, metrics, now)
     assert collector.missing == set()
+
+
+def test_an_unexpected_error_does_not_stop_collecting(monkeypatch, caplog):
+    """A poll that fails in a way nobody foresaw is logged, and the next poll goes ahead:
+    the collector must never stop for good while the dashboard carries on as if all is well."""
+    import dataclasses
+    import threading
+
+    from energy_tracker import api, collector, income
+    from energy_tracker.config import load_settings
+
+    monkeypatch.setenv("HA_URL", "http://homeassistant.invalid:8123")
+    monkeypatch.setenv("HA_TOKEN", "t")
+    settings = dataclasses.replace(load_settings(), poll_seconds=0, backfill_days=0)
+    monkeypatch.setattr(income, "backfill_events", lambda *args, **kwargs: 0)
+    stop = threading.Event()
+    calls = []
+
+    def fetch_states(_client):
+        calls.append(1)
+        if len(calls) == 1:
+            raise KeyError("attributes")  # not an HTTP or database error
+        if len(calls) >= 3:
+            stop.set()
+        return {"sensor.pv": state("1.5", "kW")}
+
+    monkeypatch.setattr(collector, "fetch_states", fetch_states)
+    monkeypatch.setattr(collector, "last_poll_ok", None)
+    metrics = [Metric("pv_power", "sensor.pv", "power", "Solar")]
+    with caplog.at_level("ERROR"):
+        worker = threading.Thread(
+            target=collector.run, args=(settings, api.database(), metrics, stop), daemon=True
+        )
+        worker.start()
+        worker.join(10)
+    assert not worker.is_alive()
+    assert len(calls) >= 3  # it carried on after the failure
+    assert any("unexpectedly" in r.message for r in caplog.records)
+    assert collector.last_poll_ok is not None
+    assert api.database().latest(["pv_power"], datetime(2000, 1, 1, tzinfo=UTC))

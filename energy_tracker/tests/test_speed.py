@@ -146,12 +146,15 @@ def test_kept_days_are_dropped_when_late_readings_or_new_rates_arrive():
     version = api.figures_version()
     kept = api.database().day_figures("averages", version)
     assert len(kept) >= 2
-    # A reading for two days ago, arriving now: from the day before it on is worked out
-    # again; earlier days stay.
-    late = now - timedelta(days=2)
+    # A reading for yesterday, arriving now: from the day before it on is worked out again;
+    # earlier days stay. (Yesterday, not earlier: the first whole day kept depends on the
+    # time of day and the clocks, and at least one must be left before the cut.)
+    late = now - timedelta(days=1)
+    cut = min(late.date(), late.astimezone(api.local_timezone()).date()) - timedelta(days=1)
     api.database().insert_readings([(late + timedelta(seconds=7), devices.LOAD, 1000.5)])
     left = api.database().day_figures("averages", version)
-    assert left and all(day < late.date() - timedelta(days=1) for day in left)
+    assert left and all(day < cut for day in left)
+    assert all(day in left for day in kept if day < cut)
     # A live reading, a moment old, leaves them be.
     api.clear_caches()
     client.get("/api/averages")

@@ -779,8 +779,9 @@ replaces what the earlier one brought in.
 ## Security and data
 
 - The dashboard opens through Home Assistant, behind its login. No network port is opened.
-- The only outside service contacted is Octopus Energy's public price list, and only when
-  you use the tariff lookup.
+- The only outside service contacted is Octopus Energy's public price list: when you use
+  the tariff lookup, and every few hours while a tariff (yours or one being compared)
+  follows published half-hourly prices.
 - The app only reads from Home Assistant. It never changes a device or setting. The
   outdoor temperature is read from Home Assistant too, not from an outside weather service.
 - Readings and rates are stored in the app's data folder and are included in Home
@@ -797,6 +798,14 @@ The database cannot grow without limit:
 With the default sensors that levels off at roughly 0.9 GB when polling every 30 seconds,
 or 1 GB at every 10 seconds, reached after ten years. The current size is shown at the
 bottom of the dashboard. Home Assistant backups include the database.
+
+## Checking it is still collecting
+
+`/healthz` answers with `last_poll_seconds_ago`: how long ago a poll of Home Assistant last
+went all the way through (empty before the first). It should stay below a minute or so
+with the default `poll_seconds`; a figure that keeps growing means readings are not coming
+in, and the add-on's log says why. A poll that fails in an unexpected way is logged in full
+and tried again at the next poll: collecting never stops for good.
 
 ## Support
 

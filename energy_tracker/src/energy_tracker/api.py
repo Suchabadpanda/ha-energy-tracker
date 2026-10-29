@@ -129,7 +129,7 @@ async def lifespan(_: FastAPI):
         await asyncio.to_thread(thread.join, 10)
 
 
-app = FastAPI(title="Energy Tracker", version="0.44.1", lifespan=lifespan)
+app = FastAPI(title="Energy Tracker", version="0.44.2", lifespan=lifespan)
 # The page and its chart data are mostly text: sent compressed, they are a quarter the size.
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
@@ -236,7 +236,11 @@ def dashboard() -> Response:
 
 @app.get("/healthz")
 def healthz() -> dict:
-    return {"status": "ok", "collecting": settings().collecting}
+    """Whether the app is up, and how long ago a poll of Home Assistant last went through
+    (None before the first): a figure that keeps growing means readings are not coming in."""
+    last = collector.last_poll_ok
+    ago = round((datetime.now(UTC) - last).total_seconds()) if last else None
+    return {"status": "ok", "collecting": settings().collecting, "last_poll_seconds_ago": ago}
 
 
 @app.get("/api/metrics")

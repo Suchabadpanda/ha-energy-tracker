@@ -118,4 +118,6 @@ def run(
                         changed()
         except (httpx.HTTPError, sqlite3.Error, ValueError) as exc:
             log.error("Price refresh failed: %s", exc)
+        except Exception:  # noqa: BLE001 - an odd reply must not stop prices being kept up
+            log.exception("Price refresh failed unexpectedly")
         wake.wait(REFRESH_SECONDS)

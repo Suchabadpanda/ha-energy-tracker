@@ -35,27 +35,28 @@ def daily(
     A counter with no readings is left out of the day (None), not counted as zero.
     """
     days: dict[date, dict] = {}
+    present = [(name, counters[name]) for name in COUNTERS if counters.get(name)]
+    imports = counters.get(IMPORT) or None
     for piece_start, _, a, b in half_hour_pieces(start, end):
         local = piece_start.astimezone(timezone)
-        tariff = schedule.on(local.date())
-        day = days.setdefault(
-            local.date(),
-            {
+        today = local.date()
+        tariff = schedule.on(today)
+        day = days.get(today)
+        if day is None:  # each day's row is set up once, at its first half hour
+            day = days[today] = {
                 **{name: (0.0 if counters.get(name) else None) for name in COUNTERS},
                 "dear_kwh": 0.0,
                 "dear_pence": 0.0,
                 # The cheapest import price that day, with VAT: what extra charging would cost.
                 "cheap_p": tariff.cheap_rate(local),
                 "flat": not tariff.dynamic and len({b.p_per_kwh for b in tariff.import_bands}) == 1,
-            },
-        )
-        for name in COUNTERS:
-            if counters.get(name):
-                day[name] += counters[name].kwh(a, b)
+            }
+        for name, counter in present:
+            day[name] += counter.kwh(a, b)
         price = tariff.import_price(local)
         # A hair's allowance, so a price equal to the cheap rate is not counted as dear.
-        if counters.get(IMPORT) and price > day["cheap_p"] + 1e-9:
-            imported = counters[IMPORT].kwh(a, b)
+        if imports and price > day["cheap_p"] + 1e-9:
+            imported = imports.kwh(a, b)
             day["dear_kwh"] += imported
             day["dear_pence"] += imported * price
     return days

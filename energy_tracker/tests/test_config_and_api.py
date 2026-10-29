@@ -47,7 +47,11 @@ def test_settings_standalone(monkeypatch):
 
 
 def test_health_and_dashboard_are_served():
-    assert client.get("/healthz").json() == {"status": "ok", "collecting": False}
+    assert client.get("/healthz").json() == {
+        "status": "ok",
+        "collecting": False,
+        "last_poll_seconds_ago": None,
+    }
     page = client.get("/")
     assert page.status_code == 200
     assert "Energy Tracker" in page.text

@@ -186,10 +186,16 @@ class Schedule:
         if not periods:
             raise ValueError("A schedule needs at least one tariff period")
         self.periods = sorted(periods, key=lambda p: p.effective_from)
+        # Looked up for every half hour of a year: each day's answer is worked out once.
+        self._by_day: dict[date, Tariff] = {}
 
     def on(self, day: date) -> Tariff:
+        found = self._by_day.get(day)
+        if found is not None:
+            return found
         current = self.periods[0]  # days before the first period use the first period's rates
         for period in self.periods:
             if period.effective_from <= day:
                 current = period
+        self._by_day[day] = current
         return current
