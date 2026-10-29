@@ -2851,12 +2851,21 @@ function drawScopChart() {
   });
   add("line", { x1: left, x2: right, y1: bottom, y2: bottom, stroke: "var(--muted)", "stroke-width": 1 });
   // Reference lines, labelled at the right: the design SCOP, and the year's prediction.
-  const reference = (value, text, colour) => {
-    add("line", { x1: left, x2: right, y1: y(value), y2: y(value), stroke: colour, "stroke-width": 1.5, "stroke-dasharray": "5 4" });
-    add("text", { x: right + 6, y: y(value) + 4, "font-size": 12, fill: colour }, text);
-  };
-  if (design) reference(design, "Design " + design.toFixed(2), "var(--muted)");
-  if (pred) reference(pred.scop, "Predicted " + pred.scop.toFixed(2), "var(--text)");
+  // When the two are close, their labels are pushed apart (the higher one up) to stay readable.
+  const refs = [
+    ...(design ? [{ value: design, text: "Design " + design.toFixed(2), colour: "var(--muted)" }] : []),
+    ...(pred ? [{ value: pred.scop, text: "Predicted " + pred.scop.toFixed(2), colour: "var(--text)" }] : []),
+  ];
+  for (const r of refs) r.at = y(r.value) + 4;
+  if (refs.length === 2) {
+    const [upper, lower] = refs[0].value >= refs[1].value ? refs : [refs[1], refs[0]];
+    const gap = 14 - (lower.at - upper.at);
+    if (gap > 0) { upper.at -= gap / 2; lower.at += gap / 2; }
+  }
+  for (const r of refs) {
+    add("line", { x1: left, x2: right, y1: y(r.value), y2: y(r.value), stroke: r.colour, "stroke-width": 1.5, "stroke-dasharray": "5 4" });
+    add("text", { x: right + 6, y: r.at, "font-size": 12, fill: r.colour }, r.text);
+  }
   for (const s of series) {
     let path = "", pen = false;
     rows.forEach((r, i) => {

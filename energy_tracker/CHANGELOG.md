@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.44.1
+
+- **The SCOP chart's Design and Predicted labels no longer overlap.** When the design SCOP
+  and the predicted SCOP are close (3.78 and 3.78, say), their labels at the right of the
+  chart were drawn on top of each other. They are now moved apart, the higher one above.
+
+### How to check this release
+
+1. Devices → Heat pump and the weather → Estimated SCOP, any period: the "Design" and
+   "Predicted" labels at the right of the chart can both be read, one above the other.
+
 ## 0.44.0
 
 - **A chart of the estimated SCOP**, in Devices → Heat pump and the weather → Estimated
