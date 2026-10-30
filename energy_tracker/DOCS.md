@@ -410,7 +410,8 @@ and yearly figures fill in straight away.
   a table of each room's average temperature, the house average, the spread, the share of
   hours in the band and the average outdoor temperature. The chart shades the comfort band
   with the target through it. Hover a period on the chart, or a room's figure in the table,
-  for more. Daily covers the last 90 days. The choice is remembered on this device.
+  for more. Daily covers the last 90 days. The table is folded under the chart: open
+  **Show as a table** to see it. Both choices are remembered on this device.
 
 The figures are worked out from hourly averages. **Comfort hours** leaves out the night,
 when the heating is usually set back on purpose; choose **All day** to count every hour.

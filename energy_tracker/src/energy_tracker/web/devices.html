@@ -174,12 +174,15 @@
         <svg id="comfort-chart" viewBox="0 0 900 280" role="img" style="margin-top: 8px;"
              aria-label="Each room's average temperature by period, against the target"></svg>
         <div class="legend" id="comfort-legend"></div>
-        <div class="table-scroll" style="margin-top: 12px;">
-          <table>
-            <thead id="comfort-periods-head"></thead>
-            <tbody id="comfort-periods-rows"></tbody>
-          </table>
-        </div>
+        <details id="comfort-table-box" style="margin-top: 12px;">
+          <summary>Show as a table</summary>
+          <div class="table-scroll">
+            <table>
+              <thead id="comfort-periods-head"></thead>
+              <tbody id="comfort-periods-rows"></tbody>
+            </table>
+          </div>
+        </details>
       </div>
       <div class="hint" id="comfort-hint"></div>
     </div>

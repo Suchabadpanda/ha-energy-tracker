@@ -1627,6 +1627,14 @@ async function refreshComfort() {
   catch (err) { document.getElementById("comfort-summary").textContent = "Could not work it out (" + err.message + ")."; }
 }
 document.getElementById("comfort-hours")?.addEventListener("change", refreshComfort);
+// The averages table is folded away under the chart; whether it is open is remembered on this device.
+const comfortTableBox = document.getElementById("comfort-table-box");
+if (comfortTableBox) {
+  try { comfortTableBox.open = localStorage.getItem("comfort-table-open") === "1"; } catch { /* folded */ }
+  comfortTableBox.addEventListener("toggle", () => {
+    try { localStorage.setItem("comfort-table-open", comfortTableBox.open ? "1" : "0"); } catch { /* not kept */ }
+  });
+}
 document.getElementById("comfort-add-room")?.addEventListener("click", () => addRoomRow());
 comfortForm?.addEventListener("submit", async event => {
   event.preventDefault();

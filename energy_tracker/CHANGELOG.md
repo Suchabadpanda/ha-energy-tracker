@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.46.2
+
+- **The table under the room averages chart folds away.** In Room comfort and balance, the
+  table of averages below the chart is now under **Show as a table**, folded by default.
+  Whether it is open is remembered on this device.
+
+### How to check this release
+
+1. Devices → Room comfort and balance: below the chart there is a **Show as a table** line
+   instead of the table. Click it: the table opens, and switches with the Daily, Weekly,
+   Monthly and Yearly buttons as before.
+2. Reload the page: the table stays open (or folded) as you left it.
+
 ## 0.46.1
 
 - **Rooms show up as soon as their readings arrive.** After saving new rooms under Room
