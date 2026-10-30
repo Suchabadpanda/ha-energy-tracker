@@ -63,8 +63,20 @@ def row(states: dict[str, dict], chosen: str, now: datetime) -> tuple | None:
     return (now, METRIC, value) if value is not None else None
 
 
-def statistics(url: str, token: str, entity: str) -> list[tuple[datetime, float]]:
-    """Hourly mean temperatures Home Assistant has kept for a sensor, oldest first."""
+def percent(value: object) -> float | None:
+    """A relative humidity, or None if it is not a believable one."""
+    try:
+        number = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    return round(number, 1) if 0 <= number <= 100 else None
+
+
+def statistics(
+    url: str, token: str, entity: str, humidity: bool = False
+) -> list[tuple[datetime, float]]:
+    """Hourly mean temperatures (or humidities) Home Assistant has kept for a sensor,
+    oldest first."""
     from websockets.sync.client import connect  # only needed for this one-off fetch
 
     with connect(url, max_size=None, open_timeout=15) as ws:
@@ -91,7 +103,7 @@ def statistics(url: str, token: str, entity: str) -> list[tuple[datetime, float]
                 break
     found = []
     for item in (reply.get("result") or {}).get(entity, []):
-        value = celsius(item.get("mean"), "°C")
+        value = percent(item.get("mean")) if humidity else celsius(item.get("mean"), "°C")
         when = item.get("start")
         if value is None or when is None:
             continue
@@ -105,7 +117,7 @@ def statistics(url: str, token: str, entity: str) -> list[tuple[datetime, float]
 
 
 def recent_history(
-    client: httpx.Client, entity: str, start: datetime, end: datetime
+    client: httpx.Client, entity: str, start: datetime, end: datetime, humidity: bool = False
 ) -> list[tuple[datetime, float]]:
     """Temperatures in Home Assistant's recent history (about ten days, by default)."""
     response = client.get(
@@ -117,7 +129,9 @@ def recent_history(
     found = []
     for series in response.json():
         for state in series:
-            value = reading({**state, "entity_id": entity})
+            value = (
+                percent(state.get("state")) if humidity else reading({**state, "entity_id": entity})
+            )
             when = state.get("last_updated") or state.get("last_changed")
             if value is not None and when:
                 found.append((datetime.fromisoformat(when).astimezone(UTC), value))
@@ -134,6 +148,7 @@ def backfill(
     days: int,
     metric: str = METRIC,
     detail_first: bool = False,
+    humidity: bool = False,
 ) -> int:
     """Bring in the temperatures Home Assistant already has, once for each entity.
 
@@ -148,16 +163,16 @@ def backfill(
     found: list[tuple[datetime, float]] = []
     if detail_first and days:
         try:
-            found = recent_history(client, entity, now - timedelta(days=days), now)
+            found = recent_history(client, entity, now - timedelta(days=days), now, humidity)
         except httpx.HTTPError as exc:
             log.info("No recent history for %s (%s)", entity, exc)
     if not found and not entity.startswith("weather."):
         try:
-            found = statistics(websocket_url, token, entity)
+            found = statistics(websocket_url, token, entity, humidity)
         except Exception as exc:  # noqa: BLE001 - recent history is still worth having
             log.info("No long-term temperature statistics for %s (%s)", entity, exc)
     if not found and days:
-        found = recent_history(client, entity, now - timedelta(days=days), now)
+        found = recent_history(client, entity, now - timedelta(days=days), now, humidity)
     added = db.insert_readings((when, metric, value) for when, value in found)
     db.set_setting(done, now.isoformat())
     return added

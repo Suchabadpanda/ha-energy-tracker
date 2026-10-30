@@ -34,6 +34,7 @@ from . import (
     billcheck,
     billreader,
     collector,
+    comfort,
     devices,
     headroom,
     heatgen,
@@ -132,7 +133,7 @@ async def lifespan(_: FastAPI):
         await asyncio.to_thread(thread.join, 10)
 
 
-app = FastAPI(title="Energy Tracker", version="0.45.0", lifespan=lifespan)
+app = FastAPI(title="Energy Tracker", version="0.46.0", lifespan=lifespan)
 # The page and its chart data are mostly text: sent compressed, they are a quarter the size.
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
@@ -855,6 +856,7 @@ def keep_figures_ready(stop: threading.Event) -> None:
         ("history", upgrade_comparison, ("60",), True),
         ("devices", device_costs, (), False),
         ("devices", heat_pump_and_weather, (), False),
+        ("devices", room_comfort, ("comfort",), True),
         ("devices", supply_headroom, (None,), True),
         ("devices", overnight_charge, ("30d",), True),
         ("money", payback_figures, (), True),
@@ -1494,6 +1496,107 @@ def more_panels() -> dict:
             else None
         )
     result.update(has_data=True, first_day=start.date(), battery_kwh=battery.capacity_kwh, **found)
+    return result
+
+
+# --- Room comfort and balance ---------------------------------------------------------------------
+
+
+class RoomIn(BaseModel):
+    name: str = Field(min_length=1, max_length=40)
+    temperature: str = Field(pattern=comfort.ENTITY.pattern)
+    humidity: str = Field(default="", pattern=r"^$|" + comfort.ENTITY.pattern)
+
+
+class ComfortIn(BaseModel):
+    """The rooms, the temperature aimed for and the hours that count."""
+
+    rooms: list[RoomIn] = Field(default_factory=list, max_length=comfort.MAX_ROOMS)
+    target_c: float = Field(default=comfort.DEFAULT_TARGET, ge=10, le=30)
+    band_c: float = Field(default=comfort.DEFAULT_BAND, ge=0.2, le=5)
+    hours_from: str = Field(default=comfort.DEFAULT_HOURS[0], pattern=r"^([01]\d|2[0-3]):[03]0$")
+    hours_to: str = Field(
+        default=comfort.DEFAULT_HOURS[1], pattern=r"^([01]\d|2[0-3]):[03]0$|^24:00$"
+    )
+
+
+def comfort_settings() -> dict:
+    try:
+        return ComfortIn(**json.loads(database().get_setting("comfort") or "{}")).model_dump()
+    except (ValueError, TypeError):
+        return ComfortIn().model_dump()
+
+
+@app.get("/api/comfort/sensors")
+def comfort_sensors() -> dict:
+    """Temperature and humidity sensors in Home Assistant, to choose rooms from."""
+    return {
+        "collecting": settings().collecting,
+        "polled": collector.polled,
+        "sensors": comfort.seen,
+    }
+
+
+@app.post("/api/comfort/settings")
+def save_comfort_settings(body: ComfortIn) -> dict:
+    keys = [room.temperature for room in body.rooms]
+    if len(set(keys)) != len(keys):
+        raise HTTPException(status_code=422, detail="Each room needs its own temperature sensor")
+    database().set_setting("comfort", body.model_dump_json())
+    comfort.load(database())  # the collector reads the new rooms from its next poll
+    clear_caches()
+    return room_comfort()
+
+
+@app.get("/api/comfort")
+@kept
+def room_comfort(hours: Annotated[str, Query(pattern="^(comfort|all)$")] = "comfort") -> dict:
+    """Each room against the target, and the balance between rooms, by day, week, month
+    and year."""
+    zone = local_timezone()
+    now = datetime.now(UTC)
+    stored = comfort_settings()
+    chosen = comfort.parse(stored)
+    result: dict = {
+        "settings": stored,
+        "hours": hours,
+        "rooms": [{"key": r.key, "name": r.name, "humidity": bool(r.humidity)} for r in chosen],
+        "has_data": False,
+    }
+    if not chosen:
+        return result
+    names = comfort.metrics(chosen)
+    firsts = [t for name in names if (t := database().first_time(name))]
+    if not firsts:
+        return result
+    hourly = database().series([*names, weather.METRIC], min(firsts), 3600)
+    temperatures = {r.key: hourly.get(comfort.TEMPERATURE + r.temperature, []) for r in chosen}
+    humidities = {
+        r.key: hourly.get(comfort.HUMIDITY + r.humidity, []) for r in chosen if r.humidity
+    }
+    window = None if hours == "all" else (stored["hours_from"], stored["hours_to"])
+    found = comfort.analyse(
+        chosen,
+        temperatures,
+        humidities,
+        hourly.get(weather.METRIC, []),
+        zone,
+        stored["target_c"],
+        stored["band_c"],
+        window,
+        now.astimezone(zone).date(),
+    )
+    latest = database().latest(names, now - timedelta(hours=2))
+    result.update(found)
+    result["now"] = {
+        r.key: {
+            "temperature": latest.get(comfort.TEMPERATURE + r.temperature, (None, None))[1],
+            "humidity": latest.get(comfort.HUMIDITY + r.humidity, (None, None))[1]
+            if r.humidity
+            else None,
+        }
+        for r in chosen
+    }
     return result
 
 
@@ -2210,6 +2313,7 @@ BACKUP_SETTINGS = (
     "upgrade",
     "supply",
     "overnight",
+    "comfort",
 )
 BACKUP_FORMAT = 1
 
@@ -2319,6 +2423,7 @@ async def restore_backup(request: Request, dry_run: bool = True) -> dict:
                 status_code=422, detail=f"That settings file could not be stored ({exc})"
             ) from exc
         prices.forget()
+        comfort.load(database())
         clear_caches()
         price_refresh.set()
     return {"restored": not dry_run, "found": found}

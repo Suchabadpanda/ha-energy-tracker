@@ -1375,6 +1375,278 @@ upgradeForm?.addEventListener("submit", async event => {
   } catch (err) { document.getElementById("upgrade-message").textContent = err.message; }
 });
 
+// --- Room comfort and balance --------------------------------------------------------------
+
+const comfortForm = document.getElementById("comfort-form");
+const ROOM_COLOURS = ["var(--accent)", "var(--heatpump)", "var(--good)", "var(--load)", "var(--solar)", "var(--danger)",
+  "var(--battery)", "var(--grid)", "var(--warn)", "var(--hotwater)", "var(--muted)", "var(--text)"];
+let comfortData = null, comfortFilled = false;
+let comfortPeriod = "weeks";
+try { comfortPeriod = localStorage.getItem("comfort-period") || "weeks"; } catch { /* default */ }
+const degrees = v => v === null || v === undefined ? "–" : v.toFixed(1) + " °C";
+const comfortLabel = {
+  days: k => new Date(k + "T00:00").toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" }),
+  weeks: k => "w/c " + new Date(k + "T00:00").toLocaleDateString([], { day: "numeric", month: "short", year: "numeric" }),
+  months: k => new Date(k + "-01T00:00").toLocaleDateString([], { month: "long", year: "numeric" }),
+  years: k => k,
+};
+const comfortShort = {
+  days: k => new Date(k + "T00:00").toLocaleDateString([], { day: "numeric", month: "short" }),
+  weeks: k => new Date(k + "T00:00").toLocaleDateString([], { day: "numeric", month: "short" }),
+  months: k => new Date(k + "-01T00:00").toLocaleDateString([], { month: "short" }) + (k.endsWith("-01") ? " " + k.slice(2, 4) : ""),
+  years: k => k,
+};
+const DAYS_SHOWN = 90;  // the daily chart and table cover the last 90 days
+
+function addRoomRow(room = {}) {
+  const row = Object.assign(document.createElement("div"), { className: "comfort-room" });
+  const input = (name, placeholder, list, value) => Object.assign(document.createElement("input"),
+    { name, placeholder, value: value ?? "", ...(list ? {} : { maxLength: 40 }) });
+  const name = input("room_name", "Room name", null, room.name);
+  const temp = input("room_temperature", "Temperature sensor (sensor.…)", true, room.temperature);
+  temp.setAttribute("list", "comfort-temperature-sensors");
+  const humid = input("room_humidity", "Humidity sensor (optional)", true, room.humidity);
+  humid.setAttribute("list", "comfort-humidity-sensors");
+  const remove = Object.assign(document.createElement("button"), { type: "button", textContent: "Remove" });
+  remove.addEventListener("click", () => row.remove());
+  // Choosing a sensor fills in the room's name from it, if none was typed.
+  temp.addEventListener("change", () => {
+    const found = comfortSensors.find(s => s.entity === temp.value);
+    if (found && !name.value) name.value = found.name.replace(/\s*temperature\s*$/i, "");
+  });
+  row.append(name, temp, humid, remove);
+  document.getElementById("comfort-room-list").append(row);
+}
+let comfortSensors = [];
+async function loadComfortSensors() {
+  try {
+    const data = await getJson("api/comfort/sensors");
+    comfortSensors = data.sensors;
+    const fill = (id, kind) => document.getElementById(id).replaceChildren(...data.sensors
+      .filter(s => s.kind === kind)
+      .map(s => Object.assign(document.createElement("option"), { value: s.entity,
+        label: s.name + (s.value != null ? " (" + s.value + (kind === "temperature" ? " °C" : "%") + ")" : "") })));
+    fill("comfort-temperature-sensors", "temperature");
+    fill("comfort-humidity-sensors", "humidity");
+  } catch { /* the sensors can still be typed in */ }
+}
+function fillComfortForm(s) {
+  comfortForm.elements.target_c.value = s.target_c;
+  comfortForm.elements.band_c.value = s.band_c;
+  comfortForm.elements.hours_from.value = s.hours_from;
+  comfortForm.elements.hours_to.value = s.hours_to === "24:00" ? "00:00" : s.hours_to;
+  document.getElementById("comfort-room-list").replaceChildren();
+  for (const room of s.rooms) addRoomRow(room);
+  if (!s.rooms.length) addRoomRow();
+}
+
+function renderComfort(data) {
+  comfortData = data;
+  if (!comfortFilled) { comfortFilled = true; fillComfortForm(data.settings); loadComfortSensors(); }
+  const s = data.settings;
+  const tiles = document.getElementById("comfort-tiles");
+  const summary = document.getElementById("comfort-summary");
+  const body = document.getElementById("comfort-body");
+  const hint = document.getElementById("comfort-hint");
+  const hoursText = data.hours === "all" ? "all day" : "between " + s.hours_from + " and " + s.hours_to;
+  hint.textContent = "Worked out from hourly averages, " + hoursText + ". In the band means within " + s.band_c +
+    " °C of the " + s.target_c + " °C target. The spread is how far apart the warmest and coldest rooms were in the " +
+    "same hour, averaged: the balance between rooms, whatever the overall level. Choose \"All day\" to count the " +
+    "night too, when the heating is usually set back on purpose. Humidity above 60% for long makes damp and mould " +
+    "more likely. Today is counted once it is over.";
+  if (!data.rooms.length) {
+    tiles.replaceChildren();
+    body.hidden = true;
+    summary.textContent = "Choose a temperature sensor for each room under \"Rooms and target\" below. Readings start " +
+      "at the next poll, and any history Home Assistant already has for those sensors is brought in.";
+    document.getElementById("comfort-editor").open = !isViewOnly();
+    return;
+  }
+  if (!data.has_data) {
+    tiles.replaceChildren();
+    body.hidden = true;
+    summary.textContent = "Waiting for the rooms' readings: the first full day after they start is shown.";
+    return;
+  }
+  body.hidden = false;
+  const names = Object.fromEntries(data.rooms.map(r => [r.key, r.name]));
+  const sum = data.summary;
+  const reading = (value, note) => value === null || value === undefined ? undefined : { value, note };
+  if (sum) {
+    const coldest = sum.coldest ? sum.rooms[sum.coldest] : null;
+    renderTiles(tiles, [
+      { metric: "house", label: "House average", unit: "°C", digits: 1, color: "var(--heatpump)" },
+      { metric: "band", label: "In the comfort band", unit: "%", digits: 0, color: "var(--good)" },
+      { metric: "spread", label: "Spread between rooms", unit: "°C", digits: 1, color: "var(--warn)" },
+      { metric: "coldest", label: "Coldest room", unit: "°C", digits: 1, color: "var(--accent)" },
+    ], {
+      house: reading(sum.house_average, "against a " + s.target_c + " °C target, last 7 days"),
+      band: reading(sum.in_band_percent, "of room-hours within " + s.band_c + " °C of the target"),
+      spread: reading(sum.spread, "warmest to coldest room, in the same hour, on average"),
+      coldest: reading(coldest?.average, coldest ? names[sum.coldest] + ", " + Math.abs(coldest.offset).toFixed(1) +
+        " °C below the house average" : ""),
+    });
+    const warm = sum.warmest ? names[sum.warmest] : null;
+    summary.textContent = "Over the last " + sum.days + " days" + (warm && sum.coldest
+      ? ", " + warm + " was the warmest room and " + names[sum.coldest] + " the coldest. "
+      : ". ") + (sum.house_average === null ? "" : sum.house_average < s.target_c - s.band_c
+        ? "The house as a whole ran below the target band. "
+        : sum.house_average > s.target_c + s.band_c ? "The house as a whole ran above the target band. "
+        : "The house as a whole was within the target band. ") +
+      (sum.spread !== null ? (sum.spread > 2 ? "The rooms were far apart: balancing the radiators (or smart TRVs) " +
+        "would even them out before turning the heating up." : sum.spread > 1 ? "The rooms were fairly even."
+        : "The rooms were well balanced.") : "");
+  } else {
+    tiles.replaceChildren();
+    summary.textContent = "No readings in the last 7 days.";
+  }
+  const cell = (text, className = "num") => Object.assign(document.createElement("td"), { textContent: text, className });
+  const pct = v => v === null || v === undefined ? "–" : v + "%";
+  document.getElementById("comfort-rooms").replaceChildren(...data.rooms.map(room => {
+    const r = sum?.rooms[room.key];
+    const now = data.now?.[room.key] ?? {};
+    const tr = document.createElement("tr");
+    tr.append(cell(room.name, ""), cell(degrees(now.temperature) + (now.humidity != null ? ", " + now.humidity.toFixed(0) + "%" : "")),
+      cell(degrees(r?.average)), cell(degrees(r?.min)), cell(degrees(r?.max)),
+      cell(r?.offset == null ? "–" : (r.offset > 0 ? "+" : r.offset < 0 ? "−" : "") + Math.abs(r.offset).toFixed(1) + " °C"),
+      cell(pct(r?.in_band_percent)), cell(pct(r?.below_percent)), cell(pct(r?.above_percent)),
+      cell(r?.humidity == null ? "–" : r.humidity + "%"), cell(pct(r?.humid_percent)));
+    return tr;
+  }));
+  for (const b of document.querySelectorAll("#comfort-periods button")) {
+    b.setAttribute("aria-pressed", String(b.dataset.period === comfortPeriod));
+  }
+  drawComfort();
+}
+
+function drawComfort() {
+  const data = comfortData;
+  if (!data?.has_data) return;
+  const s = data.settings;
+  let rows = data[comfortPeriod] ?? [];
+  if (comfortPeriod === "days") rows = rows.slice(-DAYS_SHOWN);
+  const rooms = data.rooms.map((room, i) => ({ ...room, colour: ROOM_COLOURS[i % ROOM_COLOURS.length] }));
+  const chart = document.getElementById("comfort-chart");
+  chart.replaceChildren();
+  const NS = "http://www.w3.org/2000/svg";
+  const add = (tag, attrs, text, parent = chart) => {
+    const node = document.createElementNS(NS, tag);
+    for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v);
+    if (text != null) node.textContent = text;
+    parent.append(node);
+    return node;
+  };
+  const left = 56, right = 860, top = 16, bottom = 236;
+  const values = rows.flatMap(r => rooms.map(room => r.rooms[room.key]?.average)).filter(v => v != null);
+  const low = Math.floor(Math.min(...values, s.target_c - s.band_c) - 0.5);
+  const high = Math.ceil(Math.max(...values, s.target_c + s.band_c) + 0.5);
+  const y = v => bottom - (v - low) / (high - low) * (bottom - top);
+  const step = high - low > 12 ? 2 : 1;
+  for (let v = low; v <= high; v += step) {
+    add("line", { x1: left, x2: right, y1: y(v), y2: y(v), class: "gridline" });
+    add("text", { x: left - 8, y: y(v) + 4, "text-anchor": "end", "font-size": 12, fill: "var(--muted)" }, String(v));
+  }
+  add("text", { x: 8, y: 12, "font-size": 12, fill: "var(--muted)" }, "°C");
+  // The comfort band, shaded, with the target dashed through it.
+  add("rect", { x: left, width: right - left, y: y(s.target_c + s.band_c), height: y(s.target_c - s.band_c) - y(s.target_c + s.band_c),
+                fill: "var(--good)", opacity: 0.12 });
+  add("line", { x1: left, x2: right, y1: y(s.target_c), y2: y(s.target_c), stroke: "var(--good)", "stroke-width": 1.5, "stroke-dasharray": "5 4" });
+  const slot = (right - left) / Math.max(rows.length, 1);
+  const xAt = i => left + slot * (i + 0.5);
+  const every = Math.ceil(rows.length / 12);
+  rows.forEach((r, i) => {
+    if (i % every === 0) add("text", { x: xAt(i), y: bottom + 18, "text-anchor": "middle", "font-size": 12, fill: "var(--muted)" }, comfortShort[comfortPeriod](r.name));
+  });
+  add("line", { x1: left, x2: right, y1: bottom, y2: bottom, stroke: "var(--muted)", "stroke-width": 1 });
+  for (const room of rooms) {
+    let path = "", pen = false;
+    rows.forEach((r, i) => {
+      const v = r.rooms[room.key]?.average;
+      if (v == null) { pen = false; return; }
+      path += (pen ? "L" : "M") + xAt(i).toFixed(1) + " " + y(v).toFixed(1);
+      pen = true;
+    });
+    if (path) add("path", { d: path, fill: "none", stroke: room.colour, "stroke-width": 2, "stroke-linejoin": "round" });
+    if (rows.length <= 40) {
+      rows.forEach((r, i) => {
+        const v = r.rooms[room.key]?.average;
+        if (v != null) add("circle", { cx: xAt(i), cy: y(v), r: rows.length <= 5 ? 4.5 : 2.5, fill: room.colour });
+      });
+    }
+  }
+  rows.forEach((r, i) => {
+    const hit = add("rect", { x: xAt(i) - slot / 2, y: top, width: slot, height: bottom - top, fill: "transparent" });
+    const title = document.createElementNS(NS, "title");
+    title.textContent = comfortLabel[comfortPeriod](r.name) + "\n" + rooms.map(room =>
+      room.name + ": " + degrees(r.rooms[room.key]?.average)).join("\n") + "\nSpread " + degrees(r.spread) +
+      (r.outdoor != null ? "\nOutside " + degrees(r.outdoor) : "");
+    hit.append(title);
+  });
+  const key = (text, colour, cls = "") => {
+    const span = Object.assign(document.createElement("span"), { textContent: text, className: cls });
+    span.style.setProperty("--c", colour);
+    return span;
+  };
+  document.getElementById("comfort-legend").replaceChildren(...rooms.map(room => key(room.name, room.colour)),
+    key("Target " + s.target_c + " °C (band shaded)", "var(--good)", "dashed"));
+
+  // The table: newest first, a column for each room.
+  const head = document.createElement("tr");
+  for (const [text, num] of [["Period", false], ["Days", true], ...rooms.map(r => [r.name, true]),
+                             ["House", true], ["Spread", true], ["In the band", true], ["Outside", true]]) {
+    head.append(Object.assign(document.createElement("th"), { textContent: text, className: num ? "num" : "" }));
+  }
+  document.getElementById("comfort-periods-head").replaceChildren(head);
+  const cell = (text, className = "num") => Object.assign(document.createElement("td"), { textContent: text, className });
+  document.getElementById("comfort-periods-rows").replaceChildren(...[...rows].reverse().map(r => {
+    const tr = document.createElement("tr");
+    tr.append(cell(comfortLabel[comfortPeriod](r.name), ""), cell(String(r.days)),
+      ...rooms.map(room => {
+        const v = r.rooms[room.key];
+        const td = cell(degrees(v?.average));
+        if (v) td.title = "Lowest " + degrees(v.min) + ", highest " + degrees(v.max) + "; in the band " + v.in_band_percent +
+          "%, too cold " + v.below_percent + "%, too warm " + v.above_percent + "%" + (v.humidity != null ? "; humidity " + v.humidity + "%" : "");
+        return td;
+      }),
+      cell(degrees(r.house_average)), cell(degrees(r.spread)),
+      cell(r.in_band_percent == null ? "–" : r.in_band_percent + "%"), cell(degrees(r.outdoor)));
+    return tr;
+  }));
+}
+document.getElementById("comfort-periods")?.addEventListener("click", event => {
+  const button = event.target.closest("button[data-period]");
+  if (!button) return;
+  comfortPeriod = button.dataset.period;
+  try { localStorage.setItem("comfort-period", comfortPeriod); } catch { /* not kept */ }
+  for (const b of document.querySelectorAll("#comfort-periods button")) b.setAttribute("aria-pressed", String(b === button));
+  drawComfort();
+});
+async function refreshComfort() {
+  if (!onPage("comfort-tiles") || !sectionOpen("comfort-heading")) return;
+  try { renderComfort(await getJson("api/comfort?hours=" + document.getElementById("comfort-hours").value)); }
+  catch (err) { document.getElementById("comfort-summary").textContent = "Could not work it out (" + err.message + ")."; }
+}
+document.getElementById("comfort-hours")?.addEventListener("change", refreshComfort);
+document.getElementById("comfort-add-room")?.addEventListener("click", () => addRoomRow());
+comfortForm?.addEventListener("submit", async event => {
+  event.preventDefault();
+  const f = comfortForm.elements;
+  const rooms = [...document.querySelectorAll("#comfort-room-list .comfort-room")].map(row => ({
+    name: row.querySelector("[name=room_name]").value.trim(),
+    temperature: row.querySelector("[name=room_temperature]").value.trim(),
+    humidity: row.querySelector("[name=room_humidity]").value.trim(),
+  })).filter(room => room.temperature);
+  for (const room of rooms) if (!room.name) room.name = room.temperature.replace(/^sensor\./, "").replace(/_/g, " ");
+  try {
+    const data = await sendTariff("api/comfort/settings", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ rooms, target_c: Number(f.target_c.value), band_c: Number(f.band_c.value),
+        hours_from: f.hours_from.value, hours_to: f.hours_to.value === "00:00" ? "24:00" : f.hours_to.value }) });
+    document.getElementById("comfort-message").textContent = "Saved. New rooms' readings start at the next poll.";
+    comfortFilled = false;
+    if (document.getElementById("comfort-hours").value === "comfort") renderComfort(data); else refreshComfort();
+  } catch (err) { document.getElementById("comfort-message").textContent = err.message; }
+});
+
 // --- Supply headroom -----------------------------------------------------------------------
 
 const headroomForm = document.getElementById("headroom-form");
@@ -4040,6 +4312,7 @@ function refreshEverything() {
   refreshUpgrade();
   refreshHeadroom();
   refreshOvernight();
+  refreshComfort();
 }
 
 // The page is refreshed in three parts, each as often as it is worth: the tiles and today's
@@ -4158,6 +4431,7 @@ const SECTION_LOADERS = {
   "yearly-heading": () => refreshYearly(), "heating-heading": () => refreshHeating(),
   "averages-heading": () => refreshAverages(), "upgrade-heading": () => refreshUpgrade(),
   "headroom-heading": () => refreshHeadroom(), "overnight-heading": () => refreshOvernight(),
+  "comfort-heading": () => refreshComfort(),
 };
 function setFolded(h2, fold) {
   const wasFolded = h2.getAttribute("aria-expanded") === "false";
@@ -4238,7 +4512,7 @@ const jump = document.getElementById("jump");
 const PAGES = [
   ["now", "Now", "./", "Live figures, today's and this month's cost, power charts"],
   ["history", "History", "history", "Past days to years, reports, averages, performance, upgrades"],
-  ["devices", "Devices", "devices", "Running costs by device, the heat pump, supply headroom, overnight charge"],
+  ["devices", "Devices", "devices", "Running costs by device, the heat pump, room comfort, supply headroom, overnight charge"],
   ["money", "Money", "money", "Return on investment, income, bills, other tariffs"],
   ["settings", "Settings", "settings", "Tariff rates, notes, backup, older history"],
 ];
@@ -4347,6 +4621,8 @@ async function start() {
   every(60 * MINUTE, () => { if (!yearlyYear) refreshYearly(); });
   refreshUpgrade();
   every(60 * MINUTE, refreshUpgrade);
+  refreshComfort();
+  every(15 * MINUTE, refreshComfort);
   refreshHeadroom();
   every(30 * MINUTE, refreshHeadroom);
   refreshOvernight();

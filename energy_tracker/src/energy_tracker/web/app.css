@@ -234,3 +234,6 @@ body.view-only form, body.view-only .write { display: none !important; }
 td.verdict-short { color: var(--danger); font-weight: 600; }
 td.verdict-spare { color: var(--warn); font-weight: 600; }
 td.verdict-right { color: var(--good); }
+.comfort-room { display: grid; grid-template-columns: 1fr 1.4fr 1.4fr auto; gap: 8px; margin-bottom: 8px; align-items: center; }
+.comfort-room input { width: 100%; box-sizing: border-box; }
+@media (max-width: 640px) { .comfort-room { grid-template-columns: 1fr 1fr; } }

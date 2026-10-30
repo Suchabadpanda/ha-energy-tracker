@@ -98,6 +98,8 @@ Five pages, linked at the top: **Now** (live figures and today's and this month'
   of what a bigger battery, more panels or a bigger inverter would save.
 - **Before and after an upgrade**: the weeks either side of a change to the system, with
   solar compared allowing for the season.
+- **Room comfort and balance**: each room's temperature against your target and the spread
+  between rooms, with daily, weekly, monthly and yearly averages.
 - **Supply headroom**: the highest import against the main fuse, what was running at each
   peak, the pattern through the day, and time spent at the export limit.
 - **Overnight charge**: whether the battery was charged about right in the cheap window,

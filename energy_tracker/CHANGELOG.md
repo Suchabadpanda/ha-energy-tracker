@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.46.0
+
+- **Room comfort and balance** (Devices page). Choose a temperature sensor for each room,
+  and a humidity sensor where there is one, under **Rooms and target**, with the
+  temperature you aim for, a comfort band either side of it and your comfort hours. No
+  restart is needed: the rooms are read from the next poll, and the history Home Assistant
+  already has for those sensors is brought in once, so the monthly and yearly figures fill
+  in straight away.
+  - Tiles for the last 7 days: the house average, the share of room-hours in the comfort
+    band, the spread between the warmest and coldest rooms, and the coldest room.
+  - A table room by room: now, average, lowest, highest, against the house average, the
+    share of hours in the band, too cold and too warm, and humidity.
+  - **Daily, Weekly, Monthly and Yearly averages**: a chart of each room against the
+    shaded comfort band, and a table with each room, the house average, the spread, the
+    share in the band and the outdoor temperature. The choice is remembered on this device.
+  - **Comfort hours** or **All day**: leave out the night, when the heating is set back.
+- The rooms are included in **Backup and restore**, and their old readings are thinned like
+  the others.
+
+### How to check this release
+
+1. Devices → **Room comfort and balance**: it asks for rooms. Open **Rooms and target**,
+   add a row per room (Office, Kitchen, the bedroom, Living room, Rosie's bedroom,
+   Upstairs), start typing in the sensor boxes and pick each room's temperature and
+   humidity sensors from the list. Set the target to 22 and save.
+2. Within a minute or so (the next poll), reload: tiles and the room table appear. "Now"
+   should match each sensor in Home Assistant. The add-on's log says how many earlier
+   readings were brought in for each sensor.
+3. Click Daily, Weekly, Monthly and Yearly: the chart and table change, newest first in the
+   table. A month's figure should be about the sensor's monthly average in Home
+   Assistant's history graph (comfort hours only: switch to **All day** to compare
+   like with like). Reload: the chosen period is kept.
+4. Settings → **Backup and restore** → Download: `comfort` is under settings.
+
 ## 0.45.0
 
 Three new sections.

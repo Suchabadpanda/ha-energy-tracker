@@ -12,7 +12,7 @@ The app is split into five pages, linked at the top of every page:
 |---|---|
 | **Now** | Right now, Where it's going, Today, Today by device, Cost today, the month's cost, the power and consumption charts |
 | **History** | History, Monthly summary, Yearly report, Costs by year, Averages, Performance, Before and after an upgrade |
-| **Devices** | Running costs by device, Heat pump and the weather (with the estimated SCOP and heat generated), Supply headroom, Overnight charge |
+| **Devices** | Running costs by device, Heat pump and the weather (with the estimated SCOP and heat generated), Room comfort and balance, Supply headroom, Overnight charge |
 | **Money** | Return on investment, Extra income, Bill check, Compare tariffs, Tariff switch planner |
 | **Settings** | Tariff rates, Notes, Backup and restore, Older history |
 
@@ -385,6 +385,39 @@ the `outdoor_temperature_entity` option. A sensor outside, out of the sun, is mo
 When the app starts it brings in the temperatures Home Assistant already has, once: years
 of hourly averages for a sensor with long-term statistics, or about ten days for a weather
 entity. A day counts once it has at least 12 hours of readings.
+
+## Room comfort and balance
+
+**Room comfort and balance**, on the Devices page, shows how warm each room is against the
+temperature you aim for, and how evenly the heating reaches them.
+
+Under **Rooms and target**, add a row for each room: its name, its temperature sensor and,
+if it has one, its humidity sensor. Start typing to pick from the sensors Home Assistant
+has. Set the **target**, the **comfort band** either side of it (1 °C by default) and the
+**comfort hours** (07:00 to 22:00 by default). No restart is needed: the rooms are read from
+the next poll, and whatever history Home Assistant already has for those sensors is brought
+in once (years of hourly averages for sensors with long-term statistics), so the monthly
+and yearly figures fill in straight away.
+
+- **The tiles** cover the last 7 days: the house average (the average of the rooms), the
+  share of room-hours in the comfort band, the **spread** between rooms, and the coldest
+  room with how far it runs below the house average.
+- **The last 7 days, room by room**: each room now, its average, lowest and highest, how it
+  compares with the house average, and the share of hours in the band, too cold and too
+  warm. With a humidity sensor, its average humidity and the share of hours above 60%, when
+  damp and mould become more likely.
+- **Averages**: **Daily**, **Weekly**, **Monthly** and **Yearly** buttons switch a chart and
+  a table of each room's average temperature, the house average, the spread, the share of
+  hours in the band and the average outdoor temperature. The chart shades the comfort band
+  with the target through it. Hover a period on the chart, or a room's figure in the table,
+  for more. Daily covers the last 90 days. The choice is remembered on this device.
+
+The figures are worked out from hourly averages. **Comfort hours** leaves out the night,
+when the heating is usually set back on purpose; choose **All day** to count every hour.
+The spread is how far apart the warmest and coldest rooms were in the same hour, averaged:
+the balance between rooms, whatever the overall level. A spread above about 2 °C says the
+rooms are far apart: balancing the radiators, or smart radiator valves, would even them
+out before the heating is turned up. Today is counted once it is over.
 
 ## Supply headroom
 

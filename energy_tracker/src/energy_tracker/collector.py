@@ -12,7 +12,7 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 
-from . import backfill, heatpump, hotwater, income, live, weather
+from . import backfill, comfort, heatpump, hotwater, income, live, weather
 from .config import Metric, Settings
 from .db import Database
 from .normalise import normalise
@@ -118,6 +118,8 @@ def run(settings: Settings, db: Database, metrics: list[Metric], stop: threading
         last_stored = datetime.now(UTC)
         last_thinned: datetime | None = None
         weather_checked = False
+        comfort.load(db)
+        rooms_checked: set[str] = set()  # room sensors whose history has been brought in
         tank_checked = False
         modes_checked = False
 
@@ -186,6 +188,32 @@ def run(settings: Settings, db: Database, metrics: list[Metric], stop: threading
                                 log.info("Brought in %d earlier heat pump mode readings", found)
                         except (httpx.HTTPError, sqlite3.Error, ValueError, OSError) as exc:
                             log.info("Could not bring in earlier heat pump modes: %s", exc)
+                # The rooms' temperatures and humidities, and their history once.
+                rows.extend(comfort.rows(states, now))
+                for room in comfort.rooms:
+                    for entity, prefix, humid in (
+                        (room.temperature, comfort.TEMPERATURE, False),
+                        (room.humidity, comfort.HUMIDITY, True),
+                    ):
+                        if not entity or entity in rooms_checked:
+                            continue
+                        rooms_checked.add(entity)
+                        try:
+                            found = weather.backfill(
+                                db,
+                                client,
+                                settings.ha_websocket_url,
+                                settings.ha_token,
+                                entity,
+                                now,
+                                settings.backfill_days,
+                                metric=prefix + entity,
+                                humidity=humid,
+                            )
+                            if found:
+                                log.info("Brought in %d earlier readings of %s", found, entity)
+                        except (httpx.HTTPError, sqlite3.Error, ValueError, OSError) as exc:
+                            log.info("Could not bring in earlier readings of %s: %s", entity, exc)
                 note_home(db, states)
                 if rows:
                     db.insert_readings(rows)
@@ -204,7 +232,13 @@ def run(settings: Settings, db: Database, metrics: list[Metric], stop: threading
                 # Once a day, thin old readings so the database stays small.
                 if last_thinned is None or now - last_thinned > THIN_EVERY:
                     removed = db.thin(
-                        [*names, weather.METRIC, hotwater.TANK, *heatpump.METRICS],
+                        [
+                            *names,
+                            weather.METRIC,
+                            hotwater.TANK,
+                            *heatpump.METRICS,
+                            *comfort.metrics(),
+                        ],
                         now - timedelta(days=settings.detail_days),
                     )
                     # ...and drop whatever has passed the age limit. Run daily, this removes

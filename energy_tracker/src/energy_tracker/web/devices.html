@@ -142,6 +142,67 @@
     </details>
   </div>
 
+  <div id="comfort-section">
+    <div class="filters">
+      <h2 id="comfort-heading">Room comfort and balance</h2>
+      <select id="comfort-hours" aria-label="Hours counted">
+        <option value="comfort" selected>Comfort hours</option>
+        <option value="all">All day</option>
+      </select>
+    </div>
+    <div class="tiles" id="comfort-tiles"></div>
+    <div class="chart" style="margin-top: 12px;">
+      <div class="hint" id="comfort-summary" style="margin-top: 0;"></div>
+      <div id="comfort-body" hidden>
+        <div class="group-title" style="margin-top: 12px;" id="comfort-rooms-title">The last 7 days, room by room</div>
+        <div class="table-scroll">
+          <table>
+            <thead><tr><th>Room</th><th class="num">Now</th><th class="num">Average</th><th class="num">Lowest</th>
+              <th class="num">Highest</th><th class="num">Against the house</th><th class="num">In the band</th>
+              <th class="num">Too cold</th><th class="num">Too warm</th><th class="num">Humidity</th>
+              <th class="num">Above 60%</th></tr></thead>
+            <tbody id="comfort-rooms"></tbody>
+          </table>
+        </div>
+        <div class="group-title" style="margin-top: 16px;">Averages</div>
+        <div class="segmented" id="comfort-periods" role="group" aria-label="Averages by">
+          <button type="button" data-period="days">Daily</button>
+          <button type="button" data-period="weeks">Weekly</button>
+          <button type="button" data-period="months">Monthly</button>
+          <button type="button" data-period="years">Yearly</button>
+        </div>
+        <svg id="comfort-chart" viewBox="0 0 900 280" role="img" style="margin-top: 8px;"
+             aria-label="Each room's average temperature by period, against the target"></svg>
+        <div class="legend" id="comfort-legend"></div>
+        <div class="table-scroll" style="margin-top: 12px;">
+          <table>
+            <thead id="comfort-periods-head"></thead>
+            <tbody id="comfort-periods-rows"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="hint" id="comfort-hint"></div>
+    </div>
+    <details id="comfort-editor">
+      <summary>Rooms and target</summary>
+      <form id="comfort-form">
+        <label>Target (°C) <input type="number" name="target_c" min="10" max="30" step="0.5" required></label>
+        <label>Comfort band, give or take (°C) <input type="number" name="band_c" min="0.2" max="5" step="0.1" required></label>
+        <label>Comfort hours from <input type="time" name="hours_from" step="1800" required></label>
+        <label>to <input type="time" name="hours_to" step="1800" required></label>
+        <div style="grid-column: 1 / -1;">
+          <div class="group-title" style="margin: 4px 0 8px;">Rooms</div>
+          <div id="comfort-room-list"></div>
+          <button type="button" id="comfort-add-room">Add a room</button>
+          <datalist id="comfort-temperature-sensors"></datalist>
+          <datalist id="comfort-humidity-sensors"></datalist>
+        </div>
+        <div class="actions"><button class="primary" type="submit">Save</button></div>
+        <div id="comfort-message" style="grid-column: 1 / -1; font-size: 13px; min-height: 18px; color: var(--muted);"></div>
+      </form>
+    </details>
+  </div>
+
   <div id="headroom-section">
     <h2 id="headroom-heading">Supply headroom</h2>
     <div class="tiles" id="headroom-tiles"></div>
