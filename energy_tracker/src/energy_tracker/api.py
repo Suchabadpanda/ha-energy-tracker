@@ -108,7 +108,7 @@ async def lifespan(_: FastAPI):
         metrics = list(metrics_by_name().values())
         thread = threading.Thread(
             target=collector.run,
-            args=(settings(), database(), metrics, stop),
+            args=(settings(), database(), metrics, stop, clear_caches),
             name="collector",
             daemon=True,
         )
@@ -133,7 +133,7 @@ async def lifespan(_: FastAPI):
         await asyncio.to_thread(thread.join, 10)
 
 
-app = FastAPI(title="Energy Tracker", version="0.46.0", lifespan=lifespan)
+app = FastAPI(title="Energy Tracker", version="0.46.1", lifespan=lifespan)
 # The page and its chart data are mostly text: sent compressed, they are a quarter the size.
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 

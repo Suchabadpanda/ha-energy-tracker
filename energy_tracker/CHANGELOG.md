@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.46.1
+
+- **Rooms show up as soon as their readings arrive.** After saving new rooms under Room
+  comfort and balance, the section said it was waiting for readings for up to ten minutes,
+  because the figures worked out at the moment of saving (before any readings) were kept.
+  Now, once a new room's first readings and its history from Home Assistant are in, the
+  figures are worked out again straight away.
+
+### How to check this release
+
+1. Devices → Room comfort and balance → Rooms and target: add a room (or remove one, save,
+   and add it back) and save. Within a minute, reload the page: the room's figures and
+   history are there, without waiting ten minutes.
+
 ## 0.46.0
 
 - **Room comfort and balance** (Devices page). Choose a temperature sensor for each room,

@@ -8,6 +8,7 @@ from __future__ import annotations
 import logging
 import sqlite3
 import threading
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 
 import httpx
@@ -78,8 +79,16 @@ def note_home(db: Database, states: dict[str, dict]) -> None:
         home_latitude = latitude
 
 
-def run(settings: Settings, db: Database, metrics: list[Metric], stop: threading.Event) -> None:
-    """Collect until `stop` is set. A failed cycle is logged and tried again next time."""
+def run(
+    settings: Settings,
+    db: Database,
+    metrics: list[Metric],
+    stop: threading.Event,
+    changed: Callable[[], None] | None = None,
+) -> None:
+    """Collect until `stop` is set. A failed cycle is logged and tried again next time.
+    `changed` is called when readings arrive that figures already worked out lack (a room
+    just added, and its history), so they are worked out again."""
     log.info(
         "Collecting %d metrics from %s every %ds",
         len(metrics),
@@ -190,6 +199,7 @@ def run(settings: Settings, db: Database, metrics: list[Metric], stop: threading
                             log.info("Could not bring in earlier heat pump modes: %s", exc)
                 # The rooms' temperatures and humidities, and their history once.
                 rows.extend(comfort.rows(states, now))
+                rooms_added = False
                 for room in comfort.rooms:
                     for entity, prefix, humid in (
                         (room.temperature, comfort.TEMPERATURE, False),
@@ -198,6 +208,7 @@ def run(settings: Settings, db: Database, metrics: list[Metric], stop: threading
                         if not entity or entity in rooms_checked:
                             continue
                         rooms_checked.add(entity)
+                        rooms_added = True
                         try:
                             found = weather.backfill(
                                 db,
@@ -219,6 +230,8 @@ def run(settings: Settings, db: Database, metrics: list[Metric], stop: threading
                     db.insert_readings(rows)
                     last_stored = now
                     live.note_rows(rows, metrics)
+                if rooms_added and changed:
+                    changed()  # a room's first readings and history are in
                 log.debug("Stored %d of %d readings", len(rows), len(metrics))
 
                 # Note any grid event the Axle sensor is showing, and measure finished ones.

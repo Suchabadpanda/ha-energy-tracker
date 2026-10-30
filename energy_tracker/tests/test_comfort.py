@@ -184,12 +184,17 @@ def test_the_collector_reads_the_rooms_and_brings_in_their_history(monkeypatch):
 
     monkeypatch.setattr(collector, "fetch_states", fetch_states)
     metrics = [Metric("pv_power", "sensor.pv", "power", "Solar")]
+    cleared = []
     worker = threading.Thread(
-        target=collector.run, args=(settings, api.database(), metrics, stop), daemon=True
+        target=collector.run,
+        args=(settings, api.database(), metrics, stop, lambda: cleared.append(1)),
+        daemon=True,
     )
     worker.start()
     worker.join(10)
     assert not worker.is_alive()
+    # Figures worked out before the room's readings arrived are worked out again, once.
+    assert cleared == [1]
     # History brought in once for each sensor, the humidity as a humidity.
     assert [(entity, kw["metric"], kw["humidity"]) for entity, kw in asked] == [
         ("sensor.kitchen_t", "room_temperature:sensor.kitchen_t", False),
