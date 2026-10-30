@@ -31,6 +31,8 @@ polled = False
 axle_status = "missing"
 # When a poll last went all the way through (None until the first one does).
 last_poll_ok: datetime | None = None
+# The home zone's latitude as last stored.
+home_latitude: float | None = None
 
 
 def fetch_states(client: httpx.Client) -> dict[str, dict]:
@@ -62,6 +64,18 @@ def build_rows(states: dict[str, dict], metrics: list[Metric], now: datetime) ->
         rows.append((now, metric.name, value * metric.scale))
     polled = True
     return rows
+
+
+def note_home(db: Database, states: dict[str, dict]) -> None:
+    """Keep the home's latitude, from Home Assistant's home zone, for working out how much
+    sun a clear day gives (Before and after an upgrade). Stored only when it changes."""
+    global home_latitude
+    latitude = states.get("zone.home", {}).get("attributes", {}).get("latitude")
+    if not isinstance(latitude, int | float) or not -90 <= latitude <= 90:
+        return
+    if latitude != home_latitude:
+        db.set_setting("home_latitude", str(round(float(latitude), 4)))
+        home_latitude = latitude
 
 
 def run(settings: Settings, db: Database, metrics: list[Metric], stop: threading.Event) -> None:
@@ -172,6 +186,7 @@ def run(settings: Settings, db: Database, metrics: list[Metric], stop: threading
                                 log.info("Brought in %d earlier heat pump mode readings", found)
                         except (httpx.HTTPError, sqlite3.Error, ValueError, OSError) as exc:
                             log.info("Could not bring in earlier heat pump modes: %s", exc)
+                note_home(db, states)
                 if rows:
                     db.insert_readings(rows)
                     last_stored = now

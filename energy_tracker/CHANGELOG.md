@@ -1,5 +1,53 @@
 # Changelog
 
+## 0.45.0
+
+Three new sections.
+
+- **Before and after an upgrade** (History page). Enter the day the system changed (more
+  panels, a new inverter) under **The upgrade**, with the panels' size before and after if
+  you like. The 30, 60 or 90 days before it are set against the same after it: solar, use,
+  import, export, self-sufficiency, net cost and outdoor temperature, per day. Solar is
+  compared allowing for the season: each day is set against how much sun a cloudless sky
+  gives on that date at your latitude (read from Home Assistant's home zone), so a darker
+  month after a November upgrade is not counted against it. The sunniest fifth of days are
+  also compared on their own, as a check less affected by cloud. Until the day comes, it
+  says how many days from before are ready.
+- **Supply headroom** (Devices page). From the minute-by-minute power readings of the last
+  `detail_days`: the highest import and the headroom left under your main fuse (entered
+  under **Your supply**), the minutes spent above 90% of it, the busiest half hour of the
+  last year, and the eight highest moments split into the heat pump, the EV charger, the
+  battery charging and the rest of the house. **Through the day** shows each hour's highest
+  import and a typical day's, against the supply's limit. With the export limit entered, it
+  shows how often exports were held at the limit.
+- **Overnight charge** (Devices page). For each day, from the end of the cheap window to the
+  start of the next: how full the battery was, how low it fell and when, what was bought at
+  a dearer rate after it reached its reserve, and the charge level that would have just
+  lasted. Days are marked as ran short, spare or about right, and a tile gives the level
+  that would have been enough on four days in five. Last 30 days, 90 days or 12 months,
+  with month by month for the longer periods. The battery's reserve is worked out from the
+  readings, or can be entered under **Battery reserve**.
+- The new settings are included in **Backup and restore**.
+
+### How to check this release
+
+1. History → **Before and after an upgrade**: with no day entered it asks for one. Enter a
+   day in the future under **The upgrade** and save: it says how many days from before
+   that day are ready to compare with. (After the upgrade, enter the real day.)
+2. Enter a past day instead (a month ago, say): tiles and a table appear. The "Solar" row
+   should match the Averages for those weeks roughly, and the hint should give your
+   latitude "from Home Assistant's home zone" (about 50.9° for Whiteley) once the add-on
+   has polled after updating.
+3. Devices → **Supply headroom**: enter your main fuse (and 3.68 kW export limit, or your
+   own) under **Your supply**. The highest import should be about the highest grid import
+   you have seen on the Power Metrics Chart over the last 30 days; the parts of each peak
+   should look right for that time (the car charging overnight, say).
+4. Devices → **Overnight charge**: "Charged to" should be about the battery level at 06:00
+   on the Now page's chart; "Lowest" about the lowest before midnight. Open **Day by day**:
+   days the battery emptied in the evening are marked "Ran short".
+5. Settings → **Backup and restore** → Download: the file has `upgrade`, `supply` and
+   `overnight` under settings once they have been saved.
+
 ## 0.44.2
 
 A health check of the app, with these fixes:

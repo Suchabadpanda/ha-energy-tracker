@@ -96,6 +96,12 @@ Five pages, linked at the top: **Now** (live figures and today's and this month'
 - **History**: any past day, week, month or year as a chart and table, with a CSV download.
 - **Performance**: self-sufficiency, battery efficiency and dear-rate import, with estimates
   of what a bigger battery, more panels or a bigger inverter would save.
+- **Before and after an upgrade**: the weeks either side of a change to the system, with
+  solar compared allowing for the season.
+- **Supply headroom**: the highest import against the main fuse, what was running at each
+  peak, the pattern through the day, and time spent at the export limit.
+- **Overnight charge**: whether the battery was charged about right in the cheap window,
+  day by day, and the charge level that would have been enough on most days.
 - **Monthly summary**: a month on one page, against the month before and a year earlier.
 - **Yearly report**: a year on one page, beside the year before, ready to print, with a
   costs-hidden version for sharing.

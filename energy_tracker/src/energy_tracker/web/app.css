@@ -226,3 +226,11 @@
 /* View only (see api/access): forms and Edit / Remove links are hidden */
 body.view-only form, body.view-only .write { display: none !important; }
 .view-only-note { font-size: 0.9em; color: var(--muted); }
+.hour-bars td { padding-top: 3px; padding-bottom: 3px; }
+.hour-bars .progress { height: 10px; position: relative; }
+.hour-bars .progress .bar { background: var(--grid); opacity: 0.45; position: absolute; left: 0; top: 0; }
+.hour-bars .progress .bar.typical { opacity: 1; }
+.hour-bars .progress .limit { position: absolute; top: -2px; bottom: -2px; width: 2px; background: var(--danger); }
+td.verdict-short { color: var(--danger); font-weight: 600; }
+td.verdict-spare { color: var(--warn); font-weight: 600; }
+td.verdict-right { color: var(--good); }

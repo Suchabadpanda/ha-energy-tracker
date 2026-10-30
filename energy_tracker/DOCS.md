@@ -11,8 +11,8 @@ The app is split into five pages, linked at the top of every page:
 | Page | What is on it |
 |---|---|
 | **Now** | Right now, Where it's going, Today, Today by device, Cost today, the month's cost, the power and consumption charts |
-| **History** | History, Monthly summary, Yearly report, Costs by year, Averages, Performance |
-| **Devices** | Running costs by device, Heat pump and the weather (with the estimated SCOP and heat generated) |
+| **History** | History, Monthly summary, Yearly report, Costs by year, Averages, Performance, Before and after an upgrade |
+| **Devices** | Running costs by device, Heat pump and the weather (with the estimated SCOP and heat generated), Supply headroom, Overnight charge |
 | **Money** | Return on investment, Extra income, Bill check, Compare tariffs, Tariff switch planner |
 | **Settings** | Tariff rates, Notes, Backup and restore, Older history |
 
@@ -386,6 +386,63 @@ When the app starts it brings in the temperatures Home Assistant already has, on
 of hourly averages for a sensor with long-term statistics, or about ten days for a weather
 entity. A day counts once it has at least 12 hours of readings.
 
+## Supply headroom
+
+**Supply headroom**, on the Devices page, shows how close the house comes to what its supply
+can carry, and what was running when it came closest. It uses the power readings kept in
+full detail (the last `detail_days`, 30 by default), averaged over each minute.
+
+Enter your **main fuse** in amps under **Your supply** (it is printed on the service fuse
+by the meter: 60, 80 or 100 A for most homes). At 230 V that sets what the supply can carry:
+100 A is 23 kW. The tiles then show the highest import, the headroom left at that moment,
+and the minutes spent above 90% of the supply. **Busiest half hour** is the most imported
+in any half hour over the last 12 months, as an average, from the import meter.
+
+- **The highest moments** lists up to eight peaks, at least half an hour apart, split into
+  the heat pump (or other smart load), the EV charger, the battery charging from the grid
+  and the rest of the house. Solar and battery output were reducing import at the time, so
+  the parts can add up to more than the import.
+- **Through the day** shows each hour's highest import and a typical day's highest, against
+  the supply's limit: where the heat pump, the car and the overnight battery charge overlap.
+- **Exporting**: enter the **export limit** agreed with your network operator (3.68 kW for
+  most single-phase systems connected without an application) to see how often exports
+  were held at it. While they were, solar beyond what the house and battery could take was
+  held back. How much can't be measured, but the minutes and days are the case for a higher
+  limit.
+
+A main fuse can carry a little more than its rating for a while, so treat this as a guide
+to how much room there is, not a safety check: ask an electrician or your network operator
+before adding a large load.
+
+## Overnight charge
+
+**Overnight charge**, on the Devices page, asks whether the battery was charged about right
+in the cheap window. Each day runs from the end of the cheap window to the start of the
+next, and for each the app finds:
+
+- **Charged to**: how full the battery was when the cheap window ended.
+- **Lowest**: the lowest it fell before the next cheap window, and when.
+- **Bought dear**: electricity bought at a dearer rate *after* the battery reached its
+  reserve, for want of charge. Dear-rate import while the battery still had charge (the
+  house wanting more power than the battery can give) is not counted.
+- **Would have done**: the charge level that would have just lasted: what it started at,
+  less what was never used, plus what was bought dear for want of charge. Over 100% means
+  even a full battery would not have lasted.
+
+A day **ran short** when more than 0.5 kWh was bought dear after the battery emptied, and
+had charge **to spare** when it never came within 2 kWh (or a tenth of the battery) of its
+reserve. The **Would have done** tile is the level that would have been enough on four days
+in five, rounded up to the next 5%: a starting point for the inverter's charge target.
+Solar refills the battery in the day, so the figure falls in sunny months; look at the last
+30 days for what suits now, and **Month by month** (90 days or 12 months) for how it changes
+through the year.
+
+The battery's size is the one used by the tariff switch planner (entered there, or worked
+out from charging). The reserve, the level the battery is kept above, is worked out as about
+the lowest level seen in the last 90 days; enter it under **Battery reserve** if that is
+wrong. It needs a tariff with fixed cheap times: on half-hourly prices the cheap time moves
+from day to day.
+
 ## History and downloads
 
 **History** shows any past day, week, month or year: solar generated, energy used, imported
@@ -449,6 +506,33 @@ It is an upper limit. It assumes the inverter can supply the extra power when it
 that the cheap window is long enough to fill the extra capacity, and that your usage stays
 the same. With under a year of readings the yearly figures are scaled up and marked rough.
 To judge a purchase, divide the price of the extra battery by the yearly saving.
+
+## Before and after an upgrade
+
+**Before and after an upgrade**, on the History page, sets the weeks before a change to the
+system (more panels, a new inverter) against the weeks after it. Enter the day it was done
+under **The upgrade**, with what changed and, optionally, the panels' size before and after
+for the change to expect. Choose 30, 60 or 90 days each side. The upgrade day itself is left
+out, and only whole days up to yesterday count. Until the day comes, the section says how
+many days from before it are ready to compare with.
+
+Solar depends on the season far more than on anything changed: the month after an upgrade
+in November has much less daylight than the month before it. So each day is set against
+how much sun a cloudless sky gives on that date at your latitude (from Home Assistant's
+home zone, or southern England if that is not set), and the "before" solar is scaled to the
+"after" period's daylight:
+
+- **Solar, allowing for the season**: the change in solar once the daylight is allowed for,
+  beside the change expected from the panels' sizes.
+- **On clear days**: the same for the sunniest fifth of days, against what a cloudless sky
+  gives. Cloud is not allowed for otherwise, and this is the steadier check.
+- **Self-sufficiency** and **Net cost a day**: the change in each.
+
+The table has each figure per day before and after: solar, used, imported, exported,
+dear-rate import, self-sufficiency, solar used at home, net cost and the average outdoor
+temperature. Use, import and cost move with the weather too (more heating in colder weeks),
+so compare the temperatures before reading much into them. Under two weeks after the
+upgrade, a few unusually sunny or cloudy days can still swing the figures.
 
 ## Monthly summary
 

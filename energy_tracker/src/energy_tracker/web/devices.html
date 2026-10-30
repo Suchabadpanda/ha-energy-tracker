@@ -142,6 +142,89 @@
     </details>
   </div>
 
+  <div id="headroom-section">
+    <h2 id="headroom-heading">Supply headroom</h2>
+    <div class="tiles" id="headroom-tiles"></div>
+    <div class="chart" style="margin-top: 12px;">
+      <div class="hint" id="headroom-summary" style="margin-top: 0;"></div>
+      <div class="group-title" style="margin-top: 12px;">The highest moments, and what was running</div>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>When</th><th class="num">Imported</th><th class="num" id="headroom-hp-head">Heat pump</th>
+            <th class="num">EV charger</th><th class="num">Battery charging</th><th class="num">Rest of house</th>
+            <th class="num">Solar</th></tr></thead>
+          <tbody id="headroom-peaks"></tbody>
+        </table>
+      </div>
+      <div class="group-title" style="margin-top: 16px;">Through the day</div>
+      <div class="table-scroll">
+        <table class="hour-bars">
+          <thead><tr><th>Hour</th><th class="num">Typical day's highest</th><th class="num">Highest</th><th style="width: 50%;"></th></tr></thead>
+          <tbody id="headroom-hours"></tbody>
+        </table>
+      </div>
+      <div id="headroom-export-box" hidden>
+        <div class="group-title" style="margin-top: 16px;">Exporting</div>
+        <div class="hint" id="headroom-export" style="margin-top: 0;"></div>
+      </div>
+      <div class="hint" id="headroom-hint"></div>
+    </div>
+    <details id="headroom-editor">
+      <summary>Your supply</summary>
+      <form id="headroom-form">
+        <label>Main fuse (amps) <input type="number" name="fuse_amps" min="20" max="200" step="1" placeholder="100"></label>
+        <label>Export limit (kW) <small>(from the network operator)</small> <input type="number" name="export_limit_kw" min="0.1" max="100" step="0.01" placeholder="3.68"></label>
+        <div class="actions"><button class="primary" type="submit">Save</button></div>
+        <div id="headroom-message" style="grid-column: 1 / -1; font-size: 13px; min-height: 18px; color: var(--muted);"></div>
+      </form>
+    </details>
+  </div>
+
+  <div id="overnight-section">
+    <div class="filters">
+      <h2 id="overnight-heading">Overnight charge</h2>
+      <select id="overnight-period" aria-label="Period to look back over">
+        <option value="30d" selected>Last 30 days</option>
+        <option value="90d">Last 90 days</option>
+        <option value="12m">Last 12 months</option>
+      </select>
+    </div>
+    <div class="tiles" id="overnight-tiles"></div>
+    <div class="chart" style="margin-top: 12px;">
+      <div class="hint" id="overnight-summary" style="margin-top: 0;"></div>
+      <details id="overnight-months-box" hidden>
+        <summary>Month by month</summary>
+        <div class="table-scroll">
+          <table>
+            <thead><tr><th>Month</th><th class="num">Days</th><th class="num">Charged to</th><th class="num">Lowest</th>
+              <th class="num">Ran short</th><th class="num">Spare</th><th class="num">Bought dear</th>
+              <th class="num">Would have done</th></tr></thead>
+            <tbody id="overnight-months"></tbody>
+          </table>
+        </div>
+      </details>
+      <details id="overnight-days-box">
+        <summary>Day by day</summary>
+        <div class="table-scroll">
+          <table>
+            <thead><tr><th>Day</th><th class="num">Charged to</th><th class="num">Lowest</th><th class="num">Left at next</th>
+              <th class="num">From battery</th><th class="num">Bought dear</th><th class="num">Would have done</th><th></th></tr></thead>
+            <tbody id="overnight-days"></tbody>
+          </table>
+        </div>
+      </details>
+      <div class="hint" id="overnight-hint"></div>
+    </div>
+    <details id="overnight-editor">
+      <summary>Battery reserve</summary>
+      <form id="overnight-form">
+        <label>Kept above (%) <small>(empty: worked out)</small> <input type="number" name="reserve_percent" min="0" max="90" step="1"></label>
+        <div class="actions"><button class="primary" type="submit">Save</button></div>
+        <div id="overnight-message" style="grid-column: 1 / -1; font-size: 13px; min-height: 18px; color: var(--muted);"></div>
+      </form>
+    </details>
+  </div>
+
   <footer>Built for Sigenergy solar and battery systems. Costs are estimates from the
     inverter's own counters and will differ slightly from your bill.
     <div id="storage"></div></footer>

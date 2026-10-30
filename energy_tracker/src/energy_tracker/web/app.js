@@ -176,7 +176,9 @@ function renderTiles(el, tiles, latest) {
       const v = reading.value;
       // A negative amount of money reads "-£1.20", not "£-1.20".
       const shown = t.abs || (t.prefix && v < 0) ? Math.abs(v) : v;
-      value.textContent = (t.prefix && v < 0 ? "-" : "") + (t.prefix ? CUR : "") + shown.toFixed(t.digits ?? 2);
+      // `signed`: a change, shown with + when it went up.
+      value.textContent = (t.prefix && v < 0 ? "-" : t.signed && v > 0 ? "+" : t.signed && v < 0 ? "−" : "") +
+        (t.prefix ? CUR : "") + (t.signed ? Math.abs(shown) : shown).toFixed(t.digits ?? 2);
       if (t.unit) {
         const unit = document.createElement("small");
         unit.textContent = t.unit;
@@ -1264,6 +1266,323 @@ async function refreshPerformance() {
   }
 }
 document.getElementById("performance-period")?.addEventListener("change", refreshPerformance);
+
+// --- Before and after an upgrade -----------------------------------------------------------
+
+const upgradeForm = document.getElementById("upgrade-form");
+let upgradeFilled = false;
+const signed = (value, unit = "%") => value === null || value === undefined ? "–"
+  : (value > 0 ? "+" : value < 0 ? "−" : "") + Math.abs(value).toFixed(1) + unit;
+const dayLabel = iso => new Date(iso + "T00:00").toLocaleDateString([], { dateStyle: "medium" });
+function renderUpgrade(data) {
+  const s = data.settings ?? {};
+  if (!upgradeFilled) {
+    upgradeFilled = true;
+    for (const name of ["day", "label", "kwp_before", "kwp_after"]) upgradeForm.elements[name].value = s[name] ?? "";
+    // Panels now, as entered under Performance, to start from.
+    if (!s.kwp_before && panelsForm?.elements.kwp.value) upgradeForm.elements.kwp_before.placeholder = panelsForm.elements.kwp.value;
+  }
+  const tiles = document.getElementById("upgrade-tiles");
+  const summary = document.getElementById("upgrade-summary");
+  const tableBox = document.getElementById("upgrade-table-box");
+  const hint = document.getElementById("upgrade-hint");
+  const what = s.label ? s.label : "the upgrade";
+  tiles.replaceChildren();
+  tableBox.hidden = true;
+  hint.textContent = "";
+  if (!s.day) {
+    summary.textContent = "Enter the day of an upgrade (more panels, a new inverter) under \"The upgrade\" below. " +
+      "The weeks before it are then set against the weeks after, allowing for the season.";
+    document.getElementById("upgrade-editor").open = !isViewOnly();
+    return;
+  }
+  const b = data.before, a = data.after;
+  if (!data.has_data || !b) {
+    summary.textContent = "There are no readings from before " + dayLabel(s.day) + " to compare with.";
+    return;
+  }
+  if (!a) {
+    summary.textContent = (data.started ? "Waiting for the first full day after " : "Ready for ") + what + " on " +
+      dayLabel(s.day) + ": " + b.days + " days from before it are stored to compare with. The comparison starts " +
+      "the day after, and is worth reading after two weeks or so.";
+    return;
+  }
+  const c = data.changes;
+  const reading = (value, note) => value === null || value === undefined ? undefined : { value, note };
+  renderTiles(tiles, [
+    { metric: "solar", label: "Solar, allowing for the season", unit: "%", digits: 0, signed: true, color: "var(--solar)" },
+    { metric: "clear", label: "On clear days", unit: "%", digits: 0, signed: true, color: "var(--solar)" },
+    { metric: "self", label: "Self-sufficiency", unit: " points", digits: 1, signed: true, color: "var(--good)" },
+    { metric: "cost", label: "Net cost a day", prefix: "£", digits: 2, color: "var(--accent)" },
+  ], {
+    solar: reading(c.solar_percent, (c.solar_percent >= 0 ? "more" : "less") + " than before, " + a.solar_kwh +
+      " kWh a day against " + c.solar_before_adjusted_kwh + " for the same daylight" +
+      (data.expected_solar_change_percent !== null ? " (expected: " + signed(data.expected_solar_change_percent) + ")" : "")),
+    clear: reading(c.clear_day_percent, "the sunniest fifth of days, against what a cloudless sky gives"),
+    self: reading(c.self_sufficiency_points, "from " + b.self_sufficiency_percent + "% to " + a.self_sufficiency_percent + "%"),
+    cost: reading(c.net_gbp_per_day, c.net_gbp_per_day <= 0 ? "a day less than before (shown as minus)" : "a day more than before"),
+  });
+  summary.textContent = "The " + b.days + " days before " + what + " (from " + dayLabel(b.first_day) + ") against the " +
+    a.days + " days after it (to " + dayLabel(a.last_day) + "). " +
+    (data.early ? "Fewer than two weeks after so far: a few cloudy or sunny days can still swing it. " : "");
+  document.getElementById("upgrade-col-before").textContent = "Before (" + b.days + " days)";
+  document.getElementById("upgrade-col-after").textContent = "After (" + a.days + " days)";
+  const one = v => v === null || v === undefined ? "–" : v.toFixed(1);
+  const rows = [
+    ["Solar", kwh(b.solar_kwh), kwh(a.solar_kwh), signed(c.solar_kwh)],
+    ["Solar for the after period's daylight", kwh(c.solar_before_adjusted_kwh), kwh(a.solar_kwh), signed(c.solar_percent)],
+    ["Cloudless-sky sunshine", one(b.clear_sky_kwh) + " kWh/m²", one(a.clear_sky_kwh) + " kWh/m²", ""],
+    ["Used", kwh(b.used_kwh), kwh(a.used_kwh), signed(c.used_percent)],
+    ["Imported", kwh(b.imported_kwh), kwh(a.imported_kwh), signed(c.imported_percent)],
+    ["Exported", kwh(b.exported_kwh), kwh(a.exported_kwh), signed(c.exported_percent)],
+    ["Dear-rate import", kwh(b.dear_kwh), kwh(a.dear_kwh), ""],
+    ["Self-sufficiency", percent(b.self_sufficiency_percent), percent(a.self_sufficiency_percent), signed(c.self_sufficiency_points, " pts")],
+    ["Solar used at home", percent(b.solar_used_percent), percent(a.solar_used_percent), ""],
+    ["Net cost", b.net_gbp === null ? "–" : money(b.net_gbp), a.net_gbp === null ? "–" : money(a.net_gbp),
+     c.net_gbp_per_day === null ? "–" : (c.net_gbp_per_day > 0 ? "+" : "") + money(c.net_gbp_per_day)],
+    ["Outdoor temperature", b.temperature === null ? "–" : b.temperature.toFixed(1) + " °C",
+     a.temperature === null ? "–" : a.temperature.toFixed(1) + " °C", ""],
+  ];
+  document.getElementById("upgrade-rows").replaceChildren(...rows.map(([label, ...values]) => {
+    const tr = document.createElement("tr");
+    tr.append(Object.assign(document.createElement("td"), { textContent: label }),
+      ...values.map(v => Object.assign(document.createElement("td"), { textContent: v, className: "num" })));
+    return tr;
+  }));
+  tableBox.hidden = false;
+  hint.textContent = "Solar is set against how much sun a cloudless sky gives on each date at your latitude (" +
+    data.latitude + "°" + (data.latitude_known ? ", from Home Assistant's home zone" : ", southern England: Home Assistant's home zone was not found") +
+    "), so a darker month after the upgrade is not counted against it. Cloud is not allowed for: over a few weeks it " +
+    "largely evens out, and the clear days are compared on their own as a steadier check. Use, import and cost also " +
+    "move with the weather (more heating in colder weeks): compare the outdoor temperatures before reading much into them.";
+}
+async function refreshUpgrade() {
+  if (!onPage("upgrade-tiles") || !sectionOpen("upgrade-heading")) return;
+  try { renderUpgrade(await getJson("api/upgrade?days=" + document.getElementById("upgrade-days").value)); }
+  catch (err) { document.getElementById("upgrade-summary").textContent = "Could not compare (" + err.message + ")."; }
+}
+document.getElementById("upgrade-days")?.addEventListener("change", refreshUpgrade);
+upgradeForm?.addEventListener("submit", async event => {
+  event.preventDefault();
+  const f = upgradeForm.elements;
+  const number = name => f[name].value === "" ? null : Number(f[name].value);
+  try {
+    await sendTariff("api/upgrade/settings", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ day: f.day.value || null, label: f.label.value.trim(),
+                             kwp_before: number("kwp_before"), kwp_after: number("kwp_after") }) });
+    document.getElementById("upgrade-message").textContent = "Saved.";
+    refreshUpgrade();
+  } catch (err) { document.getElementById("upgrade-message").textContent = err.message; }
+});
+
+// --- Supply headroom -----------------------------------------------------------------------
+
+const headroomForm = document.getElementById("headroom-form");
+let headroomFilled = false;
+const kw = value => value === null || value === undefined ? "–" : value.toFixed(1) + " kW";
+const atTime = iso => {
+  const date = new Date(iso);
+  return date.toLocaleString([], { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit",
+    ...(date.getFullYear() !== new Date().getFullYear() ? { year: "numeric" } : {}) });
+};
+function renderHeadroom(data) {
+  const s = data.settings ?? {};
+  if (!headroomFilled && data.settings) {
+    headroomFilled = true;
+    headroomForm.elements.fuse_amps.value = s.fuse_amps ?? "";
+    headroomForm.elements.export_limit_kw.value = s.export_limit_kw ?? "";
+  }
+  const summary = document.getElementById("headroom-summary");
+  if (!data.has_data) {
+    document.getElementById("headroom-tiles").replaceChildren();
+    summary.textContent = "Needs power readings from the grid sensor.";
+    return;
+  }
+  const supply = data.supply_kw;
+  const reading = (value, note) => value === null || value === undefined ? undefined : { value, note };
+  const top = data.peaks[0];
+  const busiest = data.busiest_half_hour;
+  const above90 = data.above?.find(a => a.percent === 90);
+  const tiles = [
+    { metric: "peak", label: "Highest import", unit: "kW", digits: 1, color: "var(--grid)" },
+    { metric: "half", label: "Busiest half hour", unit: "kW", digits: 1, color: "var(--grid)" },
+  ];
+  const values = {
+    peak: reading(data.highest_import_kw, top ? atTime(top.time) + (supply ? ", " + data.highest_percent + "% of the supply" : "") : ""),
+    half: reading(busiest?.import_kw, busiest ? "on average, " + atTime(busiest.start) + " (last 12 months)" : ""),
+  };
+  if (supply) {
+    tiles.push({ metric: "room", label: "Headroom at the peak", unit: "kW", digits: 1, color: "var(--good)" });
+    values.room = reading(supply - data.highest_import_kw, "of " + supply + " kW (" + s.fuse_amps + " A at 230 V)");
+    tiles.push({ metric: "near", label: "Minutes above 90%", unit: "min", digits: 0, color: "var(--danger)" });
+    values.near = reading(above90?.minutes ?? 0, "above " + above90?.kw + " kW, in " + data.days + " days");
+  }
+  if (data.export?.limit_kw) {
+    tiles.push({ metric: "held", label: "Exporting at the limit", unit: "min", digits: 0, color: "var(--export)" });
+    values.held = reading(data.export.minutes_at_limit, "on " + data.export.days_at_limit + " of " + data.days + " days");
+  }
+  renderTiles(document.getElementById("headroom-tiles"), tiles, values);
+  summary.textContent = "Over the last " + data.days + " days (the readings kept in full detail), as an average over " +
+    "each minute. " + (supply
+      ? (above90?.minutes ? "The house came within 10% of the supply's limit for " + above90.minutes + " minutes."
+        : "The house never came within 10% of the supply's limit.")
+      : "Enter your main fuse under \"Your supply\" below to see the headroom left.");
+
+  const cell = (text, className = "num") => Object.assign(document.createElement("td"), { textContent: text, className });
+  document.getElementById("headroom-hp-head").textContent = setup.smart_load_label || "Heat pump";
+  document.getElementById("headroom-peaks").replaceChildren(...data.peaks.map(p => {
+    const tr = document.createElement("tr");
+    tr.append(cell(atTime(p.time), ""), cell(kw(p.import_kw)), cell(kw(p.heat_pump_kw)), cell(kw(p.ev_kw)),
+              cell(kw(p.battery_charging_kw)), cell(kw(p.house_kw)), cell(kw(p.solar_kw)));
+    return tr;
+  }));
+  const scale = Math.max(supply ?? 0, ...data.hours.map(h => h.highest_kw), 0.1);
+  document.getElementById("headroom-hours").replaceChildren(...data.hours.map(h => {
+    const tr = document.createElement("tr");
+    const gauge = Object.assign(document.createElement("div"), { className: "progress" });
+    const highest = Object.assign(document.createElement("div"), { className: "bar" });
+    highest.style.width = (h.highest_kw / scale * 100) + "%";
+    const typical = Object.assign(document.createElement("div"), { className: "bar typical" });
+    typical.style.width = (h.typical_kw / scale * 100) + "%";
+    gauge.append(highest, typical);
+    if (supply) {
+      const limit = Object.assign(document.createElement("div"), { className: "limit", title: "The supply's limit" });
+      limit.style.left = "calc(" + (supply / scale * 100) + "% - 2px)";
+      gauge.append(limit);
+    }
+    const bar = document.createElement("td");
+    bar.append(gauge);
+    tr.append(cell(String(h.hour).padStart(2, "0") + ":00", ""), cell(kw(h.typical_kw)), cell(kw(h.highest_kw)), bar);
+    return tr;
+  }));
+  const ex = data.export;
+  document.getElementById("headroom-export-box").hidden = !ex;
+  if (ex) {
+    document.getElementById("headroom-export").textContent = ex.limit_kw
+      ? "The most exported was " + kw(ex.highest_kw) + " against a limit of " + kw(ex.limit_kw) + ". Exports were held at " +
+        "the limit for " + ex.minutes_at_limit + " minutes on " + ex.days_at_limit + " days" +
+        (ex.minutes_at_limit ? ": solar beyond what the house and battery could take was held back then (how much " +
+          "can't be measured), which is the case for a higher limit." : ".")
+      : "The most exported was " + kw(ex.highest_kw) + ". Enter your export limit below to see how often exports were held at it.";
+  }
+  document.getElementById("headroom-hint").textContent =
+    "Import is what the supply carries. The parts are read at the same moment: what was running, and the battery " +
+    "charging from the grid, less any solar and battery output. Through the day: the darker bar is a typical day's " +
+    "highest in that hour, the lighter one the highest seen" + (supply ? ", and the red mark the supply's limit." : ".") +
+    " A main fuse can carry a little over its rating for a while, so this is a guide to how much room there is, not " +
+    "a safety check: ask an electrician or your network operator before adding a big load.";
+}
+async function refreshHeadroom() {
+  if (!onPage("headroom-tiles") || !sectionOpen("headroom-heading")) return;
+  try { renderHeadroom(await getJson("api/headroom")); }
+  catch (err) { document.getElementById("headroom-summary").textContent = "Could not work it out (" + err.message + ")."; }
+}
+headroomForm?.addEventListener("submit", async event => {
+  event.preventDefault();
+  const f = headroomForm.elements;
+  const number = name => f[name].value === "" ? null : Number(f[name].value);
+  try {
+    renderHeadroom(await sendTariff("api/headroom/settings", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ fuse_amps: number("fuse_amps"), export_limit_kw: number("export_limit_kw") }) }));
+    document.getElementById("headroom-message").textContent = "Saved.";
+  } catch (err) { document.getElementById("headroom-message").textContent = err.message; }
+});
+
+// --- Overnight charge ----------------------------------------------------------------------
+
+const overnightForm = document.getElementById("overnight-form");
+let overnightFilled = false;
+const VERDICTS = { short: "Ran short", spare: "Spare", right: "About right" };
+function renderOvernight(data) {
+  if (!overnightFilled && data.settings) {
+    overnightFilled = true;
+    overnightForm.elements.reserve_percent.value = data.settings.reserve_percent ?? "";
+  }
+  overnightForm.elements.reserve_percent.placeholder =
+    data.estimated_reserve_percent != null ? "Worked out: " + data.estimated_reserve_percent : "";
+  const tiles = document.getElementById("overnight-tiles");
+  const summary = document.getElementById("overnight-summary");
+  const monthsBox = document.getElementById("overnight-months-box");
+  if (!data.has_data) {
+    tiles.replaceChildren();
+    monthsBox.hidden = true;
+    document.getElementById("overnight-days").replaceChildren();
+    summary.textContent = data.why === "battery"
+      ? "Needs the battery's size: enter it under the Tariff switch planner (Money page), or wait until it has charged fully once."
+      : data.why === "windows"
+        ? "Needs a tariff with fixed cheap times: on half-hourly prices the cheap time moves every day."
+        : "Needs battery charge readings across at least one full day after the cheap window.";
+    return;
+  }
+  const s = data.summary;
+  const cap = data.capacity_kwh;
+  const pct = v => v.toFixed(0) + "%";
+  renderTiles(tiles, [
+    { metric: "charged", label: "Charged to, on average", unit: "%", digits: 0, color: "var(--battery)" },
+    { metric: "lowest", label: "Lowest before the next window", unit: "%", digits: 0, color: "var(--battery)" },
+    { metric: "short", label: "Days it ran short", unit: "of " + s.days, digits: 0, color: "var(--danger)" },
+    { metric: "target", label: "Would have done", unit: "%", digits: 0, color: "var(--good)" },
+  ], {
+    charged: { value: s.charged_to, note: (s.charged_to / 100 * cap).toFixed(1) + " of " + cap + " kWh when the cheap window ended" },
+    lowest: { value: s.lowest, note: "about " + s.spare_kwh + " kWh above the " + data.reserve_percent + "% reserve, on average" },
+    short: { value: s.short_days, note: s.short_days ? kwh(s.shortfall_kwh) + " bought dear after it emptied, costing " +
+      money(s.extra_cost_gbp) + " more than the cheap rate" : "it lasted until the cheap rate every day" },
+    target: { value: s.suggested_percent, note: s.over_full ? "more than the battery holds on some days"
+      : "enough on " + s.covers_days + " of " + s.days + " days (" + s.suggested_kwh + " kWh)" },
+  });
+  summary.textContent = s.spare_days > s.days / 2
+    ? "On " + s.spare_days + " of " + s.days + " days the battery never came near its reserve: it was charged more than " +
+      "the day needed. Charging to about " + s.suggested_percent + "% would have been enough on most days, leaving more " +
+      "room for solar and less lost to charging and discharging."
+    : s.short_days > s.days / 5
+      ? "On " + s.short_days + " of " + s.days + " days the battery reached its reserve and electricity was bought at a " +
+        "dearer rate before the cheap window." + (s.over_full ? " Even a full battery would not have lasted on some of them." :
+        " Charging to " + s.suggested_percent + "% would have covered most of them.")
+      : "The overnight charge was about right: the battery mostly lasted until the cheap window without much to spare.";
+  const cell = (text, className = "num") => Object.assign(document.createElement("td"), { textContent: text, className });
+  monthsBox.hidden = !data.months.length;
+  document.getElementById("overnight-months").replaceChildren(...[...data.months].reverse().map(m => {
+    const tr = document.createElement("tr");
+    const month = new Date(m.month + "-01T00:00").toLocaleDateString([], { month: "short", year: "numeric" });
+    tr.append(cell(month, ""), cell(String(m.days)), cell(pct(m.charged_to)), cell(pct(m.lowest)),
+              cell(String(m.short_days)), cell(String(m.spare_days)), cell(kwh(m.shortfall_kwh)),
+              cell(m.over_full ? "over 100%" : pct(m.suggested_percent)));
+    return tr;
+  }));
+  document.getElementById("overnight-days").replaceChildren(...data.days.map(d => {
+    const tr = document.createElement("tr");
+    const day = new Date(d.day + "T00:00").toLocaleDateString([], { weekday: "short", day: "numeric", month: "short" });
+    tr.append(cell(day, ""), cell(pct(d.charged_to)),
+      cell(pct(d.lowest) + " at " + new Date(d.lowest_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })),
+      cell(pct(d.left_at_next)), cell(kwh(d.discharged_kwh)), cell(kwh(d.dear_kwh)),
+      cell(d.needed_percent > 100 ? "over 100%" : pct(d.needed_percent)),
+      cell(VERDICTS[d.verdict], "verdict-" + d.verdict));
+    return tr;
+  }));
+  document.getElementById("overnight-hint").textContent =
+    "Each day runs from the end of the cheap window to the start of the next. \"Would have done\" is the charge level " +
+    "that would have just lasted: what it started at, less what was never used, plus anything bought at a dearer rate " +
+    "once the battery had reached its reserve. The suggestion is enough on four days in five, rounded up to the next 5%. " +
+    "Solar refills the battery in the day, so sunny spells need less; look at the last 30 days for what suits now. " +
+    "Battery size: " + cap + " kWh (" + (data.capacity_source === "entered" ? "as entered" : "worked out from charging") +
+    "); reserve " + data.reserve_percent + "% (" + (data.settings.reserve_percent != null ? "as entered" : "the lowest it is seen at") + ").";
+}
+async function refreshOvernight() {
+  if (!onPage("overnight-tiles") || !sectionOpen("overnight-heading")) return;
+  try { renderOvernight(await getJson("api/overnight?period=" + document.getElementById("overnight-period").value)); }
+  catch (err) { document.getElementById("overnight-summary").textContent = "Could not work it out (" + err.message + ")."; }
+}
+document.getElementById("overnight-period")?.addEventListener("change", refreshOvernight);
+overnightForm?.addEventListener("submit", async event => {
+  event.preventDefault();
+  const value = overnightForm.elements.reserve_percent.value;
+  try {
+    await sendTariff("api/overnight/settings", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reserve_percent: value === "" ? null : Number(value) }) });
+    document.getElementById("overnight-message").textContent = "Saved.";
+    refreshOvernight();
+  } catch (err) { document.getElementById("overnight-message").textContent = err.message; }
+});
 
 // --- Notes ---------------------------------------------------------------------------------
 
@@ -3718,6 +4037,9 @@ function refreshEverything() {
   refreshDeviceCosts();
   refreshHeating();
   refreshAverages();
+  refreshUpgrade();
+  refreshHeadroom();
+  refreshOvernight();
 }
 
 // The page is refreshed in three parts, each as often as it is worth: the tiles and today's
@@ -3834,7 +4156,8 @@ const SECTION_LOADERS = {
   "compare-heading": () => refreshCompare(), "planner-heading": () => refreshPlanner(),
 
   "yearly-heading": () => refreshYearly(), "heating-heading": () => refreshHeating(),
-  "averages-heading": () => refreshAverages(),
+  "averages-heading": () => refreshAverages(), "upgrade-heading": () => refreshUpgrade(),
+  "headroom-heading": () => refreshHeadroom(), "overnight-heading": () => refreshOvernight(),
 };
 function setFolded(h2, fold) {
   const wasFolded = h2.getAttribute("aria-expanded") === "false";
@@ -3914,8 +4237,8 @@ const jump = document.getElementById("jump");
 // The app's pages: key, name, address and what is on it.
 const PAGES = [
   ["now", "Now", "./", "Live figures, today's and this month's cost, power charts"],
-  ["history", "History", "history", "Past days to years, reports, averages, performance"],
-  ["devices", "Devices", "devices", "Running costs by device, the heat pump and its SCOP"],
+  ["history", "History", "history", "Past days to years, reports, averages, performance, upgrades"],
+  ["devices", "Devices", "devices", "Running costs by device, the heat pump, supply headroom, overnight charge"],
   ["money", "Money", "money", "Return on investment, income, bills, other tariffs"],
   ["settings", "Settings", "settings", "Tariff rates, notes, backup, older history"],
 ];
@@ -4022,5 +4345,11 @@ async function start() {
   every(60 * MINUTE, refreshPlanner);
   refreshYearly();
   every(60 * MINUTE, () => { if (!yearlyYear) refreshYearly(); });
+  refreshUpgrade();
+  every(60 * MINUTE, refreshUpgrade);
+  refreshHeadroom();
+  every(30 * MINUTE, refreshHeadroom);
+  refreshOvernight();
+  every(60 * MINUTE, refreshOvernight);
 }
 start();

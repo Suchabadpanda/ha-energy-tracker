@@ -35,6 +35,7 @@ from . import (
     billreader,
     collector,
     devices,
+    headroom,
     heatgen,
     heating,
     heatpump,
@@ -44,6 +45,7 @@ from . import (
     income,
     live,
     lookup,
+    overnight,
     panels,
     performance,
     planner,
@@ -51,6 +53,7 @@ from . import (
     roi,
     shift,
     tariff_store,
+    upgrade,
     weather,
 )
 from .config import Metric, Settings, load_metrics, load_settings
@@ -129,7 +132,7 @@ async def lifespan(_: FastAPI):
         await asyncio.to_thread(thread.join, 10)
 
 
-app = FastAPI(title="Energy Tracker", version="0.44.2", lifespan=lifespan)
+app = FastAPI(title="Energy Tracker", version="0.45.0", lifespan=lifespan)
 # The page and its chart data are mostly text: sent compressed, they are a quarter the size.
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
@@ -849,8 +852,11 @@ def keep_figures_ready(stop: threading.Event) -> None:
         ("history", daily_averages, (), True),
         ("history", system_performance, ("12m",), True),
         ("history", more_panels, (), True),
+        ("history", upgrade_comparison, ("60",), True),
         ("devices", device_costs, (), False),
         ("devices", heat_pump_and_weather, (), False),
+        ("devices", supply_headroom, (None,), True),
+        ("devices", overnight_charge, ("30d",), True),
         ("money", payback_figures, (), True),
         ("money", bills, (), True),
         ("money", compare, ("12m",), True),
@@ -1491,6 +1497,213 @@ def more_panels() -> dict:
     return result
 
 
+# --- Before and after an upgrade ------------------------------------------------------------------
+
+
+class UpgradeIn(BaseModel):
+    """The day the system changed, and its size either side (for the expected change)."""
+
+    day: date | None = None
+    label: str = Field(default="", max_length=80)
+    kwp_before: float | None = Field(default=None, gt=0, le=100)
+    kwp_after: float | None = Field(default=None, gt=0, le=100)
+
+
+UPGRADE_LENGTHS = {"30": 30, "60": 60, "90": 90}
+
+
+def home_latitude() -> tuple[float, bool]:
+    """The home's latitude, from Home Assistant's home zone, and whether it was known."""
+    try:
+        return float(database().get_setting("home_latitude") or ""), True
+    except ValueError:
+        return upgrade.DEFAULT_LATITUDE, False
+
+
+@app.post("/api/upgrade/settings")
+def save_upgrade_settings(body: UpgradeIn) -> dict:
+    database().set_setting("upgrade", body.model_dump_json())
+    clear_caches()
+    return upgrade_comparison()
+
+
+@app.get("/api/upgrade")
+@kept
+def upgrade_comparison(
+    days: Annotated[str, Query(pattern="^(30|60|90)$")] = "60",
+) -> dict:
+    """The weeks before an upgrade against the weeks after it, allowing for the season."""
+    zone = local_timezone()
+    now = datetime.now(UTC)
+    stored = json.loads(database().get_setting("upgrade") or "{}")
+    result: dict = {"settings": stored, "has_data": False}
+    if not stored.get("day"):
+        return result
+    upgrade_day = date.fromisoformat(stored["day"])
+    length = UPGRADE_LENGTHS[days]
+    first = first_cost_reading()
+    end = local_midnight(now, zone)  # whole days, to the end of yesterday
+    if first is None:
+        return result
+    begin = max(
+        datetime.combine(upgrade_day - timedelta(days=length), clock(0), zone),
+        first.astimezone(zone),
+    )
+    if begin.time() != clock(0):  # readings began partway through a day: start on the next
+        begin = datetime.combine(begin.date() + timedelta(days=1), clock(0), zone)
+    finish = min(end, datetime.combine(upgrade_day + timedelta(days=length + 1), clock(0), zone))
+    if begin >= finish:
+        return result
+    rates = schedule()
+    names = list(dict.fromkeys([*performance.COUNTERS, *COST_COUNTERS]))
+    samples = counter_samples(names, begin - timedelta(days=1), HALF_HOURLY, finish)
+    counters = {name: Counter(series, HALF_HOURLY_GAP) for name, series in samples.items()}
+    rows = performance.daily(counters, begin, finish, zone, rates)
+    for day, gbp in roi.daily_costs(
+        counters[COST_COUNTERS[0]], counters[COST_COUNTERS[1]] or None, begin, finish, zone, rates
+    ).items():
+        if day in rows:
+            rows[day]["net_gbp"] = gbp
+    hourly = database().series([weather.METRIC], begin, 3600).get(weather.METRIC, [])
+    for day, value in heating.daily_means(hourly, zone).items():
+        if day in rows:
+            rows[day]["temperature"] = value
+    latitude, known = home_latitude()
+    found = upgrade.compare(
+        rows,
+        upgrade_day,
+        end.date(),
+        length,
+        latitude,
+        stored.get("kwp_before"),
+        stored.get("kwp_after"),
+    )
+    result.update(has_data=True, latitude_known=known, **found)
+    return result
+
+
+# --- Supply headroom ------------------------------------------------------------------------------
+
+
+class SupplyIn(BaseModel):
+    """The supply's main fuse, and the export limit agreed with the network operator."""
+
+    fuse_amps: float | None = Field(default=None, ge=20, le=200)
+    export_limit_kw: float | None = Field(default=None, gt=0, le=100)
+
+
+@app.post("/api/headroom/settings")
+def save_supply_settings(body: SupplyIn) -> dict:
+    database().set_setting("supply", body.model_dump_json())
+    clear_caches()
+    return supply_headroom()
+
+
+@app.get("/api/headroom")
+@kept
+def supply_headroom(
+    days: Annotated[int | None, Query(ge=1, le=3650)] = None,
+) -> dict:
+    """How close the house came to what the supply can carry, and what was running then.
+    Over the readings kept in full detail (`days`, at most `detail_days`)."""
+    now = datetime.now(UTC)
+    stored = json.loads(database().get_setting("supply") or "{}")
+    span = min(days or settings().detail_days, settings().detail_days)
+    since = now - timedelta(days=span)
+    series = database().series(headroom.POWERS, since, 60)
+    supply = headroom.supply_kw(stored.get("fuse_amps"))
+    result = headroom.analyse(
+        series, local_timezone(), supply, stored.get("export_limit_kw"), settings().ev_on_smart_load
+    )
+    # The busiest half hour from the import counter, which is kept for every day stored.
+    imports = counter_samples([COST_COUNTERS[0]], now - timedelta(days=365), HALF_HOURLY, now)
+    result.update(
+        settings=stored,
+        detail_days=settings().detail_days,
+        busiest_half_hour=headroom.busiest_half_hour(imports[COST_COUNTERS[0]]),
+    )
+    return result
+
+
+# --- The overnight charge -------------------------------------------------------------------------
+
+
+class OvernightIn(BaseModel):
+    """The level the battery is kept above. Empty: worked out from the readings."""
+
+    reserve_percent: float | None = Field(default=None, ge=0, le=90)
+
+
+OVERNIGHT_PERIODS = {"30d": 30, "90d": 90, "12m": 365}
+
+
+@app.post("/api/overnight/settings")
+def save_overnight_settings(body: OvernightIn) -> dict:
+    database().set_setting("overnight", body.model_dump_json())
+    clear_caches()
+    return overnight_charge()
+
+
+@app.get("/api/overnight")
+@kept
+def overnight_charge(
+    period: Annotated[str, Query(pattern="^(30d|90d|12m)$")] = "30d",
+) -> dict:
+    """Whether the battery was charged about right in the cheap window, day by day."""
+    zone = local_timezone()
+    now = datetime.now(UTC)
+    stored = json.loads(database().get_setting("overnight") or "{}")
+    result: dict = {"period": period, "settings": stored, "has_data": False}
+    capacity = battery_size().get("kwh")
+    if not capacity:
+        result["why"] = "battery"
+        return result
+    span = OVERNIGHT_PERIODS[period]
+    today = now.astimezone(zone).date()
+    first = today - timedelta(days=span)
+    since = datetime.combine(first, clock(0), zone)
+    samples = database().last_in_buckets(["battery_soc"], since, now, 300)["battery_soc"]
+    recent = database().last_in_buckets(["battery_soc"], now - timedelta(days=90), now, 1800)[
+        "battery_soc"
+    ]
+    estimated = overnight.estimate_reserve([value for _, value in recent])
+    reserve = stored.get("reserve_percent")
+    if reserve is None:
+        reserve = estimated if estimated is not None else 0.0
+    names = [PLAN_COUNTERS["charge"], PLAN_COUNTERS["discharge"], COST_COUNTERS[0]]
+    counters = counter_samples(names, since - timedelta(days=1), HALF_HOURLY, now)
+    charge, discharge, imports = (Counter(counters[name], HALF_HOURLY_GAP) for name in names)
+    rows = overnight.nights(
+        overnight.Levels(samples),
+        charge or None,
+        discharge or None,
+        imports,
+        schedule(),
+        zone,
+        first,
+        today,
+        capacity,
+        reserve,
+        now,
+    )
+    result.update(
+        capacity_kwh=capacity,
+        capacity_source=battery_size().get("source"),
+        reserve_percent=reserve,
+        estimated_reserve_percent=estimated,
+    )
+    if not rows:
+        result["why"] = "windows" if schedule().on(today).dynamic else "readings"
+        return result
+    result.update(
+        has_data=True,
+        summary=overnight.summarise(rows, capacity),
+        months=overnight.by_month(rows, capacity) if span > 31 else [],
+        days=rows[::-1],
+    )
+    return result
+
+
 # --- The heat pump against the weather ------------------------------------------------------------
 
 
@@ -1988,7 +2201,16 @@ def yearly_report(year: Annotated[int | None, Query(ge=2000, le=2200)] = None) -
 
 # Settings worth carrying to another install. Left out: how far old readings have been
 # thinned, which belongs to this install's readings.
-BACKUP_SETTINGS = ("payback", "planner", "layout", "axle_rate_p", "heating_design")
+BACKUP_SETTINGS = (
+    "payback",
+    "planner",
+    "layout",
+    "axle_rate_p",
+    "heating_design",
+    "upgrade",
+    "supply",
+    "overnight",
+)
 BACKUP_FORMAT = 1
 
 

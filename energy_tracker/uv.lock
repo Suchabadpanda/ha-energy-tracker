@@ -62,7 +62,7 @@ wheels = [
 
 [[package]]
 name = "energy-tracker"
-version = "0.44.2"
+version = "0.45.0"
 source = { virtual = "." }
 dependencies = [
     { name = "fastapi" },
