@@ -349,7 +349,8 @@ temperatures, so the winter ahead, when the heat pump works harder, is allowed f
 Below it, **Heat generated** shows the heat the heat pump put out: yesterday, the last 7
 days, this month and this year so far, and a **prediction for the whole year**. The Daily,
 Weekly, Monthly and Yearly buttons switch the chart (hot water and heating stacked) and the
-table, which also gives the electricity used and the COP. Weeks start on Monday. The heat
+table (folded under "Show as a table"), which also gives the electricity used and the COP.
+Weeks start on Monday. The heat
 is the same estimate as the SCOP above, so it is only there once the heat pump's modes are
 set up, and today is left out until it is over.
 

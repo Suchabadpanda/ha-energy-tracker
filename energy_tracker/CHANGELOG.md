@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.46.3
+
+- **The Heat generated table folds away**, like the room averages table: it is under
+  "Show as a table" below the chart, folded by default. Whether it is open is remembered on
+  this device. The Daily / Weekly / Monthly / Yearly buttons still switch it.
+
+### How to check this release
+
+1. Devices → Heat pump and the weather → Heat generated: the chart shows, and the table is
+   folded under "Show as a table".
+2. Open it, switch between Daily and Monthly: the table follows. Reload the page: it stays
+   open. Fold it and reload: it stays folded.
+
 ## 0.46.2
 
 - **The table under the room averages chart folds away.** In Room comfort and balance, the

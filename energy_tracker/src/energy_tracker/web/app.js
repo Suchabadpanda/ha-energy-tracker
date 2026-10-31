@@ -3371,6 +3371,14 @@ function drawHeatGenerated() {
   }
   document.getElementById("heatgen-rows").replaceChildren(...body);
 }
+// The heat generated table is folded away under the chart; whether it is open is remembered on this device.
+const heatGenTableBox = document.getElementById("heatgen-table-box");
+if (heatGenTableBox) {
+  try { heatGenTableBox.open = localStorage.getItem("heatgen-table-open") === "1"; } catch { /* folded */ }
+  heatGenTableBox.addEventListener("toggle", () => {
+    try { localStorage.setItem("heatgen-table-open", heatGenTableBox.open ? "1" : "0"); } catch { /* not kept */ }
+  });
+}
 document.getElementById("heatgen-periods")?.addEventListener("click", event => {
   const button = event.target.closest("button[data-period]");
   if (!button) return;
