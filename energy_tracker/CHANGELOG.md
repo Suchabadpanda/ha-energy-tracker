@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.47.0
+
+- **Axle income on the Now page.** Cost today and the month's cost get two more tiles on
+  days with extra income: **Extra income** (Axle events and anything entered under Money →
+  Extra income) and **Net after income** (the net cost less that income). Before, an Axle
+  event only showed under Money and Costs by year, so the Now page made an event day look
+  dearer than it was. Net cost is unchanged.
+- An event not yet measured (still to come, running, or finished under five minutes ago)
+  is shown as "still to be measured" under Extra income; a measured event is marked as an
+  estimate until the real payment is entered.
+
+### How to check this release
+
+1. Now → Cost today, on a day with an Axle event: after the Saved by off-peak tile there
+   are **Extra income** and **Net after income** tiles. Net after income is Net cost so far
+   less Extra income.
+2. Before the event has been measured, the Extra income note says "1 event still to be
+   measured"; a few minutes after it ends the amount appears, marked as estimated.
+3. The month's cost shows the same two tiles with the month's income. Step back to a month
+   with no extra income: the two tiles are not shown.
+4. Money → Extra income: correct the event's amount; the Now page tiles follow within a
+   refresh.
+
 ## 0.46.3
 
 - **The Heat generated table folds away**, like the room averages table: it is under

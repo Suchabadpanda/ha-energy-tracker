@@ -171,6 +171,12 @@ used for the plan** in the Tariff switch planner, or else the size worked out fr
   set VAT to 0. VAT is added to import and the standing charge, not to export.
 - "Saved by off-peak" is what the same import would have cost at the dearest rate, minus
   what it did cost. On half-hourly prices it is measured against each day's average price.
+- **Extra income** and **Net after income** tiles appear under Cost today and the month's
+  cost on days with extra income (Axle events and the like, from Money → Extra income).
+  Net cost itself stays the electricity alone: import, standing charge and the supplier's
+  export credit. An Axle event is counted once it has been measured, a few minutes after it
+  ends; until then the tile says it is still to be measured. A recorded event's amount is an
+  estimate (kWh exported in the event times the Axle rate) until you enter the real payment.
 - **Cost by device**, under Cost today and the month's cost, gives what the house load
   (everything except the heat pump and EV charger), the EV charger and the heat pump (or
   other smart load) cost, in that order. It is shown when a smart

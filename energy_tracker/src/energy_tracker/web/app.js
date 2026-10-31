@@ -445,19 +445,40 @@ function coverageHint(part) {
 const asReadings = (part, notes = {}) => Object.fromEntries(Object.entries(part ?? {})
   .filter(([, v]) => typeof v === "number").map(([k, v]) => [k, { value: v, note: notes[k] }]));
 
-function renderCost(tilesId, hintId, cost, finished = false) {
+// Shown after the cost tiles when the period has extra income (Axle events and the like).
+const INCOME_TILES = [
+  { metric: "extra_income_gbp", label: "Extra income", prefix: "£", color: "var(--warn)" },
+  { metric: "net_after_income_gbp", label: "Net after income", prefix: "£", color: "var(--accent)" },
+];
+
+function incomeNote(income) {
+  const parts = [];
+  if (income.pending) parts.push(income.pending + (income.pending === 1 ? " event" : " events") + " still to be measured");
+  if (income.estimated) parts.push("estimated until the real payment is entered under Money");
+  return parts.join("; ");
+}
+
+function renderCost(tilesId, hintId, cost, finished = false, income = null) {
   // Under the import tile, show how many kWh fell in each price band.
   const bands = (cost?.import_bands ?? [])
     .map(b => b.kwh.toFixed(1) + " kWh at " + (b.average ? "an average of " : "") + (b.p_per_kwh ?? "–") + MINOR).join(", ");
   const days = cost?.standing_charge_days;
   // A month that is over shows its final cost, not a running total.
   const tiles = COST_TILES.map(t => finished && t.metric === "net_gbp" ? { ...t, label: "Net cost" } : t);
-  renderTiles(document.getElementById(tilesId), tiles, asReadings(cost, {
+  const readings = asReadings(cost, {
     import_gbp: bands,
     export_credit_gbp: cost ? cost.export_kwh.toFixed(1) + " kWh" : "",
     standing_charge_gbp: days > 1 ? days + " days" : "",
     saved_gbp: cost ? CUR + cost.all_day_rate_gbp.toFixed(2) + " if all at the day rate" : "",
-  }));
+  });
+  if (cost && income) {
+    tiles.push(...INCOME_TILES);
+    Object.assign(readings, asReadings(income, {
+      extra_income_gbp: incomeNote(income),
+      net_after_income_gbp: "Net cost less extra income",
+    }));
+  }
+  renderTiles(document.getElementById(tilesId), tiles, readings);
   document.getElementById(hintId).textContent = cost
     ? [cost.tariff + ".",
        cost.vat_percent ? "Costs include " + cost.vat_percent + "% VAT; prices shown are before VAT."
@@ -566,8 +587,8 @@ function renderToday(today, month) {
   } : {});
   renderTiles(document.getElementById("devices"), installed(DEVICE_TILES), readings);
   document.getElementById("devices-hint").textContent = energy ? coverageHint(energy) : "";
-  renderCost("cost", "cost-hint", today?.cost);
-  renderCost("month", "month-hint", month?.cost, month ? !month.is_current : false);
+  renderCost("cost", "cost-hint", today?.cost, false, today?.income);
+  renderCost("month", "month-hint", month?.cost, month ? !month.is_current : false, month?.income);
   renderByDevice("cost-devices", today?.by_device);
   renderByDevice("month-devices", month?.by_device);
   if (month) {

@@ -45,3 +45,38 @@ def test_gas_is_gone():
     with api.database()._connect() as conn:  # noqa: SLF001 - checking the table was dropped
         tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master")}
     assert "gas_bills" not in tables
+
+
+def test_today_and_month_show_extra_income():
+    now = datetime.now(UTC).replace(microsecond=0)
+    zone = api.local_timezone()
+    midnight = now.astimezone(zone).replace(hour=0, minute=0, second=0)
+    # Readings from just after midnight, so today has a cost whatever the time.
+    rows = []
+    when = midnight + timedelta(minutes=1)
+    while when <= now:
+        rows.append((when, "import_energy_total", 1000 + (when - midnight).seconds / 3600))
+        rows.append((when, "export_energy_total", 500.0))
+        when += timedelta(minutes=5)
+    rows.append((now, "import_energy_total", 1000 + (now - midnight).seconds / 3600 + 0.01))
+    rows.append((now, "export_energy_total", 500.0))
+    api.database().insert_readings(rows)
+    today = midnight.date()
+
+    assert client.get("/api/today").json()["income"] is None
+    assert client.get("/api/month").json()["income"] is None
+
+    client.post(
+        "/api/income", json={"day": today.isoformat(), "description": "Axle", "amount_gbp": 4.5}
+    )
+    # A recorded event that has not been measured yet.
+    start = now + timedelta(hours=1)
+    api.database().add_event(start, start + timedelta(hours=1), today)
+    # Income on another month is not this month's.
+    client.post("/api/income", json={"day": "2000-01-01", "description": "Old", "amount_gbp": 99})
+
+    for body in (client.get("/api/today").json(), client.get("/api/month").json()):
+        income = body["income"]
+        assert income["extra_income_gbp"] == 4.5
+        assert income["entries"] == 2 and income["pending"] == 1
+        assert income["net_after_income_gbp"] == pytest.approx(body["cost"]["net_gbp"] - 4.5)

@@ -133,7 +133,7 @@ async def lifespan(_: FastAPI):
         await asyncio.to_thread(thread.join, 10)
 
 
-app = FastAPI(title="Energy Tracker", version="0.46.3", lifespan=lifespan)
+app = FastAPI(title="Energy Tracker", version="0.47.0", lifespan=lifespan)
 # The page and its chart data are mostly text: sent compressed, they are a quarter the size.
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
@@ -360,7 +360,34 @@ def today() -> dict:
             settings().ev_on_smart_load,
         ),
         "cost": cost,
+        "income": income_for(midnight.date(), midnight.date(), cost),
         "by_device": cost_by_device(samples, midnight, now, cost),
+    }
+
+
+def income_for(first: date, last: date, cost: dict | None) -> dict | None:
+    """Extra income (Axle events and the like) for the local days `first` to `last`, and
+    the net cost after it. None when there is none for those days.
+
+    An event is counted once it has been measured, a few minutes after it ends; until then
+    it is listed as still to be measured.
+    """
+    entries = [
+        entry
+        for entry in database().income_rows()
+        if first <= date.fromisoformat(entry["day"]) <= last
+    ]
+    if not entries:
+        return None
+    earned = sum(entry["amount_gbp"] or 0.0 for entry in entries)
+    return {
+        "extra_income_gbp": round(earned, 2),
+        "entries": len(entries),
+        # Recorded events not yet measured (still to come, running, or just finished).
+        "pending": sum(1 for entry in entries if entry["amount_gbp"] is None),
+        # Some of it is the app's estimate (kWh exported times the rate), not a real payment.
+        "estimated": any(e["estimated"] and e["amount_gbp"] is not None for e in entries),
+        "net_after_income_gbp": round(cost["net_gbp"] - earned, 2) if cost else None,
     }
 
 
@@ -720,6 +747,14 @@ def month(
         "previous": month_key(previous_month(start)) if start > earliest else None,
         "next": month_key(following_month(start)) if start < current else None,
         "cost": (cost := cost_of_month(samples, start, now, schedule())),
+        "income": income_for(
+            start.date(),
+            min(
+                following_month(start).date() - timedelta(days=1),
+                now.astimezone(local_timezone()).date(),
+            ),
+            cost,
+        ),
         # Shared out once every few minutes: it walks the whole month, and this is asked
         # for every few seconds.
         "by_device": _kept.get(
