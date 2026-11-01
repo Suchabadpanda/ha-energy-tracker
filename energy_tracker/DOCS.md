@@ -171,7 +171,7 @@ used for the plan** in the Tariff switch planner, or else the size worked out fr
   set VAT to 0. VAT is added to import and the standing charge, not to export.
 - "Saved by off-peak" is what the same import would have cost at the dearest rate, minus
   what it did cost. On half-hourly prices it is measured against each day's average price.
-- **Extra income** and **Net after income** tiles appear under Cost today and the month's
+- **Extra income** and **Net cost after income** tiles appear under Cost today and the month's
   cost on days with extra income (Axle events and the like, from Money → Extra income).
   Net cost itself stays the electricity alone: import, standing charge and the supplier's
   export credit. An Axle event is counted once it has been measured, a few minutes after it
@@ -231,7 +231,7 @@ cost and what off-peak charging saved, with **Net cost month by month** undernea
 month to open its costs on the Now page).
 
 With extra income entered (Axle payments and the like), two more columns appear: **Extra
-income**, shown as a minus as it comes off, and **Net after income**: the net cost less that
+income**, shown as a minus as it comes off, and **Net cost after income**: the net cost less that
 income. Income is counted over the same days as the electricity, so a year counted from
 November only includes November's income onwards.
 

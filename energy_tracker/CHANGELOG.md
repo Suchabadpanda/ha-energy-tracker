@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.48.1
+
+- **"Net after income" is now "Net cost after income"** on the Cost today, month and
+  History tiles, the Costs by year column and the chart title, and in the notes. Only the
+  wording changed; the figure and the API field (`net_after_income_gbp`) are the same.
+
+### How to check this release
+
+1. On a day with extra income, the tile after Extra income reads "Net cost after income".
+2. History → Costs by year with extra income: the last column and the chart title say
+   "Net cost after income".
+
 ## 0.48.0
 
 - **Axle events in History.** For the day, week, month or year being viewed, History shows

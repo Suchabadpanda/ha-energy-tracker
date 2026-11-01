@@ -448,7 +448,7 @@ const asReadings = (part, notes = {}) => Object.fromEntries(Object.entries(part 
 // Shown after the cost tiles when the period has extra income (Axle events and the like).
 const INCOME_TILES = [
   { metric: "extra_income_gbp", label: "Extra income", prefix: "£", color: "var(--warn)" },
-  { metric: "net_after_income_gbp", label: "Net after income", prefix: "£", color: "var(--accent)" },
+  { metric: "net_after_income_gbp", label: "Net cost after income", prefix: "£", color: "var(--accent)" },
 ];
 
 function incomeNote(income) {
@@ -676,7 +676,7 @@ function renderYears(data) {
         : y.year + " is counted from " + since.toLocaleDateString([], { day: "numeric", month: "long" }) + ".";
     });
   if (extras) {
-    notes.push("Net after income is the net cost less extra income (Axle payments and the like) over the same days." +
+    notes.push("Net cost after income is the net cost less extra income (Axle payments and the like) over the same days." +
       " Extra income is shown as a minus, as it comes off.");
   }
   document.getElementById("year-hint").textContent = years.length ? notes.join(" ") : "No readings yet.";
@@ -686,7 +686,7 @@ function renderYears(data) {
   document.getElementById("month-grid-total").checked = gridTotal;
   const showTotal = extras && gridTotal;
   document.querySelector("#months-by-year > summary").textContent =
-    (showTotal ? "Net after income" : "Net cost") + " month by month";
+    (showTotal ? "Net cost after income" : "Net cost") + " month by month";
 
   const head = document.createElement("tr");
   const corner = document.createElement("th");
