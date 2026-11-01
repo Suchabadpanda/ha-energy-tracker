@@ -1024,9 +1024,15 @@ function drawHistory(data) {
   const gap = 2, pad = Math.min(8, band * 0.12);
   const bar = Math.max(1.5, (band - pad * 2 - gap * (shownSeries.length - 1)) / shownSeries.length);
   const labelEvery = Math.ceil(rows.length / 16);
+  const events = data.income?.events ?? [];
   rows.forEach((row, i) => {
     const left = L + i * band;
     const [short, full] = intervalLabels(row, data.interval);
+    // Grid events that ran in this column: shaded behind the bars, and listed in the tooltip.
+    const during = events.filter(e => new Date(e.start) < new Date(row.end) && new Date(e.end) > new Date(row.start));
+    if (during.length) {
+      add("rect", { x: left, y: T, width: band, height: H - T - B, fill: "var(--export)", opacity: 0.14 });
+    }
     shownSeries.forEach((series, n) => {
       const value = row[series.key];
       if (!value) return;
@@ -1048,7 +1054,8 @@ function drawHistory(data) {
     // The whole column is the hover and keyboard target, and lists every series.
     const hit = add("rect", { x: left, y: T, width: band, height: H - T - B, class: "hit", tabindex: 0,
                               "aria-label": full + ": " + shownSeries.map(s => s.label + " " + kwh(row[s.key])).join(", ") +
-                                here.map(n => ". Note: " + n.text).join("") });
+                                here.map(n => ". Note: " + n.text).join("") +
+                                during.map(e => ". " + eventText(e)).join("") });
     const show = () => {
       const heading = Object.assign(document.createElement("div"), { className: "when", textContent: full });
       const lines = shownSeries.map(series => {
@@ -1062,7 +1069,10 @@ function drawHistory(data) {
         textContent: (here.length > 1 || new Date(row.end) - new Date(row.start) > 26 * 3600 * 1000
           ? dayText(n.day) + ": " : "") + n.text,
         style: "margin-top: 6px; color: var(--warn); font-weight: 600; max-width: 260px;" }));
-      tip.replaceChildren(heading, ...lines, ...noted);
+      const evented = during.map(e => Object.assign(document.createElement("div"), {
+        textContent: eventText(e),
+        style: "margin-top: 6px; color: var(--export); font-weight: 600; max-width: 260px;" }));
+      tip.replaceChildren(heading, ...lines, ...evented, ...noted);
       tip.hidden = false;
       const scale = svg.clientWidth / W, centre = (left + band / 2) * scale;
       const flip = centre > svg.clientWidth / 2;
@@ -1076,6 +1086,20 @@ function drawHistory(data) {
   add("line", { x1: L, x2: W - R, y1: y(0), y2: y(0), class: "gridline" });
 }
 
+// "Axle export event 16:00 to 17:00: 3.2 kWh, £3.20 (estimated)"
+function eventText(e) {
+  const time = iso => new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  const start = new Date(e.start);
+  const multiDay = historyData && historyData.period !== "day";
+  const when = (multiDay ? fmt(start, { weekday: "short", day: "numeric", month: "short" }) + " " : "") +
+    time(e.start) + " to " + time(e.end);
+  const paid = e.amount_gbp === null || e.amount_gbp === undefined
+    ? "still to be measured"
+    : (e.kwh !== null && e.kwh !== undefined ? e.kwh.toFixed(1) + " kWh, " : "") + money(e.amount_gbp) +
+      (e.estimated ? " (estimated)" : "");
+  return e.description + " " + when + ": " + paid;
+}
+
 function renderHistory(data) {
   historyLinks = { previous: data.previous, next: data.next };
   document.getElementById("history-prev").disabled = !data.previous;
@@ -1083,19 +1107,28 @@ function renderHistory(data) {
   document.getElementById("history-label").textContent = periodLabel(data);
   const t = data.totals, cost = data.cost;
   const reading = (value, note) => value === undefined ? undefined : { value, note };
+  const income = cost ? data.income : null;
   renderTiles(document.getElementById("history-tiles"), [
     { metric: "solar", label: "Solar generated", unit: "kWh", digits: 1 },
     { metric: "used", label: "Used", unit: "kWh", digits: 1 },
     { metric: "imported", label: "Imported", unit: "kWh", digits: 1 },
     { metric: "exported", label: "Exported", unit: "kWh", digits: 1 },
     { metric: "net", label: "Net cost", prefix: "£" },
+    ...(income ? INCOME_TILES : []),
   ], {
     solar: reading(t.solar_kwh), used: reading(t.consumption_kwh), imported: reading(t.import_kwh),
     exported: reading(t.export_kwh),
     net: cost ? reading(cost.net_gbp, "with standing charge") : undefined,
+    extra_income_gbp: income ? reading(income.extra_income_gbp, incomeNote(income)) : undefined,
+    net_after_income_gbp: income ? reading(income.net_after_income_gbp, "Net cost less extra income") : undefined,
   });
   drawHistory(data);
-  document.getElementById("history-hint").textContent = cost ? coverageHint({ ...cost, full_period: true }) : "";
+  const events = data.income?.events ?? [];
+  document.getElementById("history-hint").textContent = [
+    cost ? coverageHint({ ...cost, full_period: true }) : "",
+    events.length === 1 ? "Shaded: " + eventText(events[0]) + "."
+      : events.length ? "Shaded: the " + events.length + " grid events in this period (hover a column for each)." : "",
+  ].filter(Boolean).join(" ");
 
   document.getElementById("history-interval-head").textContent =
     { hour: "Hour", day: "Day", month: "Month" }[data.interval];

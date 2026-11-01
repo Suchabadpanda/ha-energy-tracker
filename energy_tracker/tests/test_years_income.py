@@ -80,3 +80,33 @@ def test_today_and_month_show_extra_income():
         assert income["extra_income_gbp"] == 4.5
         assert income["entries"] == 2 and income["pending"] == 1
         assert income["net_after_income_gbp"] == pytest.approx(body["cost"]["net_gbp"] - 4.5)
+
+
+def test_history_shows_extra_income_and_events():
+    now = datetime.now(UTC).replace(microsecond=0)
+    zone = api.local_timezone()
+    midnight = now.astimezone(zone).replace(hour=0, minute=0, second=0)
+    rows = []
+    when = midnight - timedelta(days=1)
+    while when <= now:
+        hours = (when - midnight).total_seconds() / 3600
+        rows.append((when, "import_energy_total", 1000 + hours))
+        rows.append((when, "export_energy_total", 500 + max(hours, 0) / 2))
+        when += timedelta(minutes=5)
+    api.database().insert_readings(rows)
+    yesterday = (midnight - timedelta(days=1)).date()
+    start = midnight - timedelta(hours=6)
+    api.database().add_event(start, start + timedelta(hours=1), yesterday)
+    client.post(
+        "/api/income", json={"day": yesterday.isoformat(), "description": "Axle", "amount_gbp": 2}
+    )
+
+    data = client.get(f"/api/history?period=day&day={yesterday.isoformat()}").json()
+    income = data["income"]
+    assert income["extra_income_gbp"] == 2 and income["pending"] == 1
+    assert len(income["events"]) == 1
+    assert income["events"][0]["description"] == "Axle export event"
+    assert income["net_after_income_gbp"] == pytest.approx(data["cost"]["net_gbp"] - 2)
+    # A day without any is left alone.
+    other = (midnight - timedelta(days=3)).date().isoformat()
+    assert client.get(f"/api/history?period=day&day={other}").json()["income"] is None

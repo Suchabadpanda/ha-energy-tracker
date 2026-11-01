@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.48.0
+
+- **Axle events in History.** For the day, week, month or year being viewed, History shows
+  **Extra income** and **Net after income** tiles beside Net cost when there was extra
+  income in that period. Recorded Axle events are shaded on the chart; hovering a shaded
+  bar shows the event's times, the kWh exported and its payment (or "still to be
+  measured"). With a single event in the period, the line under the chart describes it.
+
+### How to check this release
+
+1. History → Day, step back to a day with an Axle event: the Extra income and Net after
+   income tiles appear after Net cost, and the hour(s) of the event are shaded on the chart.
+2. Hover a shaded hour: the tooltip lists the event, for example "Axle export event 17:00
+   to 18:00: 3.2 kWh, £3.20 (estimated)". The line under the chart says the same.
+3. Switch to Week or Month: the event's day is shaded, and the tiles cover the whole period.
+4. Step to a day with no event or extra income: no extra tiles and nothing shaded.
+
 ## 0.47.0
 
 - **Axle income on the Now page.** Cost today and the month's cost get two more tiles on

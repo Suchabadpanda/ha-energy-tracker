@@ -177,6 +177,9 @@ used for the plan** in the Tariff switch planner, or else the size worked out fr
   export credit. An Axle event is counted once it has been measured, a few minutes after it
   ends; until then the tile says it is still to be measured. A recorded event's amount is an
   estimate (kWh exported in the event times the Axle rate) until you enter the real payment.
+- The **History** section shows the same two tiles for the day, week, month or year being
+  viewed. Axle events are shaded on its chart, and hovering a shaded bar gives the event's
+  times, the kWh exported and its payment.
 - **Cost by device**, under Cost today and the month's cost, gives what the house load
   (everything except the heat pump and EV charger), the EV charger and the heat pump (or
   other smart load) cost, in that order. It is shown when a smart

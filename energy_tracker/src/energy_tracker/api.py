@@ -133,7 +133,7 @@ async def lifespan(_: FastAPI):
         await asyncio.to_thread(thread.join, 10)
 
 
-app = FastAPI(title="Energy Tracker", version="0.47.0", lifespan=lifespan)
+app = FastAPI(title="Energy Tracker", version="0.48.0", lifespan=lifespan)
 # The page and its chart data are mostly text: sent compressed, they are a quarter the size.
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
@@ -388,6 +388,21 @@ def income_for(first: date, last: date, cost: dict | None) -> dict | None:
         # Some of it is the app's estimate (kWh exported times the rate), not a real payment.
         "estimated": any(e["estimated"] and e["amount_gbp"] is not None for e in entries),
         "net_after_income_gbp": round(cost["net_gbp"] - earned, 2) if cost else None,
+        # Recorded grid events, for marking on the History chart.
+        "events": [
+            {
+                "start": entry["event_start"],
+                "end": entry["event_end"],
+                "kwh": entry["kwh"],
+                "amount_gbp": entry["amount_gbp"],
+                "estimated": entry["estimated"],
+                "description": entry["description"],
+            }
+            for entry in sorted(
+                entries, key=lambda e: e["event_start"] or datetime.min.replace(tzinfo=UTC)
+            )
+            if entry["event_start"] and entry["event_end"]
+        ],
     }
 
 
@@ -2709,6 +2724,11 @@ def past_period(period: PERIOD = "day", day: date | None = None) -> dict:
         "rows": data,
         "totals": history.totals(data),
         "cost": cost,
+        "income": income_for(
+            start.date(),
+            min((end - timedelta(days=1)).date(), now.astimezone(zone).date()),
+            cost,
+        ),
     }
 
 
