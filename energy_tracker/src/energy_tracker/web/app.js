@@ -1109,11 +1109,12 @@ function renderHistory(data) {
   const reading = (value, note) => value === undefined ? undefined : { value, note };
   const income = cost ? data.income : null;
   renderTiles(document.getElementById("history-tiles"), [
-    { metric: "solar", label: "Solar generated", unit: "kWh", digits: 1 },
-    { metric: "used", label: "Used", unit: "kWh", digits: 1 },
-    { metric: "imported", label: "Imported", unit: "kWh", digits: 1 },
-    { metric: "exported", label: "Exported", unit: "kWh", digits: 1 },
-    { metric: "net", label: "Net cost", prefix: "£" },
+    // Coloured like the matching lines on the charts and the Now page's cost tiles.
+    { metric: "solar", label: "Solar generated", unit: "kWh", digits: 1, color: "var(--solar)" },
+    { metric: "used", label: "Used", unit: "kWh", digits: 1, color: "var(--load)" },
+    { metric: "imported", label: "Imported", unit: "kWh", digits: 1, color: "var(--grid)" },
+    { metric: "exported", label: "Exported", unit: "kWh", digits: 1, color: "var(--export)" },
+    { metric: "net", label: "Net cost", prefix: "£", color: "var(--accent)" },
     ...(income ? INCOME_TILES : []),
   ], {
     solar: reading(t.solar_kwh), used: reading(t.consumption_kwh), imported: reading(t.import_kwh),

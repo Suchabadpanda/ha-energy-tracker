@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.48.2
+
+- **The History tiles have colour**, like the cost tiles on the Now page: a stripe in the
+  colour each figure has on the charts. Solar generated is yellow, Used purple, Imported
+  the grid's blue, Exported green and Net cost the accent blue. Extra income and Net cost
+  after income keep their colours.
+
+### How to check this release
+
+1. History: each tile above the chart has a coloured stripe along its top, matching the
+   chart's bars (Solar, Used, Imported, Exported) and the Now page's Cost today tiles.
+2. Switch to the dark theme: the stripes use the lighter dark-theme colours.
+
 ## 0.48.1
 
 - **"Net after income" is now "Net cost after income"** on the Cost today, month and
