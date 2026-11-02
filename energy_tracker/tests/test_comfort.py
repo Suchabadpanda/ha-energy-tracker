@@ -209,3 +209,101 @@ def test_the_collector_reads_the_rooms_and_brings_in_their_history(monkeypatch):
 def test_humidity_history_is_read_as_a_percentage():
     assert weather.percent("55.4") == 55.4
     assert weather.percent("120") is None and weather.percent(None) is None
+
+
+BEDROOM_NIGHT = comfort.Room("sensor.my_t", "My bedroom", "sensor.my_t", "", True)
+
+
+def test_bedrooms_at_night_against_the_night_target():
+    # Warming through the night from 21 °C at 22:00 to 23.1 °C at 06:00, as the pre-heat does.
+    def value_at(hour):
+        return 21.0 + ((hour - 22) % 24) * 0.25 if hour >= 22 or hour < 7 else 22.0
+
+    temperatures = {BEDROOM_NIGHT.key: hourly(5, value_at)}
+    night = ("22:00", "07:00")
+    early = datetime(TODAY.year, TODAY.month, TODAY.day, 6, 30, tzinfo=UTC)
+    found = comfort.analyse(
+        [BEDROOM_NIGHT],
+        temperatures,
+        {},
+        [],
+        LONDON,
+        19.0,
+        1.0,
+        night,
+        TODAY,
+        night=True,
+        now_local=early,
+    )
+    # Each night belongs to the evening it starts; last night is not over until 07:00.
+    assert found["last_day"] == TODAY - timedelta(days=2)
+    row = found["days"][-1]["rooms"][BEDROOM_NIGHT.key]
+    assert row["hours"] == 9  # 22:00 to 06:00
+    assert row["min"] == 21.0 and row["max"] == 23.0
+    assert row["above_percent"] == 100  # all above 20 °C
+    after = datetime(TODAY.year, TODAY.month, TODAY.day, 7, 0, tzinfo=UTC)
+    later = comfort.analyse(
+        [BEDROOM_NIGHT],
+        temperatures,
+        {},
+        [],
+        LONDON,
+        19.0,
+        1.0,
+        night,
+        TODAY,
+        night=True,
+        now_local=after,
+    )
+    assert later["last_day"] == TODAY - timedelta(days=1)
+    # A warmer night target puts the same hours in the band.
+    warm = comfort.analyse(
+        [BEDROOM_NIGHT],
+        temperatures,
+        {},
+        [],
+        LONDON,
+        22.0,
+        1.0,
+        night,
+        TODAY,
+        night=True,
+        now_local=after,
+    )
+    assert warm["days"][-1]["rooms"][BEDROOM_NIGHT.key]["in_band_percent"] == 100
+
+
+def test_the_night_view_has_the_bedrooms_only():
+    body = {
+        "rooms": [
+            {"name": "Kitchen", "temperature": "sensor.kitchen_t"},
+            {"name": "My bedroom", "temperature": "sensor.my_t", "bedroom": True},
+        ],
+        "night_target_c": 19,
+        "night_band_c": 1,
+    }
+    client.post("/api/comfort/settings", json=body)
+    assert [room.bedroom for room in comfort.rooms] == [False, True]
+    now = datetime.now(UTC).replace(second=0, microsecond=0)
+    rows = []
+    for n in range(4 * 24 * 12, -1, -1):
+        when = now - timedelta(minutes=5 * n)
+        rows += [
+            (when, "room_temperature:sensor.kitchen_t", 22.0),
+            (when, "room_temperature:sensor.my_t", 22.5),
+        ]
+    api.database().insert_readings(rows)
+    api.clear_caches()
+    night = client.get("/api/comfort?hours=night").json()
+    assert [room["name"] for room in night["rooms"]] == ["My bedroom"]
+    assert night["has_data"] and night["night_hours"] == ["22:00", "07:00"]
+    assert night["summary"]["rooms"]["sensor.my_t"]["above_percent"] == 100
+    day = client.get("/api/comfort").json()
+    assert len(day["rooms"]) == 2 and day["has_bedrooms"]
+    assert day["night_summary"]["rooms"]["sensor.my_t"]["average"] == 22.5
+    assert client.get("/api/comfort").json()["settings"]["night_target_c"] == 19
+    bad = {**body, "night_target_c": 40}
+    assert client.post("/api/comfort/settings", json=bad).status_code == 422
+    # Without bedrooms, the night view says so.
+    client.post("/api/comfort/settings", json={"rooms": body["rooms"][:1]})
+    assert client.get("/api/comfort?hours=night").json()["has_bedrooms"] is False

@@ -234,6 +234,8 @@ body.view-only form, body.view-only .write { display: none !important; }
 td.verdict-short { color: var(--danger); font-weight: 600; }
 td.verdict-spare { color: var(--warn); font-weight: 600; }
 td.verdict-right { color: var(--good); }
-.comfort-room { display: grid; grid-template-columns: 1fr 1.4fr 1.4fr auto; gap: 8px; margin-bottom: 8px; align-items: center; }
+.comfort-room { display: grid; grid-template-columns: 1fr 1.4fr 1.4fr auto auto; gap: 8px; margin-bottom: 8px; align-items: center; }
+.comfort-room .bedroom { display: flex !important; flex-direction: row; align-items: center; gap: 6px; font-size: 14px; white-space: nowrap; }
+.comfort-room .bedroom input { width: auto; margin: 0; }
 .comfort-room input { width: 100%; box-sizing: border-box; }
 @media (max-width: 640px) { .comfort-room { grid-template-columns: 1fr 1fr; } }

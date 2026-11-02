@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.49.0
+
+- **Bedrooms at night** in Room comfort and balance. Tick **Bedroom** beside each bedroom
+  under **Rooms and target** and set a **night target** (19 °C by default) and band. Night
+  is the hours outside the comfort hours (22:00 to 07:00 by default).
+  - A new **Bedrooms at night** choice above the section shows the bedrooms only, at night,
+    against the night target: average, the share of hours in the night band, too cold and
+    too warm, the warmest bedroom, and the daily, weekly, monthly and yearly averages.
+    Each night belongs to the day it starts on, and counts once it is over.
+  - In the comfort hours view, a **Bedrooms too warm at night** tile shows the last 7
+    nights at a glance.
+  - Before, every room was judged against the daytime target, so a bedroom getting too
+    warm overnight (the heat pump pre-heating on the cheap night rate) did not show.
+
+### How to check this release
+
+1. Devices → Room comfort and balance → Rooms and target: each room has a **Bedroom** box,
+   and there are **Bedrooms at night** and **Night band** fields. Tick the bedrooms, set
+   the night target you sleep best at, and save.
+2. A **Bedrooms too warm at night** tile appears beside the others.
+3. Choose **Bedrooms at night** above the section: only the bedrooms are listed. Last
+   night counts once it is past 07:00. A bedroom that warmed to about 23 °C overnight shows
+   as too warm, and its highest reading matches the overnight peak in Home Assistant.
+
 ## 0.48.2
 
 - **The History tiles have colour**, like the cost tiles on the Now page: a stripe in the

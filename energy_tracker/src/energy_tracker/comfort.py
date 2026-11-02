@@ -29,6 +29,10 @@ DRY_PERCENT = 40
 DEFAULT_TARGET = 21.0
 DEFAULT_BAND = 1.0
 DEFAULT_HOURS = ("07:00", "22:00")
+# Bedrooms at night: the hours outside the comfort hours, against a cooler target. Advice
+# for sleeping is usually 16 to 19 °C.
+DEFAULT_NIGHT_TARGET = 19.0
+DEFAULT_NIGHT_BAND = 1.0
 MAX_ROOMS = 12
 ENTITY = re.compile(r"^[a-z_]+\.[a-z0-9_]+$")
 SUMMARY_DAYS = 7  # the tiles and the room table cover this many days to yesterday
@@ -40,6 +44,7 @@ class Room:
     name: str
     temperature: str
     humidity: str = ""
+    bedroom: bool = False  # also judged at night, against the night target
 
 
 # The rooms being read, kept in step with the saved settings (see load).
@@ -61,6 +66,7 @@ def parse(settings: dict) -> list[Room]:
                 (item.get("name") or entity).strip()[:40],
                 entity,
                 humidity if ENTITY.match(humidity) else "",
+                bool(item.get("bedroom")),
             )
         )
     return found
@@ -241,20 +247,44 @@ def analyse(
     band: float,
     hours: tuple[str, str] | None,
     today: date,
+    night: bool = False,
+    now_local: datetime | None = None,
 ) -> dict:
     """Each room's comfort and the balance between rooms, by day, week, month and year.
 
     The readings are hourly averages, keyed by the room's key (its temperature entity).
     `hours` is the comfort hours, or None for all day. Today is left out until it is over.
+
+    With `night`, `hours` is the night (22:00 to 07:00, say): each night belongs to the day
+    it starts on, and counts once it is over (at `now_local`).
     """
     keys = [room.key for room in chosen]
     by_hour: dict[datetime, dict] = {}
+    crosses = bool(hours) and _minutes(hours[0]) > _minutes(hours[1])
+
+    def day_of(local: datetime) -> date:
+        """The day an hour counts towards: a night's small hours go with the evening."""
+        if night and crosses and local.hour * 60 + local.minute < _minutes(hours[1]):
+            return local.date() - timedelta(days=1)
+        return local.date()
+
+    def over(day: date, local: datetime) -> bool:
+        if not night:
+            return day < today
+        end_day = day + timedelta(days=1) if crosses else day
+        end = datetime.combine(end_day, datetime.min.time(), timezone) + timedelta(
+            minutes=_minutes(hours[1])
+        )
+        return (now_local or local) >= end
 
     def slot(when: datetime) -> dict | None:
         local = when.astimezone(timezone)
-        if local.date() >= today or not _in_hours(local, hours):
+        if not _in_hours(local, hours):
             return None
-        return by_hour.setdefault(when, {"local": local, "t": {}, "h": {}, "out": None})
+        day = day_of(local)
+        if not over(day, local):
+            return None
+        return by_hour.setdefault(when, {"local": local, "day": day, "t": {}, "h": {}, "out": None})
 
     for key in keys:
         for when, value in temperatures.get(key, []):
@@ -271,7 +301,7 @@ def analyse(
     for item in by_hour.values():
         if not item["t"]:
             continue
-        day = item["local"].date()
+        day = item["day"]
         totals = days.get(day)
         if totals is None:
             totals = days[day] = _Totals(keys)

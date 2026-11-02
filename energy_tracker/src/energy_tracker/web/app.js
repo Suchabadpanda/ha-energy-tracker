@@ -1464,12 +1464,15 @@ function addRoomRow(room = {}) {
   humid.setAttribute("list", "comfort-humidity-sensors");
   const remove = Object.assign(document.createElement("button"), { type: "button", textContent: "Remove" });
   remove.addEventListener("click", () => row.remove());
+  // A bedroom is also judged at night, against the night target.
+  const bedroom = Object.assign(document.createElement("label"), { className: "bedroom", title: "Also judged at night, against the night target" });
+  bedroom.append(Object.assign(document.createElement("input"), { type: "checkbox", name: "room_bedroom", checked: !!room.bedroom }), "Bedroom");
   // Choosing a sensor fills in the room's name from it, if none was typed.
   temp.addEventListener("change", () => {
     const found = comfortSensors.find(s => s.entity === temp.value);
     if (found && !name.value) name.value = found.name.replace(/\s*temperature\s*$/i, "");
   });
-  row.append(name, temp, humid, remove);
+  row.append(name, temp, humid, bedroom, remove);
   document.getElementById("comfort-room-list").append(row);
 }
 let comfortSensors = [];
@@ -1490,6 +1493,8 @@ function fillComfortForm(s) {
   comfortForm.elements.band_c.value = s.band_c;
   comfortForm.elements.hours_from.value = s.hours_from;
   comfortForm.elements.hours_to.value = s.hours_to === "24:00" ? "00:00" : s.hours_to;
+  comfortForm.elements.night_target_c.value = s.night_target_c;
+  comfortForm.elements.night_band_c.value = s.night_band_c;
   document.getElementById("comfort-room-list").replaceChildren();
   for (const room of s.rooms) addRoomRow(room);
   if (!s.rooms.length) addRoomRow();
@@ -1503,12 +1508,30 @@ function renderComfort(data) {
   const summary = document.getElementById("comfort-summary");
   const body = document.getElementById("comfort-body");
   const hint = document.getElementById("comfort-hint");
-  const hoursText = data.hours === "all" ? "all day" : "between " + s.hours_from + " and " + s.hours_to;
-  hint.textContent = "Worked out from hourly averages, " + hoursText + ". In the band means within " + s.band_c +
+  const night = data.hours === "night";
+  const [nightFrom, nightTo] = data.night_hours ?? [s.hours_to, s.hours_from];
+  const hoursText = data.hours === "all" ? "all day" : night ? "between " + nightFrom + " and " + nightTo
+    : "between " + s.hours_from + " and " + s.hours_to;
+  document.getElementById("comfort-rooms-title").textContent =
+    night ? "The last 7 nights, bedroom by bedroom" : "The last 7 days, room by room";
+  hint.textContent = night
+    ? "The bedrooms only, worked out from hourly averages " + hoursText + " (the hours outside the comfort hours), " +
+      "against the night target: in the band means within " + s.night_band_c + " °C of " + s.night_target_c +
+      " °C. Advice for sleeping is usually 16 to 19 °C. Each night belongs to the day it starts on, and counts once " +
+      "it is over. Tick \"Bedroom\" beside a room under \"Rooms and target\" to include it."
+    : "Worked out from hourly averages, " + hoursText + ". In the band means within " + s.band_c +
     " °C of the " + s.target_c + " °C target. The spread is how far apart the warmest and coldest rooms were in the " +
     "same hour, averaged: the balance between rooms, whatever the overall level. Choose \"All day\" to count the " +
-    "night too, when the heating is usually set back on purpose. Humidity above 60% for long makes damp and mould " +
-    "more likely. Today is counted once it is over.";
+    "night too, when the heating is usually set back on purpose, or \"Bedrooms at night\" for the bedrooms " +
+    "against the night target. Humidity above 60% for long makes damp and mould more likely. Today is counted once " +
+    "it is over.";
+  if (night && !data.has_bedrooms) {
+    tiles.replaceChildren();
+    body.hidden = true;
+    summary.textContent = "Tick \"Bedroom\" beside the bedrooms under \"Rooms and target\" below to see them at " +
+      "night, against the night target.";
+    return;
+  }
   if (!data.rooms.length) {
     tiles.replaceChildren();
     body.hidden = true;
@@ -1527,7 +1550,36 @@ function renderComfort(data) {
   const names = Object.fromEntries(data.rooms.map(r => [r.key, r.name]));
   const sum = data.summary;
   const reading = (value, note) => value === null || value === undefined ? undefined : { value, note };
-  if (sum) {
+  // The share of room-hours above the band, over every room in a summary.
+  const share = (summary, key) => {
+    const rooms = Object.values(summary?.rooms ?? {}).filter(Boolean);
+    const hours = rooms.reduce((n, r) => n + r.hours, 0);
+    return hours ? Math.round(rooms.reduce((n, r) => n + r[key] * r.hours, 0) / hours) : null;
+  };
+  const tooWarm = summary => share(summary, "above_percent");
+  if (sum && night) {
+    const warmest = sum.warmest ?? Object.keys(sum.rooms).find(k => sum.rooms[k]);
+    const w = warmest ? sum.rooms[warmest] : null;
+    const warmShare = tooWarm(sum), coldShare = share(sum, "below_percent");
+    renderTiles(tiles, [
+      { metric: "avg", label: "Bedrooms at night", unit: "°C", digits: 1, color: "var(--accent)" },
+      { metric: "band", label: "In the night band", unit: "%", digits: 0, color: "var(--good)" },
+      { metric: "warm", label: "Too warm at night", unit: "%", digits: 0, color: "var(--danger)" },
+      { metric: "warmest", label: "Warmest bedroom", unit: "°C", digits: 1, color: "var(--heatpump)" },
+    ], {
+      avg: reading(sum.house_average, "against a " + s.night_target_c + " °C night target, last 7 nights"),
+      band: reading(sum.in_band_percent, "of bedroom-hours within " + s.night_band_c + " °C of it"),
+      warm: reading(warmShare, "of bedroom-hours above " + (s.night_target_c + s.night_band_c) + " °C"),
+      warmest: reading(w?.average, w ? names[warmest] + ", up to " + w.max.toFixed(1) + " °C" : ""),
+    });
+    summary.textContent = "Over the last " + sum.days + " nights (" + nightFrom + " to " + nightTo + "), " +
+      (warmShare ? "the bedrooms were above the night band for " + warmShare + "% of the time" +
+        (w ? ", " + names[warmest] + " the most, averaging " + w.average.toFixed(1) + " °C" : "") + ". " +
+        "A schedule on those radiators' TRVs (cooler from bedtime) would stop the overnight pre-heat warming them."
+        : coldShare ? "the bedrooms were below the night band for " + coldShare + "% of the time: cooler than the " +
+          s.night_target_c + " °C target, though cool is fine for sleeping if it suits you."
+        : "the bedrooms stayed within the night band.");
+  } else if (sum) {
     const coldest = sum.coldest ? sum.rooms[sum.coldest] : null;
     renderTiles(tiles, [
       { metric: "house", label: "House average", unit: "°C", digits: 1, color: "var(--heatpump)" },
@@ -1541,6 +1593,17 @@ function renderComfort(data) {
       coldest: reading(coldest?.average, coldest ? names[sum.coldest] + ", " + Math.abs(coldest.offset).toFixed(1) +
         " °C below the house average" : ""),
     });
+    // The bedrooms' last 7 nights, beside the day's figures.
+    const ns = data.night_summary;
+    const nightShare = tooWarm(ns);
+    if (ns && nightShare !== null) {
+      const tile = document.createElement("div");
+      tiles.append(tile);
+      renderTiles(tile, [{ metric: "night", label: "Bedrooms too warm at night", unit: "%", digits: 0, color: "var(--danger)" }],
+        { night: { value: nightShare, note: "of bedroom-hours above " + (s.night_target_c + s.night_band_c) +
+          " °C, last 7 nights. Choose \"Bedrooms at night\" for more" } });
+      tile.replaceWith(...tile.childNodes);
+    }
     const warm = sum.warmest ? names[sum.warmest] : null;
     summary.textContent = "Over the last " + sum.days + " days" + (warm && sum.coldest
       ? ", " + warm + " was the warmest room and " + names[sum.coldest] + " the coldest. "
@@ -1578,6 +1641,8 @@ function drawComfort() {
   const data = comfortData;
   if (!data?.has_data) return;
   const s = data.settings;
+  const night = data.hours === "night";
+  const tgt = night ? s.night_target_c : s.target_c, bnd = night ? s.night_band_c : s.band_c;
   let rows = data[comfortPeriod] ?? [];
   if (comfortPeriod === "days") rows = rows.slice(-DAYS_SHOWN);
   const rooms = data.rooms.map((room, i) => ({ ...room, colour: ROOM_COLOURS[i % ROOM_COLOURS.length] }));
@@ -1593,8 +1658,8 @@ function drawComfort() {
   };
   const left = 56, right = 860, top = 16, bottom = 236;
   const values = rows.flatMap(r => rooms.map(room => r.rooms[room.key]?.average)).filter(v => v != null);
-  const low = Math.floor(Math.min(...values, s.target_c - s.band_c) - 0.5);
-  const high = Math.ceil(Math.max(...values, s.target_c + s.band_c) + 0.5);
+  const low = Math.floor(Math.min(...values, tgt - bnd) - 0.5);
+  const high = Math.ceil(Math.max(...values, tgt + bnd) + 0.5);
   const y = v => bottom - (v - low) / (high - low) * (bottom - top);
   const step = high - low > 12 ? 2 : 1;
   for (let v = low; v <= high; v += step) {
@@ -1603,9 +1668,9 @@ function drawComfort() {
   }
   add("text", { x: 8, y: 12, "font-size": 12, fill: "var(--muted)" }, "°C");
   // The comfort band, shaded, with the target dashed through it.
-  add("rect", { x: left, width: right - left, y: y(s.target_c + s.band_c), height: y(s.target_c - s.band_c) - y(s.target_c + s.band_c),
+  add("rect", { x: left, width: right - left, y: y(tgt + bnd), height: y(tgt - bnd) - y(tgt + bnd),
                 fill: "var(--good)", opacity: 0.12 });
-  add("line", { x1: left, x2: right, y1: y(s.target_c), y2: y(s.target_c), stroke: "var(--good)", "stroke-width": 1.5, "stroke-dasharray": "5 4" });
+  add("line", { x1: left, x2: right, y1: y(tgt), y2: y(tgt), stroke: "var(--good)", "stroke-width": 1.5, "stroke-dasharray": "5 4" });
   const slot = (right - left) / Math.max(rows.length, 1);
   const xAt = i => left + slot * (i + 0.5);
   const every = Math.ceil(rows.length / 12);
@@ -1643,12 +1708,12 @@ function drawComfort() {
     return span;
   };
   document.getElementById("comfort-legend").replaceChildren(...rooms.map(room => key(room.name, room.colour)),
-    key("Target " + s.target_c + " °C (band shaded)", "var(--good)", "dashed"));
+    key("Target " + tgt + " °C (band shaded)", "var(--good)", "dashed"));
 
   // The table: newest first, a column for each room.
   const head = document.createElement("tr");
   for (const [text, num] of [["Period", false], ["Days", true], ...rooms.map(r => [r.name, true]),
-                             ["House", true], ["Spread", true], ["In the band", true], ["Outside", true]]) {
+                             [night ? "Bedrooms" : "House", true], ["Spread", true], ["In the band", true], ["Outside", true]]) {
     head.append(Object.assign(document.createElement("th"), { textContent: text, className: num ? "num" : "" }));
   }
   document.getElementById("comfort-periods-head").replaceChildren(head);
@@ -1698,12 +1763,14 @@ comfortForm?.addEventListener("submit", async event => {
     name: row.querySelector("[name=room_name]").value.trim(),
     temperature: row.querySelector("[name=room_temperature]").value.trim(),
     humidity: row.querySelector("[name=room_humidity]").value.trim(),
+    bedroom: row.querySelector("[name=room_bedroom]").checked,
   })).filter(room => room.temperature);
   for (const room of rooms) if (!room.name) room.name = room.temperature.replace(/^sensor\./, "").replace(/_/g, " ");
   try {
     const data = await sendTariff("api/comfort/settings", { method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ rooms, target_c: Number(f.target_c.value), band_c: Number(f.band_c.value),
-        hours_from: f.hours_from.value, hours_to: f.hours_to.value === "00:00" ? "24:00" : f.hours_to.value }) });
+        hours_from: f.hours_from.value, hours_to: f.hours_to.value === "00:00" ? "24:00" : f.hours_to.value,
+        night_target_c: Number(f.night_target_c.value), night_band_c: Number(f.night_band_c.value) }) });
     document.getElementById("comfort-message").textContent = "Saved. New rooms' readings start at the next poll.";
     comfortFilled = false;
     if (document.getElementById("comfort-hours").value === "comfort") renderComfort(data); else refreshComfort();

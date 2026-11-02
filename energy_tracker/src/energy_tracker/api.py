@@ -133,7 +133,7 @@ async def lifespan(_: FastAPI):
         await asyncio.to_thread(thread.join, 10)
 
 
-app = FastAPI(title="Energy Tracker", version="0.48.2", lifespan=lifespan)
+app = FastAPI(title="Energy Tracker", version="0.49.0", lifespan=lifespan)
 # The page and its chart data are mostly text: sent compressed, they are a quarter the size.
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
@@ -1556,6 +1556,7 @@ class RoomIn(BaseModel):
     name: str = Field(min_length=1, max_length=40)
     temperature: str = Field(pattern=comfort.ENTITY.pattern)
     humidity: str = Field(default="", pattern=r"^$|" + comfort.ENTITY.pattern)
+    bedroom: bool = False
 
 
 class ComfortIn(BaseModel):
@@ -1568,6 +1569,9 @@ class ComfortIn(BaseModel):
     hours_to: str = Field(
         default=comfort.DEFAULT_HOURS[1], pattern=r"^([01]\d|2[0-3]):[03]0$|^24:00$"
     )
+    # Bedrooms at night (the hours outside the comfort hours).
+    night_target_c: float = Field(default=comfort.DEFAULT_NIGHT_TARGET, ge=10, le=28)
+    night_band_c: float = Field(default=comfort.DEFAULT_NIGHT_BAND, ge=0.2, le=5)
 
 
 def comfort_settings() -> dict:
@@ -1600,22 +1604,30 @@ def save_comfort_settings(body: ComfortIn) -> dict:
 
 @app.get("/api/comfort")
 @kept
-def room_comfort(hours: Annotated[str, Query(pattern="^(comfort|all)$")] = "comfort") -> dict:
+def room_comfort(
+    hours: Annotated[str, Query(pattern="^(comfort|all|night)$")] = "comfort",
+) -> dict:
     """Each room against the target, and the balance between rooms, by day, week, month
-    and year."""
+    and year. `night`: the bedrooms only, at night, against the night target."""
     zone = local_timezone()
     now = datetime.now(UTC)
     stored = comfort_settings()
-    chosen = comfort.parse(stored)
+    every = comfort.parse(stored)
+    bedrooms = [r for r in every if r.bedroom]
+    chosen = bedrooms if hours == "night" else every
     result: dict = {
         "settings": stored,
         "hours": hours,
-        "rooms": [{"key": r.key, "name": r.name, "humidity": bool(r.humidity)} for r in chosen],
+        "rooms": [
+            {"key": r.key, "name": r.name, "humidity": bool(r.humidity), "bedroom": r.bedroom}
+            for r in chosen
+        ],
+        "has_bedrooms": bool(bedrooms),
         "has_data": False,
     }
     if not chosen:
         return result
-    names = comfort.metrics(chosen)
+    names = comfort.metrics(every)
     firsts = [t for name in names if (t := database().first_time(name))]
     if not firsts:
         return result
@@ -1624,18 +1636,46 @@ def room_comfort(hours: Annotated[str, Query(pattern="^(comfort|all)$")] = "comf
     humidities = {
         r.key: hourly.get(comfort.HUMIDITY + r.humidity, []) for r in chosen if r.humidity
     }
-    window = None if hours == "all" else (stored["hours_from"], stored["hours_to"])
-    found = comfort.analyse(
-        chosen,
-        temperatures,
-        humidities,
-        hourly.get(weather.METRIC, []),
-        zone,
-        stored["target_c"],
-        stored["band_c"],
-        window,
-        now.astimezone(zone).date(),
-    )
+    day_hours = (stored["hours_from"], stored["hours_to"])
+    night_hours = (stored["hours_to"], stored["hours_from"])
+    outdoor = hourly.get(weather.METRIC, [])
+    today = now.astimezone(zone).date()
+
+    def at_night(rooms: list) -> dict:
+        return comfort.analyse(
+            rooms,
+            temperatures,
+            humidities,
+            outdoor,
+            zone,
+            stored["night_target_c"],
+            stored["night_band_c"],
+            night_hours,
+            today,
+            night=True,
+            now_local=now.astimezone(zone),
+        )
+
+    if hours == "night":
+        found = at_night(chosen)
+    else:
+        found = comfort.analyse(
+            chosen,
+            temperatures,
+            humidities,
+            outdoor,
+            zone,
+            stored["target_c"],
+            stored["band_c"],
+            None if hours == "all" else day_hours,
+            today,
+        )
+        # The bedrooms' last 7 nights, for a tile beside the day's figures.
+        if bedrooms:
+            nights = at_night(bedrooms)
+            result["night_summary"] = nights.get("summary")
+            result["last_night"] = nights["days"][-1] if nights.get("days") else None
+    result["night_hours"] = night_hours
     latest = database().latest(names, now - timedelta(hours=2))
     result.update(found)
     result["now"] = {

@@ -425,6 +425,16 @@ and yearly figures fill in straight away.
 
 The figures are worked out from hourly averages. **Comfort hours** leaves out the night,
 when the heating is usually set back on purpose; choose **All day** to count every hour.
+
+**Bedrooms at night.** Tick **Bedroom** beside each bedroom under **Rooms and target**, and
+set the **night target** (19 °C by default: advice for sleeping is usually 16 to 19 °C) and
+its band. Night is the hours outside the comfort hours (22:00 to 07:00 by default). Choose
+**Bedrooms at night** above the section to see the bedrooms only, at night, against the
+night target: the same tiles, room table, chart and averages, with each night belonging to
+the day it starts on and counted once it is over. A bedroom that warms up overnight (the
+heat pump pre-heating the house on a cheap night rate, say) shows as **Too warm**. In the
+comfort hours view, a **Bedrooms too warm at night** tile gives the last 7 nights at a
+glance.
 The spread is how far apart the warmest and coldest rooms were in the same hour, averaged:
 the balance between rooms, whatever the overall level. A spread above about 2 °C says the
 rooms are far apart: balancing the radiators, or smart radiator valves, would even them
