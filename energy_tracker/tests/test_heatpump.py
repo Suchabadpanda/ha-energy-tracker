@@ -173,7 +173,14 @@ def test_eta_comes_from_the_design_not_the_reheats_and_scop_estimated_by_month_a
         day = date(2026, 9, 1) + timedelta(days=n)
         used[day], temperature[day] = 3.0, 14.0
     found = heatpump.estimate(
-        used, temperature, measured, runs, {}, 2.5, date(2026, 10, 13), 250,
+        used,
+        temperature,
+        measured,
+        runs,
+        {},
+        2.5,
+        date(2026, 10, 13),
+        250,
         design={"heating_share_pct": 50},
     )
     october = found["this_month"]
@@ -477,3 +484,75 @@ def test_used_in_counts_overlapping_spans_once():
     minutes = lambda a, b: (b - a).total_seconds() / 60  # noqa: E731
     assert heatpump.used_in(spans, minutes, start, end) == pytest.approx(20)
     assert heatpump.used_in([], minutes, start, end) is None
+
+
+# --- The tank in layers about its sensor -----------------------------------------------------
+
+
+def test_without_the_sensor_height_the_whole_tank_rises_as_before():
+    assert heatpump.reheat_heat(250, 21.5, 50.5) == pytest.approx(250 * 0.001163 * 29)
+
+
+def test_after_showers_the_hot_top_is_not_counted_again():
+    # 10 Nov 2026: the sensor, 40% up, read 21.5 °C, the top still at the last peak of 50.5,
+    # mains about 12.3 °C. The whole tank rising 29 °C would be 8.4 kWh, COP 5.4 on 1.55 kWh.
+    heat = heatpump.reheat_heat(250, 21.5, 50.5, 0.4, top=50.5, cold=12.3)
+    assert heat == pytest.approx(6.3, abs=0.1)
+    assert heat / 1.55 == pytest.approx(4.1, abs=0.1)
+
+
+def test_a_cold_sensor_after_a_big_draw_counts_nearly_the_whole_tank():
+    # 9 Nov 2026: the sensor read 13.5 °C, almost the mains: most of the tank was cold.
+    heat = heatpump.reheat_heat(250, 13.5, 50.5, 0.4, top=50.5, cold=12.3)
+    assert heat == pytest.approx(7.5, abs=0.1)
+    assert heat < 250 * 0.001163 * (50.5 - 13.5)
+
+
+def test_a_reheat_after_standing_losses_only_is_near_the_whole_tank_rise():
+    # No water drawn: the sensor has only cooled 50.5 -> 45, so little cold water is assumed.
+    whole = 250 * 0.001163 * 5.5
+    heat = heatpump.reheat_heat(250, 45.0, 50.5, 0.4, top=50.5, cold=12.0)
+    assert 0.8 * whole <= heat <= whole
+
+
+def test_the_top_is_never_taken_hotter_than_the_reheat_ends():
+    # A legionella peak of 60 °C the day before does not make the top hotter than now.
+    assert heatpump.reheat_heat(250, 21.5, 50.5, 0.4, top=60.0, cold=12.3) == pytest.approx(
+        heatpump.reheat_heat(250, 21.5, 50.5, 0.4, top=50.5, cold=12.3)
+    )
+
+
+def test_mains_water_follows_the_seasons():
+    assert heatpump.mains_c(date(2026, 2, 15)) < 9.5
+    assert heatpump.mains_c(date(2026, 8, 8)) == pytest.approx(17.0, abs=0.1)
+    assert heatpump.mains_c(date(2026, 11, 10)) == pytest.approx(12.3, abs=0.3)
+
+
+def test_a_reheat_is_capped_at_the_heat_pumps_output_and_uses_the_sensor_height():
+    used, tank, modes, flow, outdoor = a_day()
+    counter = Counter(used, timedelta(minutes=75))
+    hot_water, temps = heatpump.Steps(modes), hotwater.Tank(outdoor)
+
+    def found(cylinder):
+        return heatpump.reheats(
+            hot_water,
+            heatpump.Steps(tank),
+            heatpump.Steps(flow),
+            temps,
+            counter.between,
+            200,
+            DAY,
+            DAY + timedelta(days=1),
+            LONDON,
+            cylinder=cylinder,
+        )[0]
+
+    plain = found(None)
+    assert not plain["capped"]
+    layered = found({"sensor_height_pct": 40, "cold_water_c": 10})
+    assert layered["heat_kwh"] <= plain["heat_kwh"]
+    minutes = plain["minutes"]
+    tight = found({"max_output_kw": 1.0})
+    assert tight["capped"]
+    assert tight["heat_kwh"] == pytest.approx(minutes / 60, abs=0.02)
+    assert tight["rise_c"] == plain["rise_c"]  # the sensor's own rise is kept as it was

@@ -133,7 +133,7 @@ async def lifespan(_: FastAPI):
         await asyncio.to_thread(thread.join, 10)
 
 
-app = FastAPI(title="Energy Tracker", version="0.50.0", lifespan=lifespan)
+app = FastAPI(title="Energy Tracker", version="0.51.0", lifespan=lifespan)
 # The page and its chart data are mostly text: sent compressed, they are a quarter the size.
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
@@ -518,9 +518,11 @@ def split_by_modes(
         [devices.CIRCUIT, devices.EV, devices.HEAT_PUMP], start - timedelta(hours=1), 2, end
     )
     # The tank by the minute: for the reheats, and to spot catch-ups after frozen readings
-    detail = database().series([hotwater.TANK], start - timedelta(hours=9), 60)
+    # From further back than the catch-ups need: the last reheat's peak is the top of the tank.
+    detail = database().series([hotwater.TANK], start - heatpump.TOP_LOOKBACK, 60)
+    recent = [p for p in detail[hotwater.TANK] if p[0] >= start - timedelta(hours=9)]
     measured = hotwater.by_mode(
-        fine, start, end, zone, *splitting, HALF_HOURLY_GAP, modes, outdoor, detail[hotwater.TANK]
+        fine, start, end, zone, *splitting, HALF_HOURLY_GAP, modes, outdoor, recent
     )
     used_by = hotwater.electricity(fine, *splitting, HALF_HOURLY_GAP)
     runs: list = []
@@ -535,6 +537,7 @@ def split_by_modes(
             start,
             end,
             zone,
+            cylinder=heating_design(),
         )
     return measured, runs
 
@@ -1917,6 +1920,12 @@ class HeatingIn(BaseModel):
     heating_share_pct: float | None = Field(default=None, ge=20, le=80)
     # The hot water cylinder's size, for the heat put into it at each reheat.
     cylinder_litres: float | None = Field(default=None, ge=30, le=1000)
+    # Where its temperature sensor sits, as a share of its height from the bottom: the reheats'
+    # heat allows for the hot water above it. And the heat pump's most output, which caps it.
+    sensor_height_pct: float | None = Field(default=None, ge=5, le=95)
+    max_output_kw: float | None = Field(default=None, ge=1, le=30)
+    # The mains water temperature, if known; otherwise a typical one for the time of year.
+    cold_water_c: float | None = Field(default=None, ge=2, le=25)
 
 
 def heating_design() -> dict | None:

@@ -8,7 +8,11 @@ tank temperature.
 Without a heat meter, the heat it gave out has to be estimated:
 
 * Hot water: the cylinder's temperature rise in each reheat, times its size. Water drawn
-  off during a reheat and the tank's own losses hide some heat, so this errs low.
+  off during a reheat and the tank's own losses hide some heat. A cylinder's sensor sits
+  part-way up, though: after showers it reads the cold water that has risen past it while
+  the top is still hot, and that would count the whole tank as rising from the sensor's
+  reading. Given the sensor's height, the tank is taken in two parts (see reheat_heat), and
+  given the heat pump's output, no reheat can be credited with more than it could make.
 * Heating: modelled. A heat pump's efficiency follows the "lift" between the outdoor air
   and the water it sends round the radiators, as a share (eta) of the ideal Carnot figure.
   Eta comes from the design SCOP and design flow temperature (worked back over the SCOP
@@ -22,6 +26,7 @@ SCOP is all the heat divided by all the electricity, never an average of per-day
 from __future__ import annotations
 
 import logging
+import math
 from bisect import bisect_left, bisect_right
 from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
@@ -52,13 +57,37 @@ MIN_RUN_KWH = 0.2  # reheats using less tell little about efficiency
 MIN_RUN_RISE_C = 2.0
 MIN_RUNS = 3  # reheats needed to measure the hot water COP
 RECENT_RUNS = 10  # the hot water COP is measured on the latest reheats only
+TOP_LOOKBACK = timedelta(hours=30)  # the last reheat's peak, for the top of the tank
 DEFAULT_ETA = 0.45  # typical for a modern inverter heat pump
 ETA_RANGE = (0.3, 0.75)  # a design SCOP or entered share outside this is not believable
 # EN 14825 average climate: hours a year at each outdoor temperature (°C), the basis of SCOP.
 SCOP_CLIMATE_HOURS = {
-    -10: 1, -9: 25, -8: 23, -7: 24, -6: 27, -5: 68, -4: 91, -3: 89, -2: 165, -1: 173, 0: 240,
-    1: 280, 2: 320, 3: 357, 4: 356, 5: 303, 6: 330, 7: 326, 8: 348, 9: 335, 10: 315, 11: 215,
-    12: 169, 13: 151, 14: 105, 15: 74,
+    -10: 1,
+    -9: 25,
+    -8: 23,
+    -7: 24,
+    -6: 27,
+    -5: 68,
+    -4: 91,
+    -3: 89,
+    -2: 165,
+    -1: 173,
+    0: 240,
+    1: 280,
+    2: 320,
+    3: 357,
+    4: 356,
+    5: 303,
+    6: 330,
+    7: 326,
+    8: 348,
+    9: 335,
+    10: 315,
+    11: 215,
+    12: 169,
+    13: 151,
+    14: 105,
+    15: 74,
 }
 SCOP_NO_HEAT_C = 16.0  # the standard's heating load falls to nothing here
 DEFAULT_HOT_WATER_COP = 2.5
@@ -438,6 +467,47 @@ def split(
     }
 
 
+def mains_c(day: date) -> float:
+    """A typical UK mains water temperature for the day of the year: about 8 °C in February,
+    17 °C in August."""
+    return 12.5 + 4.5 * math.cos(2 * math.pi * (day.timetuple().tm_yday - 220) / 365)
+
+
+def reheat_heat(
+    litres: float,
+    before: float,
+    peak: float,
+    sensor_height: float | None = None,
+    top: float | None = None,
+    cold: float | None = None,
+) -> float:
+    """Heat put into the cylinder by a reheat, kWh.
+
+    Without the sensor's height, the whole tank is taken to rise from the sensor's reading to
+    its peak. With it (a share of the tank's height, from the bottom), the tank is taken in two
+    parts, as it sits in layers: cold mains water comes in at the bottom and pushes the hot
+    water up. How far the sensor has fallen from the top's temperature towards the mains
+    temperature says how much cold water has come in (none after standing losses only, the
+    most when the sensor reads the mains):
+
+    * below the sensor, the water runs from the sensor's reading down to the mains
+      temperature at the bottom, in proportion;
+    * above it, from the sensor's reading up to the top, which is still at the last reheat's
+      peak (the showers did not run cold);
+    * at the end the sensor reads the peak and the whole tank is at least that.
+    """
+    if sensor_height is None or not 0 < sensor_height < 1:
+        return litres * WATER_KWH_PER_LITRE_K * max(0.0, peak - before)
+    top = peak if top is None else max(before, min(top, peak))
+    cold = before if cold is None else min(cold, before)
+    drawn = (top - before) / (top - cold) if top > cold else 0.0
+    bottom = before - drawn * (before - cold)
+    lower = peak - (bottom + before) / 2
+    upper = peak - (before + top) / 2
+    rise = sensor_height * lower + (1 - sensor_height) * upper
+    return litres * WATER_KWH_PER_LITRE_K * max(0.0, rise)
+
+
 def reheats(
     hot_water: Steps,
     tank: Steps,
@@ -448,8 +518,17 @@ def reheats(
     start: datetime,
     end: datetime,
     timezone: ZoneInfo,
+    cylinder: dict | None = None,
 ) -> list[dict]:
-    """Each hot water reheat: electricity used, heat put into the cylinder, conditions."""
+    """Each hot water reheat: electricity used, heat put into the cylinder, conditions.
+
+    `cylinder` may give the sensor's height in the tank (sensor_height_pct), the heat pump's
+    most output (max_output_kw) and the mains water temperature (cold_water_c); see
+    reheat_heat."""
+    cylinder = cylinder or {}
+    height = cylinder.get("sensor_height_pct")
+    height = height / 100 if height else None
+    max_kw = cylinder.get("max_output_kw")
     found = []
     for begun, finished in hot_water.runs(start, end):
         kwh = max(0.0, used(begun, finished) or 0.0)
@@ -467,16 +546,27 @@ def reheats(
         if before is None or peak is None:
             continue
         rise = max(0.0, peak - before)
+        day = begun.astimezone(timezone).date()
+        # The top of the tank: as hot as the last reheat left it.
+        top = tank.highest(begun - TOP_LOOKBACK, begun - timedelta(minutes=10))
+        cold = cylinder.get("cold_water_c") or mains_c(day)
+        heat = reheat_heat(litres, before, peak, height, top, cold)
+        capped = False
+        if max_kw:
+            most = max_kw * (finished - begun).total_seconds() / 3600
+            if heat > most:
+                heat, capped = most, True
         middle = begun + (finished - begun) / 2
         out = outdoor.at(middle) if outdoor else None
         temperature = flow.mean(begun, finished, 0.3) if flow else None
         found.append(
             {
-                "day": begun.astimezone(timezone).date(),
+                "day": day,
                 "start": begun,
                 "minutes": round((finished - begun).total_seconds() / 60),
                 "kwh": kwh,
-                "heat_kwh": litres * WATER_KWH_PER_LITRE_K * rise,
+                "heat_kwh": heat,
+                "capped": capped,
                 "from_c": before,
                 "to_c": peak,
                 "rise_c": rise,

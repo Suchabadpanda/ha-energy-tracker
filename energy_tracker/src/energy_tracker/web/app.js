@@ -3329,7 +3329,10 @@ function renderEfficiency(eff, tile, design, hg) {
     "An estimate: there is no heat meter. On measured days the heat pump's own modes split its electricity "
       + "exactly into hot water, heating and standby; earlier days are split from the total.",
     eff.litres
-      ? "Hot water heat is the cylinder's temperature rise × " + eff.litres + " litres, so it errs low (water drawn off during a reheat goes uncounted)."
+      ? (design && design.sensor_height_pct
+          ? "Hot water heat is the rise of " + eff.litres + " litres, taken in two layers about the tank sensor at " + design.sensor_height_pct + "% of its height (the top stays hot after showers while the sensor reads cold)"
+          : "Hot water heat is the cylinder's temperature rise × " + eff.litres + " litres, as if the whole tank were at the sensor's reading (it overstates the heat after showers: enter the tank sensor's height below)")
+        + (design && design.max_output_kw ? ", and no more than " + design.max_output_kw + " kW for as long as a reheat runs." : ".")
       : "Enter the cylinder's size below to measure the hot water heat; until then typical figures are used.",
     "Heating heat is modelled from the flow and outdoor temperatures, at " + Math.round(eff.eta * 100) + "% of the ideal efficiency"
       + (eff.eta_source === "design" ? " (from the design SCOP at its flow temperature, over the SCOP standard's average climate)."
@@ -3668,7 +3671,7 @@ function fillHeatingForm(design) {
   if (heatingFormFilled) return;
   heatingFormFilled = true;
   if (!design) return;
-  for (const name of ["cylinder_litres", "heat_loss_kw", "outdoor_c", "indoor_c", "degree_days", "design_scop", "design_flow_c", "heating_share_pct", "base_c"]) {
+  for (const name of ["cylinder_litres", "heat_loss_kw", "outdoor_c", "indoor_c", "degree_days", "design_scop", "design_flow_c", "heating_share_pct", "sensor_height_pct", "max_output_kw", "cold_water_c", "base_c"]) {
     if (design[name] != null) heatingForm.elements[name].value = design[name];
   }
 }
@@ -3689,7 +3692,9 @@ heatingForm?.addEventListener("submit", async event => {
                              heat_loss_kw: number("heat_loss_kw"), outdoor_c: number("outdoor_c") ?? -3,
                              indoor_c: number("indoor_c") ?? 21, base_c: number("base_c") ?? 15.5,
                              degree_days: number("degree_days"), design_scop: number("design_scop"),
-                             design_flow_c: number("design_flow_c"), heating_share_pct: number("heating_share_pct") }),
+                             design_flow_c: number("design_flow_c"), heating_share_pct: number("heating_share_pct"),
+                             sensor_height_pct: number("sensor_height_pct"), max_output_kw: number("max_output_kw"),
+                             cold_water_c: number("cold_water_c") }),
     });
     heatingMessage("Saved.");
     renderHeating(data);

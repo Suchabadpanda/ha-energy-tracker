@@ -325,9 +325,22 @@ under **Your heat pump's details**. Then:
   on; the rest to heating if heating was switched on, otherwise to standby. A heat pump does
   one job at a time, so this split is exact, give or take the moment it switches.
 - **Hot water heat** is measured at each reheat: the cylinder's temperature rise × its
-  litres × 0.001163 kWh. Water drawn off during a reheat and the tank's own losses go
-  uncounted, so it errs low. The weekly legionella cycle (above 57 °C, partly on the
-  immersion heater) is counted in, as it is a real cost.
+  litres × 0.001163 kWh. A cylinder's sensor sits part-way up, though, and the tank sits in
+  layers: after showers, cold water has risen past the sensor while the top is still hot, so
+  taking the whole tank as rising from the sensor's reading overstates the heat (a COP of
+  5.3 where 3.5 to 4 is real). Enter under **Your heat pump's details**:
+  - **Tank sensor height**, as a share of the cylinder's height from the bottom (a sensor
+    pocket level with the top of the coil is about 40%). The tank is then taken in two parts:
+    below the sensor, running down to the mains temperature at the bottom; above it, running
+    up to the last reheat's peak at the top. How far the sensor has fallen towards the mains
+    temperature says how much cold water came in, so a reheat after standing losses alone
+    still counts close to the whole tank's rise.
+  - **Heat pump most output** (kW): no reheat is credited with more heat than this for as
+    long as it ran. A 62-minute reheat on a 5 kW heat pump cannot have made 8 kWh.
+  - **Mains water temperature**, if known; otherwise a typical UK figure for the time of
+    year (about 8 °C in February, 17 °C in August).
+  Without them the whole tank counts, as before. The weekly legionella cycle (above 57 °C,
+  partly on the immersion heater) is counted in, as it is a real cost.
 - **Heating heat** has to be modelled, without a heat meter: a heat pump's efficiency
   follows the lift from the outdoor air to the flow water, as a share of the ideal (Carnot)
   efficiency. Enter the **design SCOP** and the **design flow temperature** it is for (both

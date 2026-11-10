@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.51.0
+
+- **The hot water heat allows for where the tank sensor sits.** The sensor reads part-way up
+  the cylinder, and after showers it reads the cold water that has risen past it while the
+  top is still hot. Counting the whole tank as rising from that reading overstated the heat:
+  on 10 Nov 2026 it gave 8.4 kWh and a COP of 5.4 for a 62-minute reheat on 1.55 kWh.
+  - **Tank sensor height** (% from the bottom): the tank is taken in two layers about the
+    sensor, the bottom running down to the mains temperature, the top still at the last
+    reheat's peak. The 10 Nov reheat comes to 6.3 kWh, COP 4.1; the booster-assisted one on
+    9 Nov to 7.5 kWh on about 3.3 kWh, COP 2.3.
+  - **Heat pump most output** (kW): no reheat is credited with more than this for as long as
+    it ran. At 5 kW the 10 Nov reheat comes to 5.2 kWh, COP 3.3.
+  - **Mains water temperature**: optional; a typical one for the time of year otherwise.
+  - Without these, the whole tank counts as before.
+
+### How to check this release
+
+1. Devices → Heat pump and the weather → the survey form: there are **Tank sensor height**,
+   **Heat pump most output** and **Mains water temperature** fields. Enter 40 and 5 and save.
+2. Estimated SCOP: the note says the hot water heat is "taken in two layers about the tank
+   sensor at 40% of its height" and capped at 5 kW.
+3. The hot water COP falls from about 5.3 to about 3.3 to 4 for booster-free reheats, and
+   the **Heat pump COP today** tile follows it.
+
 ## 0.50.0
 
 - **The heating estimate comes from your design SCOP, not the hot water reheats.** The
