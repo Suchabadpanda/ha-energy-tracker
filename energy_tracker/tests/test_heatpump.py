@@ -171,6 +171,44 @@ def test_eta_is_calibrated_from_reheats_and_scop_estimated_by_month_and_year():
     assert year["days"] == 34 and 1 < year["scop"] < 5
 
 
+def test_a_reheat_above_cop_5_is_used_not_swapped_for_the_pooled_figure():
+    # Booster-heater reheats at COP ~3.2, then one without the booster at 5.3 (10 Nov 2026:
+    # 21.5 -> 50.5 °C in a 250 litre cylinder from 1.58 kWh). That day's own figure stands.
+    def run(day: int, kwh: float, cop: float) -> dict:
+        return {
+            "day": date(2026, 11, day),
+            "kwh": kwh,
+            "heat_kwh": kwh * cop,
+            "rise_c": 25.0,
+            "legionella": False,
+            "ideal": heatpump.carnot(45, 8),
+        }
+
+    runs = [run(day, 2.4, 3.2) for day in (6, 7, 8, 9)] + [run(10, 1.58, 5.3)]
+    measured = {
+        date(2026, 11, day): {
+            "hot_water_kwh": r["kwh"],
+            "heating_kwh": 0.0,
+            "other_kwh": 0.0,
+            "ideal": 0.0,
+            "ideal_kwh": 0.0,
+            "pairs": [],
+        }
+        for day, r in zip((6, 7, 8, 9, 10), runs, strict=True)
+    }
+    found = heatpump.estimate({}, {}, measured, runs, {}, None, date(2026, 11, 10), 250)
+    assert found["hot_water_cop_source"] == "measured"
+    today = next(d for d in found["daily"] if d["day"] == date(2026, 11, 10))
+    assert today["hot_water_heat_kwh"] / today["hot_water_kwh"] == pytest.approx(5.3, abs=0.01)
+    # Above 7 is still not believable: the pooled figure is used instead.
+    runs[-1] = run(10, 1.58, 8.0)
+    found = heatpump.estimate({}, {}, measured, runs, {}, None, date(2026, 11, 10), 250)
+    today = next(d for d in found["daily"] if d["day"] == date(2026, 11, 10))
+    assert today["hot_water_heat_kwh"] / today["hot_water_kwh"] == pytest.approx(
+        found["hot_water_cop"], abs=0.01
+    )
+
+
 def test_heating_endpoint_gives_the_estimated_scop_from_the_modes():
     now = datetime.now(UTC).replace(second=0, microsecond=0)
     start = (now - timedelta(days=6)).replace(minute=0)
