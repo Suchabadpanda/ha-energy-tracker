@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.49.1
+
+- **A hot water COP above 5 is no longer thrown away.** A reheat that came out above 5.0
+  was taken as a bad reading, and the day showed the pooled hot water COP of all the
+  reheats instead. With the booster heater kept out of a reheat (a longer booster delay),
+  a COP of 5 to 6 is real: on 10 Nov 2026 a 250 litre cylinder went from 21.5 to 50.5 °C
+  on about 1.6 kWh, a COP of about 5.3, and the tile showed the pooled 3.22. The limit is
+  now 7, the same as for heating.
+
+### How to check this release
+
+1. Now → Cost today: on a day with a reheat that did not use the booster, the **Heat pump
+   COP today** tile's hot water figure matches that reheat's own COP (the cylinder's rise
+   × litres × 0.001163 ÷ the kWh), not the pooled figure in the Estimated SCOP box.
+2. Devices → Heat pump and the weather → Estimated SCOP: the hot water COP rises as
+   booster-free reheats are added.
+
 ## 0.49.0
 
 - **Bedrooms at night** in Room comfort and balance. Tick **Bedroom** beside each bedroom
