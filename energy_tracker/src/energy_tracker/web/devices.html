@@ -135,6 +135,8 @@
         <label>Indoor temperature (°C) <input type="number" name="indoor_c" min="12" max="26" step="0.1" placeholder="21"></label>
         <label>Heating degree days a year <small>(optional)</small> <input type="number" name="degree_days" min="100" max="6000" step="1" placeholder="2224"></label>
         <label>Design SCOP <small>(optional)</small> <input type="number" name="design_scop" min="1" max="8" step="0.01" placeholder="3.78"></label>
+        <label>Design flow temperature (°C) <small>(for the design SCOP)</small> <input type="number" name="design_flow_c" min="25" max="75" step="0.5" placeholder="50"></label>
+        <label>Heating efficiency share (%) <small>(optional, overrides the design)</small> <input type="number" name="heating_share_pct" min="20" max="80" step="1" placeholder="56"></label>
         <label>Heating needed below (°C) <input type="number" name="base_c" min="10" max="20" step="0.1" value="15.5"></label>
         <div class="actions">
           <button class="primary" type="submit">Save</button>

@@ -330,9 +330,17 @@ under **Your heat pump's details**. Then:
   immersion heater) is counted in, as it is a real cost.
 - **Heating heat** has to be modelled, without a heat meter: a heat pump's efficiency
   follows the lift from the outdoor air to the flow water, as a share of the ideal (Carnot)
-  efficiency. That share is calibrated on the hot water reheats, where both the heat and
-  the electricity are known, so it reflects your own heat pump. A typical 45% is used until
-  there are three reheats to go on.
+  efficiency. Enter the **design SCOP** and the **design flow temperature** it is for (both
+  on an MCS certificate) and the share is worked back from them, the way SCOP is rated: over
+  the SCOP standard's average climate, with the flow following a straight weather
+  compensation curve from the design flow at the design outdoor temperature. Or enter the
+  **heating efficiency share** yourself (from a heat meter, say), which takes precedence.
+  Without either, a typical 45% is used. The hot water reheats are not used for this: a
+  cylinder sensor low in the tank overstates their heat, and the flow reading often freezes
+  during a reheat.
+- The **hot water COP** used for days without a measured reheat is the pooled figure of the
+  latest 10 reheats, so a change to the heat pump (a longer booster heater delay, say) shows
+  within days.
 - Days before the modes were collected (Home Assistant keeps them for about ten days, so
   that is how far back they are brought in) are split from the heat pump's total use, and
   take their flow temperature from your weather compensation curve, as fitted from the

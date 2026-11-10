@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.50.0
+
+- **The heating estimate comes from your design SCOP, not the hot water reheats.** The
+  heating model's share of the ideal efficiency was learned from the reheats, but both
+  sides of that sum are unreliable: a cylinder sensor low in the tank overstates the heat,
+  and the flow reading often freezes during a reheat (29 °C all through one on 10 Nov 2026,
+  as the tank went from 21.5 to 50.5 °C). So it usually fell back to a typical 45%.
+  - Enter the **design SCOP** and the new **Design flow temperature** it is for (both on an
+    MCS certificate). The share is worked back from them the way SCOP is rated, over the
+    standard's average climate: 3.78 at 50 °C, with a -3.4 °C design outdoor temperature,
+    gives 56%, or a heating COP of about 4.8 at a 35 °C flow and 7 °C outside.
+  - Or enter a **Heating efficiency share** yourself (from a heat meter, say), which takes
+    precedence. Without either, the typical 45% stays.
+- **The hot water COP comes from the latest 10 reheats only**, so a change to the heat pump
+  shows within days. Before, every reheat since the modes were first collected counted, and
+  weeks of booster-heater reheats outweighed the newer ones.
+
+### How to check this release
+
+1. Devices → Heat pump and the weather → the survey form: there are **Design flow
+   temperature** and **Heating efficiency share** fields. Enter the design flow (50, say)
+   beside the design SCOP and save.
+2. Estimated SCOP: the note under the table says the heating is modelled at about 56% of the
+   ideal efficiency "from the design SCOP at its flow temperature". Heating SCOP rises from
+   about 4.0 to about 4.5 to 5 on mild days.
+3. Hot water COP: "Measured from 10 reheats", and it rises as reheats without the booster
+   heater replace the old ones.
+
 ## 0.49.1
 
 - **A hot water COP above 5 is no longer thrown away.** A reheat that came out above 5.0
