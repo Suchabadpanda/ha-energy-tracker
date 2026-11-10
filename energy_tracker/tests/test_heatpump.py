@@ -120,13 +120,13 @@ def test_split_by_mode_and_the_reheat_it_finds():
     assert not run["legionella"]
 
 
-def test_eta_is_calibrated_from_reheats_and_scop_estimated_by_month_and_year():
+def test_eta_comes_from_the_design_not_the_reheats_and_scop_estimated_by_month_and_year():
     ideal = heatpump.carnot(55, 5)
     runs = [
         {
             "day": date(2026, 10, 10 + n),
             "kwh": 1.5,
-            "heat_kwh": 1.5 * 0.5 * ideal,  # eta of 0.5
+            "heat_kwh": 1.5 * 0.5 * ideal,  # hot water COP of 0.5 x ideal
             "rise_c": 20.0,
             "legionella": False,
             "ideal": ideal,
@@ -134,14 +134,27 @@ def test_eta_is_calibrated_from_reheats_and_scop_estimated_by_month_and_year():
         for n in range(4)
     ]
     tuned = heatpump.calibrate(runs)
-    assert tuned["eta"] == pytest.approx(0.5) and tuned["eta_source"] == "measured"
+    # The reheats give the hot water COP, but not the heating model's share.
+    assert tuned["eta"] == heatpump.DEFAULT_ETA and tuned["eta_source"] == "assumed"
     assert tuned["hot_water_cop"] == pytest.approx(0.5 * ideal, abs=0.01)
-    # Too few reheats: typical figures.
-    assert heatpump.calibrate(runs[:2])["eta_source"] == "assumed"
-    # A cylinder size far too big, say: the typical figures stand, and say why.
+    assert tuned["hot_water_cop_source"] == "measured"
+    # Too few reheats: the typical hot water COP.
+    assert heatpump.calibrate(runs[:2])["hot_water_cop_source"] == "assumed"
+    # A cylinder size far too big, say: the typical figure stands, and says why.
     wrong = heatpump.calibrate([{**r, "heat_kwh": r["heat_kwh"] * 4} for r in runs])
-    assert wrong["eta_source"] == "out of range" and wrong["eta"] == heatpump.DEFAULT_ETA
     assert wrong["hot_water_cop_source"] == "out of range"
+    # From the design SCOP at its flow temperature (an MCS certificate: 3.78 at 50 °C, -3.4 °C).
+    design = {"design_scop": 3.78, "design_flow_c": 50, "outdoor_c": -3.4, "indoor_c": 20}
+    tuned = heatpump.calibrate(runs, design)
+    assert tuned["eta_source"] == "design" and tuned["eta"] == pytest.approx(0.558, abs=0.005)
+    # Without the flow temperature the SCOP can't be worked back.
+    assert heatpump.calibrate(runs, {"design_scop": 3.78})["eta_source"] == "assumed"
+    # A share entered by hand takes precedence.
+    tuned = heatpump.calibrate(runs, {**design, "heating_share_pct": 60})
+    assert tuned["eta"] == pytest.approx(0.6) and tuned["eta_source"] == "set"
+    # A mistyped design SCOP: the typical share stands, and says why.
+    tuned = heatpump.calibrate(runs, {**design, "design_scop": 7.9})
+    assert tuned["eta_source"] == "out of range" and tuned["eta"] == heatpump.DEFAULT_ETA
 
     measured, used, temperature = {}, {}, {}
     for n in range(4):
@@ -159,7 +172,10 @@ def test_eta_is_calibrated_from_reheats_and_scop_estimated_by_month_and_year():
     for n in range(30):  # September: earlier days, only the total known
         day = date(2026, 9, 1) + timedelta(days=n)
         used[day], temperature[day] = 3.0, 14.0
-    found = heatpump.estimate(used, temperature, measured, runs, {}, 2.5, date(2026, 10, 13), 250)
+    found = heatpump.estimate(
+        used, temperature, measured, runs, {}, 2.5, date(2026, 10, 13), 250,
+        design={"heating_share_pct": 50},
+    )
     october = found["this_month"]
     assert october["measured_days"] == 4 and october["kwh"] == pytest.approx(48.0)
     assert october["heating_scop"] == pytest.approx(0.5 * heatpump.carnot(40, 5), abs=0.01)
@@ -209,6 +225,27 @@ def test_a_reheat_above_cop_5_is_used_not_swapped_for_the_pooled_figure():
     )
 
 
+def test_the_hot_water_cop_comes_from_the_latest_reheats_only():
+    # Months of booster-heater reheats at COP 2.7, then ten without it at 5.0.
+    def run(when: datetime, cop: float) -> dict:
+        return {
+            "day": when.date(),
+            "start": when,
+            "kwh": 2.0,
+            "heat_kwh": 2.0 * cop,
+            "rise_c": 25.0,
+            "legionella": False,
+            "ideal": 7.0,
+        }
+
+    first = datetime(2026, 10, 1, 2, tzinfo=UTC)
+    old = [run(first + timedelta(days=n), 2.7) for n in range(30)]
+    new = [run(first + timedelta(days=30 + n), 5.0) for n in range(10)]
+    tuned = heatpump.calibrate(new[5:] + old + new[:5])  # in any order
+    assert tuned["reheats"] == heatpump.RECENT_RUNS
+    assert tuned["hot_water_cop"] == pytest.approx(5.0)
+
+
 def test_heating_endpoint_gives_the_estimated_scop_from_the_modes():
     now = datetime.now(UTC).replace(second=0, microsecond=0)
     start = (now - timedelta(days=6)).replace(minute=0)
@@ -240,7 +277,8 @@ def test_heating_endpoint_gives_the_estimated_scop_from_the_modes():
     data = client.get("/api/heating").json()
     found = data["efficiency"]
     assert found["has_data"] and found["this_month"] or found["months"]
-    assert found["reheats"] >= 3 and found["eta_source"] == "measured"
+    assert found["reheats"] >= 3 and found["hot_water_cop_source"] == "measured"
+    assert found["eta_source"] == "assumed"  # no design SCOP entered
     latest = found["months"][-1]
     assert latest["measured_days"] >= 4
     assert latest["hot_water_kwh"] == pytest.approx(1.2 * latest["measured_days"], rel=0.15)

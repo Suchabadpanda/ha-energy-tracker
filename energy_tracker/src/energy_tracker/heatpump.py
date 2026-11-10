@@ -11,8 +11,10 @@ Without a heat meter, the heat it gave out has to be estimated:
   off during a reheat and the tank's own losses hide some heat, so this errs low.
 * Heating: modelled. A heat pump's efficiency follows the "lift" between the outdoor air
   and the water it sends round the radiators, as a share (eta) of the ideal Carnot figure.
-  Eta is calibrated from the hot water reheats, where both heat and electricity are known,
-  so the model is grounded in this heat pump's own performance.
+  Eta comes from the design SCOP and design flow temperature (worked back over the SCOP
+  standard's average climate), or a share entered by hand, or a typical figure. Not from
+  the hot water reheats: a cylinder sensor low in the tank overstates their heat, and the
+  flow reading often freezes during a reheat, so both sides of that sum are unreliable.
 
 SCOP is all the heat divided by all the electricity, never an average of per-day figures.
 """
@@ -48,9 +50,17 @@ WATER_KWH_PER_LITRE_K = 0.001163  # heat to warm a litre of water by one degree
 LEGIONELLA_C = 57.0  # a reheat above this is the weekly legionella cycle (partly immersion)
 MIN_RUN_KWH = 0.2  # reheats using less tell little about efficiency
 MIN_RUN_RISE_C = 2.0
-MIN_RUNS = 3  # reheats needed to calibrate eta
+MIN_RUNS = 3  # reheats needed to measure the hot water COP
+RECENT_RUNS = 10  # the hot water COP is measured on the latest reheats only
 DEFAULT_ETA = 0.45  # typical for a modern inverter heat pump
-ETA_RANGE = (0.3, 0.65)
+ETA_RANGE = (0.3, 0.75)  # a design SCOP or entered share outside this is not believable
+# EN 14825 average climate: hours a year at each outdoor temperature (°C), the basis of SCOP.
+SCOP_CLIMATE_HOURS = {
+    -10: 1, -9: 25, -8: 23, -7: 24, -6: 27, -5: 68, -4: 91, -3: 89, -2: 165, -1: 173, 0: 240,
+    1: 280, 2: 320, 3: 357, 4: 356, 5: 303, 6: 330, 7: 326, 8: 348, 9: 335, 10: 315, 11: 215,
+    12: 169, 13: 151, 14: 105, 15: 74,
+}
+SCOP_NO_HEAT_C = 16.0  # the standard's heating load falls to nothing here
 DEFAULT_HOT_WATER_COP = 2.5
 HOT_WATER_COP_RANGE = (1.0, 7.0)  # outside this, a reading or setting is wrong (as heating)
 MIN_HEATING_KWH = 5.0  # below this a period's heating SCOP means little
@@ -480,10 +490,28 @@ def reheats(
     return found
 
 
-def calibrate(runs: list[dict]) -> dict:
-    """Eta and the hot water COP from the reheats; typical figures until there are enough."""
+def design_eta(scop: float, flow_c: float, outdoor_c: float, indoor_c: float = 20.0) -> float:
+    """The share of the ideal efficiency that gives this SCOP, the way SCOP is rated: over
+    the standard's average climate, the load falling from full at the design outdoor
+    temperature to nothing at 16 °C, the flow following a straight weather compensation
+    curve from the design flow down to the indoor temperature."""
+    heat = ideal_electricity = 0.0
+    for outdoor, hours in SCOP_CLIMATE_HOURS.items():
+        load = max(0.0, SCOP_NO_HEAT_C - outdoor) * hours
+        share = (indoor_c - outdoor) / (indoor_c - outdoor_c) if indoor_c > outdoor_c else 1.0
+        flow = min(flow_c, max(indoor_c, indoor_c + (flow_c - indoor_c) * share))
+        heat += load
+        ideal_electricity += load / carnot(flow, outdoor)
+    return scop * ideal_electricity / heat
+
+
+def calibrate(runs: list[dict], design: dict | None = None) -> dict:
+    """Eta from the design (or an entered share), and the hot water COP from the latest
+    reheats; typical figures without them."""
     useful = [r for r in runs if r["kwh"] >= MIN_RUN_KWH and r["rise_c"] >= MIN_RUN_RISE_C]
-    normal = [r for r in useful if not r["legionella"]]
+    # The latest only, so a change to the heat pump (a booster heater kept out of the
+    # reheats, say) shows within days rather than being outweighed by months of old ones.
+    useful = sorted(useful, key=lambda r: r.get("start") or r["day"])[-RECENT_RUNS:]
     result = {
         "reheats": len(useful),
         "legionella_reheats": sum(1 for r in useful if r["legionella"]),
@@ -492,17 +520,25 @@ def calibrate(runs: list[dict]) -> dict:
         "hot_water_cop": DEFAULT_HOT_WATER_COP,
         "hot_water_cop_source": "assumed",
     }
-    if len(normal) >= MIN_RUNS:
-        heat = sum(r["heat_kwh"] for r in normal)
-        ideal = sum(r["kwh"] * r["ideal"] for r in normal)
-        if ideal > 0:
-            low, high = ETA_RANGE
-            if low <= heat / ideal <= high:
-                result["eta"] = round(heat / ideal, 3)
-                result["eta_source"] = "measured"
-            else:  # something is off (the cylinder size, say): keep the typical figure
-                result["eta_source"] = "out of range"
-                result["eta_measured"] = round(heat / ideal, 3)
+    design = design or {}
+    low, high = ETA_RANGE
+    if design.get("heating_share_pct"):
+        found, source = design["heating_share_pct"] / 100, "set"
+    elif design.get("design_scop") and design.get("design_flow_c"):
+        found = design_eta(
+            design["design_scop"],
+            design["design_flow_c"],
+            design.get("outdoor_c", -3.0),
+            design.get("indoor_c", 20.0),
+        )
+        source = "design"
+    else:
+        found, source = None, None
+    if found is not None:
+        if low <= found <= high:
+            result["eta"], result["eta_source"] = round(found, 3), source
+        else:  # a figure mistyped, say: keep the typical one, and say why
+            result["eta_source"], result["eta_measured"] = "out of range", round(found, 3)
     if len(useful) >= MIN_RUNS:
         kwh = sum(r["kwh"] for r in useful)
         cop = sum(r["heat_kwh"] for r in useful) / kwh if kwh > 0 else 0.0
@@ -606,6 +642,7 @@ def estimate(
     today: date,
     litres: float | None,
     calibration: dict | None = None,
+    design: dict | None = None,
 ) -> dict:
     """Estimated SCOP by month and by year.
 
@@ -619,7 +656,7 @@ def estimate(
         tuned = {k: v for k, v in calibration.items() if k in CALIBRATION}
         weather_curve = curve_from(calibration["curve"])
     else:
-        tuned = calibrate(runs) if litres else calibrate([])
+        tuned = calibrate(runs if litres else [], design)
         weather_curve = curve([p for row in measured.values() for p in row["pairs"]])
     eta, water_cop = tuned["eta"], tuned["hot_water_cop"]
     by_day_runs: dict[date, list[dict]] = {}

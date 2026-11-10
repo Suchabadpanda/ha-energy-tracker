@@ -3332,9 +3332,10 @@ function renderEfficiency(eff, tile, design, hg) {
       ? "Hot water heat is the cylinder's temperature rise × " + eff.litres + " litres, so it errs low (water drawn off during a reheat goes uncounted)."
       : "Enter the cylinder's size below to measure the hot water heat; until then typical figures are used.",
     "Heating heat is modelled from the flow and outdoor temperatures, at " + Math.round(eff.eta * 100) + "% of the ideal efficiency"
-      + (eff.eta_source === "measured" ? " (calibrated on the hot water reheats)."
-         : eff.eta_source === "out of range" ? " (a typical figure: the reheats gave " + Math.round(eff.eta_measured * 100) + "%, which is not believable)."
-         : " (a typical figure, until there are enough reheats to calibrate it)."),
+      + (eff.eta_source === "design" ? " (from the design SCOP at its flow temperature, over the SCOP standard's average climate)."
+         : eff.eta_source === "set" ? " (the share entered below)."
+         : eff.eta_source === "out of range" ? " (a typical figure: the design or entered figure gives " + Math.round(eff.eta_measured * 100) + "%, which is not believable)."
+         : " (a typical figure: enter the design SCOP and its flow temperature below to use your own)."),
     "Flow temperature curve " + (eff.curve.source === "assumed" ? "(typical)" : "(" + eff.curve.source + ")") + ": "
       + eff.curve.at_minus_3 + " °C at −3 °C outside, " + eff.curve.at_7 + " °C at 7 °C.",
   ];
@@ -3667,7 +3668,7 @@ function fillHeatingForm(design) {
   if (heatingFormFilled) return;
   heatingFormFilled = true;
   if (!design) return;
-  for (const name of ["cylinder_litres", "heat_loss_kw", "outdoor_c", "indoor_c", "degree_days", "design_scop", "base_c"]) {
+  for (const name of ["cylinder_litres", "heat_loss_kw", "outdoor_c", "indoor_c", "degree_days", "design_scop", "design_flow_c", "heating_share_pct", "base_c"]) {
     if (design[name] != null) heatingForm.elements[name].value = design[name];
   }
 }
@@ -3687,7 +3688,8 @@ heatingForm?.addEventListener("submit", async event => {
       body: JSON.stringify({ cylinder_litres: number("cylinder_litres"),
                              heat_loss_kw: number("heat_loss_kw"), outdoor_c: number("outdoor_c") ?? -3,
                              indoor_c: number("indoor_c") ?? 21, base_c: number("base_c") ?? 15.5,
-                             degree_days: number("degree_days"), design_scop: number("design_scop") }),
+                             degree_days: number("degree_days"), design_scop: number("design_scop"),
+                             design_flow_c: number("design_flow_c"), heating_share_pct: number("heating_share_pct") }),
     });
     heatingMessage("Saved.");
     renderHeating(data);

@@ -133,7 +133,7 @@ async def lifespan(_: FastAPI):
         await asyncio.to_thread(thread.join, 10)
 
 
-app = FastAPI(title="Energy Tracker", version="0.49.1", lifespan=lifespan)
+app = FastAPI(title="Energy Tracker", version="0.50.0", lifespan=lifespan)
 # The page and its chart data are mostly text: sent compressed, they are a quarter the size.
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
@@ -1911,6 +1911,10 @@ class HeatingIn(BaseModel):
     # Optional, from the survey: a typical year's degree days and the expected SCOP.
     degree_days: float | None = Field(default=None, ge=100, le=6000)
     design_scop: float | None = Field(default=None, ge=1, le=8)
+    # The flow temperature the design SCOP is for: with it, the SCOP sets the heating model.
+    design_flow_c: float | None = Field(default=None, ge=25, le=75)
+    # Or the heating model's share of the ideal efficiency, entered directly (a heat meter's).
+    heating_share_pct: float | None = Field(default=None, ge=20, le=80)
     # The hot water cylinder's size, for the heat put into it at each reheat.
     cylinder_litres: float | None = Field(default=None, ge=30, le=1000)
 
@@ -1995,6 +1999,7 @@ def heat_pump_and_weather() -> dict:
             result.get("warm_day_kwh"),
             yesterday,
             litres,
+            design=design,
         )
         result["heat_generated"] = heatgen.summary(
             result["efficiency"]["daily"],
