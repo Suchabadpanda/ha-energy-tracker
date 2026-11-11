@@ -418,7 +418,15 @@ class Database:
     def size_bytes(self) -> int:
         """Space the database takes on disk, including its write-ahead log."""
         files = (self.path, self.path.with_name(self.path.name + "-wal"))
-        return sum(f.stat().st_size for f in files if f.exists())
+        total = 0
+        for f in files:
+            # SQLite removes the -wal file at a checkpoint, which can happen between
+            # listing it and reading its size: a file that has gone counts as nothing.
+            try:
+                total += f.stat().st_size
+            except FileNotFoundError:
+                pass
+        return total
 
     # --- tariff periods ---------------------------------------------------------------------
 
