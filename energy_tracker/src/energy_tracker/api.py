@@ -133,7 +133,7 @@ async def lifespan(_: FastAPI):
         await asyncio.to_thread(thread.join, 10)
 
 
-app = FastAPI(title="Energy Tracker", version="0.51.0", lifespan=lifespan)
+app = FastAPI(title="Energy Tracker", version="0.51.1", lifespan=lifespan)
 # The page and its chart data are mostly text: sent compressed, they are a quarter the size.
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
@@ -616,6 +616,9 @@ def mode_readings(start: datetime) -> tuple[dict[str, list], list]:
     if not database().first_time(heatpump.HOT_WATER_MODE):
         return {}, []
     modes = database().series(heatpump.METRICS, since, MODE_BUCKET)
+    # A reheat whose readings froze before it was seen to end: ended where they froze.
+    tank = database().series([hotwater.TANK], since, MODE_BUCKET)[hotwater.TANK]
+    modes = heatpump.thawed(modes, tank)
     outdoor = database().series([weather.METRIC], since, 3600)[weather.METRIC]
     return modes, outdoor
 

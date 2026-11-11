@@ -99,6 +99,9 @@ REHEAT_FLOW_C = 48.0  # space heating flow stays below this; a cylinder reheat c
 REHEAT_RISE_RATE = 0.2  # °C a minute: how fast the flow climbs at the start of a reheat
 REHEAT_STEP = timedelta(minutes=10)  # flow readings further apart than this say nothing
 REHEAT_WINDOW = timedelta(minutes=5)  # the climb's rate is judged over this long
+# Tank and flow both unchanged for this long up to the end of a reheat: the readings had
+# frozen. In 20 real reheats (30 Oct to 10 Nov 2026) the longest such quiet was 2.7 minutes.
+FROZEN = timedelta(minutes=10)
 
 UNKNOWN = {"unavailable", "unknown", ""}
 OFF = {"off", "idle", "standby", "none", "false", "0"}
@@ -255,13 +258,16 @@ class Steps:
         a, b = start.timestamp(), end.timestamp()
         seconds = weighted = 0.0
         for length, value in self._pieces(a, b):
+            if value is None:  # not known then (see thawed)
+                continue
             seconds += length
             weighted += length * value
         return weighted / seconds if b > a and seconds >= cover * (b - a) else None
 
     def highest(self, start: datetime, end: datetime) -> float | None:
         """The highest reading in force at any time between two moments; None if none."""
-        values = [value for _, value in self._pieces(start.timestamp(), end.timestamp())]
+        pieces = self._pieces(start.timestamp(), end.timestamp())
+        values = [value for _, value in pieces if value is not None]
         return max(values) if values else None
 
     def runs(self, start: datetime, end: datetime) -> list[tuple[datetime, datetime]]:
@@ -280,6 +286,75 @@ class Steps:
                     found.append([max(begun, a), stop])
             index += 1
         return [(datetime.fromtimestamp(s, UTC), datetime.fromtimestamp(e, UTC)) for s, e in found]
+
+
+def frozen_ends(
+    hot_water: Steps, tank: Steps, flow: Steps | None, start: datetime, end: datetime
+) -> list[tuple[datetime, datetime]]:
+    """(from, to) of the end of each hot water run where the readings had frozen.
+
+    SmartThings sometimes stops sending just as a reheat ends, so the hot water mode stays
+    "on" until the integration is reloaded (11 Nov 2026: the reheat ended at 04:38, the mode
+    read on until 05:30, and 0.8 kWh of heating was counted as hot water). In a real reheat
+    the tank or the flow changes every minute or two. So where neither changed for FROZEN or
+    more up to the end of a run, though the tank was still being read, the reheat ended at
+    the last change.
+    """
+
+    def changes(steps: Steps | None) -> list[float]:
+        if not steps:
+            return []
+        pairs = zip(steps.stamps[1:], steps.values, steps.values[1:], strict=False)
+        return [
+            t for t, was, now in pairs
+            if was is not None and now is not None and abs(now - was) > 1e-6
+        ]
+
+    moved = sorted(changes(tank) + changes(flow))
+    found = []
+    for begun, finished in hot_water.runs(start, end):
+        a, b = begun.timestamp(), finished.timestamp()
+        index = bisect_left(moved, b) - 1
+        if index < 0 or moved[index] <= a:
+            continue  # nothing moved in the whole run: no telling when it ended
+        last = moved[index]
+        # Readings taken in the quiet: sparse readings (history brought in every five
+        # minutes or more) can't tell a quiet from the gap between two of them.
+        read = bisect_left(tank.stamps, b) - bisect_right(tank.stamps, last)
+        if b - last >= FROZEN.total_seconds() and read >= 2:
+            found.append((datetime.fromtimestamp(last, UTC), finished))
+    return found
+
+
+def thawed(modes: dict[str, list], tank: list) -> dict[str, list]:
+    """The mode readings with the frozen end of each hot water run (frozen_ends) put right:
+    the hot water off from when the readings froze, and the heating mode and the flow not
+    known until they came back (so that electricity counts as heating, at the day's other
+    flow temperatures)."""
+    hot = modes.get(HOT_WATER_MODE) or []
+    if not hot or not tank:
+        return modes
+    spells = frozen_ends(
+        Steps(hot),
+        Steps(tank),
+        Steps(modes.get(FLOW) or []),
+        hot[0][0],
+        hot[-1][0] + timedelta(seconds=1),
+    )
+    if not spells:
+        return modes
+    starts = [a for a, _ in spells]
+
+    def frozen(when: datetime) -> bool:
+        index = bisect_right(starts, when) - 1
+        return index >= 0 and when < spells[index][1]
+
+    fixed = dict(modes)
+    for metric, value in ((HOT_WATER_MODE, 0.0), (HEATING_MODE, None), (FLOW, None)):
+        if modes.get(metric):
+            kept = [p for p in modes[metric] if not frozen(p[0])]
+            fixed[metric] = sorted(kept + [(a, value) for a in starts], key=lambda p: p[0])
+    return fixed
 
 
 def flow_reheats(

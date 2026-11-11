@@ -253,6 +253,96 @@ def test_the_hot_water_cop_comes_from_the_latest_reheats_only():
     assert tuned["hot_water_cop"] == pytest.approx(5.0)
 
 
+def a_frozen_morning(off_at: tuple[int, int] = (5, 30)):
+    """11 Nov 2026, every two minutes: the reheat runs 03:46 to 04:38 (tank 26.5 → 50.5 °C,
+    1.6 kW), then the readings freeze until SmartThings is reloaded at `off_at` (05:30),
+    while the heat pump goes back to heating (1.2 kW from 04:50)."""
+    at = lambda h, m: datetime(2026, 11, 11, h, m, tzinfo=UTC)  # noqa: E731
+    begun, ended, back = at(3, 46), at(4, 38), at(*off_at)
+    modes = {m: [] for m in heatpump.METRICS}
+    used, tank, total = [], [], 0.0
+    t = at(3, 0)
+    while t <= at(6, 30):
+        done = min(1.0, max(0.0, (t - begun) / (ended - begun)))
+        stale = ended <= t < back
+        modes[heatpump.HOT_WATER_MODE].append((t, 1.0 if begun <= t < back else 0.0))
+        modes[heatpump.HEATING_MODE].append((t, 0.0 if begun <= t < back else 1.0))
+        flow = 35.0 if t < begun else 41.0 if t >= back else 57.0 if stale else 35 + 24 * done
+        modes[heatpump.FLOW].append((t, flow))
+        modes[heatpump.FLOW_TARGET].append((t, 36.0))
+        tank.append((t, 26.5 + 24 * done))
+        used.append((t, total))
+        kw = 0.7 if t < begun else 1.6 if t < ended else 0.1 if t < at(4, 50) else 1.2
+        total += kw * 2 / 60
+        t += timedelta(minutes=2)
+    return modes, tank, used
+
+
+def test_a_reheat_whose_readings_froze_ends_where_they_froze():
+    at = lambda h, m: datetime(2026, 11, 11, h, m, tzinfo=UTC)  # noqa: E731
+    modes, tank, used = a_frozen_morning()
+    counter = Counter(used, timedelta(minutes=75))
+    outdoor = hotwater.Tank([(at(3, 0), 7.0), (at(6, 30), 7.0)])
+
+    def split(readings: dict) -> dict:
+        return heatpump.split(
+            heatpump.Steps(readings[heatpump.HOT_WATER_MODE]),
+            heatpump.Steps(readings[heatpump.HEATING_MODE]),
+            heatpump.Steps(readings[heatpump.FLOW]),
+            outdoor,
+            counter.between,
+            at(3, 0),
+            at(6, 30),
+            LONDON,
+            target=heatpump.Steps(readings[heatpump.FLOW_TARGET]),
+        )[date(2026, 11, 11)]
+
+    # As read: hot water "on" for 104 minutes, with 0.8 kWh of heating in it.
+    assert split(modes)["hot_water_kwh"] == pytest.approx(1.6 * 52 / 60 + 0.82, abs=0.03)
+
+    hot_water, cylinder = heatpump.Steps(modes[heatpump.HOT_WATER_MODE]), heatpump.Steps(tank)
+    flow = heatpump.Steps(modes[heatpump.FLOW])
+    assert heatpump.frozen_ends(hot_water, cylinder, flow, at(3, 0), at(6, 30)) == [
+        (at(4, 38), at(5, 30))
+    ]
+    fixed = heatpump.thawed(modes, tank)
+    assert heatpump.Steps(fixed[heatpump.HOT_WATER_MODE]).runs(at(3, 0), at(6, 30)) == [
+        (at(3, 46), at(4, 38))
+    ]
+    day = split(fixed)
+    assert day["hot_water_kwh"] == pytest.approx(1.6 * 52 / 60, abs=0.03)
+    # The rest is heating, not standby, and the frozen 57 °C flow is not taken as heating's.
+    assert day["other_kwh"] == pytest.approx(0.0, abs=0.01)
+    assert day["heating_kwh"] == pytest.approx(split(modes)["heating_kwh"] + 0.82, abs=0.05)
+    assert all(flow_c < 45 for _, flow_c, _ in day["pairs"])
+    runs = heatpump.reheats(
+        heatpump.Steps(fixed[heatpump.HOT_WATER_MODE]),
+        cylinder,
+        heatpump.Steps(fixed[heatpump.FLOW]),
+        outdoor,
+        counter.between,
+        250,
+        at(3, 0),
+        at(6, 30),
+        LONDON,
+    )
+    assert len(runs) == 1 and runs[0]["minutes"] == 52
+    assert runs[0]["kwh"] == pytest.approx(1.6 * 52 / 60, abs=0.03)
+    assert runs[0]["rise_c"] == pytest.approx(24.0, abs=0.1)
+
+
+def test_a_reheat_that_ends_normally_or_is_read_sparsely_is_left_alone():
+    # Seen to switch off within minutes of the last change (or caught by a five minute
+    # watchdog): nothing to put right.
+    for off_at in ((4, 38), (4, 42), (4, 46)):
+        modes, tank, _ = a_frozen_morning(off_at)
+        assert heatpump.thawed(modes, tank) is modes
+    # Readings every 15 minutes: the tank's last change is one whole gap before the end.
+    _, tank, hot_water, flow, _ = a_day()
+    modes = {heatpump.HOT_WATER_MODE: hot_water, heatpump.FLOW: flow}
+    assert heatpump.thawed(modes, tank) is modes
+
+
 def test_heating_endpoint_gives_the_estimated_scop_from_the_modes():
     now = datetime.now(UTC).replace(second=0, microsecond=0)
     start = (now - timedelta(days=6)).replace(minute=0)
