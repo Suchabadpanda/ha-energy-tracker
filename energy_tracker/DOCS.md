@@ -324,6 +324,9 @@ under **Your heat pump's details**. Then:
 - Each half hour's electricity goes to hot water for the share of it the hot water mode was
   on; the rest to heating if heating was switched on, otherwise to standby. A heat pump does
   one job at a time, so this split is exact, give or take the moment it switches.
+- If the heat pump's readings freeze as a reheat ends (the hot water mode then reads "on"
+  until they come back), the reheat is taken to end where the tank and the flow last
+  changed, once neither has changed for 10 minutes; the electricity after it is heating.
 - **Hot water heat** is measured at each reheat: the cylinder's temperature rise × its
   litres × 0.001163 kWh. A cylinder's sensor sits part-way up, though, and the tank sits in
   layers: after showers, cold water has risen past the sensor while the top is still hot, so

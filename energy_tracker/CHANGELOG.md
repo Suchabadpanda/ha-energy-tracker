@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.51.1
+
+- **A reheat whose readings froze ends where they froze.** SmartThings sometimes stops
+  sending just as a reheat ends, so the hot water mode reads "on" until the integration is
+  reloaded. On 11 Nov 2026 the reheat ended at 04:38 and the mode read on until 05:30: 0.8
+  kWh of heating was counted as hot water (2.2 kWh, not 1.4), and the hot water COP came
+  out a third too low. In a real reheat the tank or the flow changes every minute or two,
+  so where neither changed for 10 minutes or more up to the end of a hot water run, the
+  reheat is taken to have ended at the last change. The electricity after it counts as
+  heating, without the frozen flow temperature. Days already recorded are put right too.
+
+### How to check this release
+
+1. Now → Cost today on a day this happened (11 Nov 2026): the **Heat pump COP today**
+   tile's hot water figure rises, and its heating kWh grows by what the hot water lost.
+2. Devices → Heat pump and the weather → Heat generated → Daily, as a table: that day's hot
+   water electricity is about 1.4 kWh, not 2.2.
+
 ## 0.51.0
 
 - **The hot water heat allows for where the tank sensor sits.** The sensor reads part-way up
