@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.51.2
+
+- **The Setup page no longer fails now and then while the database is busy.** It shows the
+  database size, and SQLite can remove its write-ahead log file between the tracker seeing
+  it and reading its size, which made the page fail with a server error. A file that has
+  just gone now counts as nothing.
+
 ## 0.51.1
 
 - **A reheat whose readings froze ends where they froze.** SmartThings sometimes stops

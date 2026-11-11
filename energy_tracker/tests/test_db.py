@@ -1,4 +1,5 @@
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 from energy_tracker.db import Database
 
@@ -57,3 +58,18 @@ def test_readings_past_the_age_limit_are_deleted_for_every_metric(tmp_path):
     assert db.first_time("a") == db.first_time("gone") == START + timedelta(days=4)
     assert db.delete_older_than(START + timedelta(days=4)) == 0
     assert db.size_bytes() > 0
+
+
+def test_size_counts_a_wal_file_that_vanishes_as_nothing(tmp_path, monkeypatch):
+    """SQLite can remove the -wal file between it being seen and its size being read."""
+    db = Database(tmp_path / "e.db")
+    db.insert_readings([(START, "a", 1.0)])
+    real_stat = Path.stat
+
+    def stat(self, *args, **kwargs):
+        if self.name.endswith("-wal"):
+            raise FileNotFoundError(self)
+        return real_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", stat)
+    assert db.size_bytes() == (tmp_path / "e.db").stat().st_size > 0
